@@ -1,0 +1,113 @@
+name: Squad Review Gate
+
+# Aggregates CI and the four Squad Review checks for a PR head commit.
+# All green  -> mark ready and enable squash auto-merge.
+# Any failed -> send blocking findings back to Copilot (max 3 rounds), then needs:human.
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Squad Review Architect
+      - Squad Review Security
+      - Squad Review Verifier
+      - Squad Review DevOps
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: squad-review-gate-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: github.event.workflow_run.event != 'push' && github.event.workflow_run.event != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Evaluate required checks
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REQUIRED_CHECKS: "ci,Squad Review / Architect,Squad Review / Security,Squad Review / Verifier,Squad Review / DevOps"
+          MAX_ROUNDS: "3"
+        with:
+          github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const run = context.payload.workflow_run;
+            const sha = run.head_sha;
+
+            let prNumber = run.pull_requests?.[0]?.number;
+            if (!prNumber) {
+              const { data } = await github.request('GET /repos/{owner}/{repo}/commits/{sha}/pulls', { owner, repo, sha });
+              prNumber = data.find(p => p.state === 'open')?.number;
+            }
+            if (!prNumber) return core.info(`No open PR for ${sha}.`);
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (pr.state !== 'open') return core.info('PR is not open.');
+            if (pr.head.sha !== sha) return core.info(`Stale run for ${sha}; PR head is ${pr.head.sha}.`);
+
+            const required = process.env.REQUIRED_CHECKS.split(',');
+            const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 });
+            const latest = {};
+            for (const r of runs) {
+              if (!required.includes(r.name)) continue;
+              if (!latest[r.name] || r.id > latest[r.name].id) latest[r.name] = r;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
+            const hasMarker = (m) => comments.some(c => (c.body || '').includes(m));
+            const comment = (body) => github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            const table = required.map(n => `| ${n} | ${latest[n] ? (latest[n].conclusion || latest[n].status) : 'missing'} |`).join('\n');
+
+            const reviewerCrashed = run.name.startsWith('Squad Review ') && run.conclusion !== 'success'
+              && !latest[`Squad Review / ${run.name.slice('Squad Review '.length)}`];
+            if (reviewerCrashed) {
+              const marker = `<!-- squad-gate:crash:${run.name}:${sha} -->`;
+              if (!hasMarker(marker)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: prNumber, labels: ['needs:human'] });
+                await comment(`${marker}\n⚠️ **${run.name}** did not publish its check (${run.html_url}). Re-run it or dispatch it with \`pr_number=${prNumber}\`.`);
+              }
+              return;
+            }
+
+            const pending = required.filter(n => !latest[n] || latest[n].status !== 'completed');
+            if (pending.length) return core.info(`Waiting for: ${pending.join(', ')}`);
+
+            const failed = required.filter(n => latest[n].conclusion !== 'success');
+            if (!failed.length) {
+              const marker = `<!-- squad-gate:ok:${sha} -->`;
+              if (hasMarker(marker)) return core.info('Already approved for this head.');
+              if (pr.draft) {
+                await github.graphql('mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+              }
+              await github.graphql('mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}', { id: pr.node_id });
+              await comment(`${marker}\n✅ **Squad Review passed** for ${sha.slice(0, 7)}. Squash auto-merge is enabled; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
+              return;
+            }
+
+            const fixMarker = `<!-- squad-gate:fix:${sha} -->`;
+            if (hasMarker(fixMarker)) return core.info('Findings already sent for this head.');
+            const rounds = comments.filter(c => (c.body || '').includes('<!-- squad-gate:fix:')).length;
+            const max = Number(process.env.MAX_ROUNDS);
+
+            const details = failed.map(n => {
+              const o = latest[n].output || {};
+              const body = n === 'ci'
+                ? `CI failed: ${latest[n].details_url || latest[n].html_url}`
+                : `${o.title || ''}\n\n${(o.summary || '').slice(0, 6000)}`;
+              return `### ${n}\n${body}`;
+            }).join('\n\n');
+
+            if (rounds >= max) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: prNumber, labels: ['needs:human'] });
+              await comment(`${fixMarker}\n🛑 **Squad Review still blocking after ${max} fix rounds.** Labeled \`needs:human\`.\n\n| Check | Result |\n|---|---|\n${table}\n\n${details}`);
+              return;
+            }
+
+            await comment(`${fixMarker}\n@copilot Squad Review found blocking issues (round ${rounds + 1}/${max}). Fix every blocking finding below, or explain in the PR why a finding is incorrect. Stay within the approved plan, then request review again.\n\n${details}`);
