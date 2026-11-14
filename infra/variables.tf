@@ -33,11 +33,21 @@ variable "sql_entra_admin_name" {
 variable "sql_entra_admin_object_id" {
   type        = string
   description = "Object ID of the Entra user or group that administers Azure SQL."
+
+  validation {
+    condition     = can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.sql_entra_admin_object_id))
+    error_message = "sql_entra_admin_object_id must be a GUID."
+  }
 }
 
 variable "budget_alert_email" {
   type        = string
   description = "Email address for monthly budget alerts."
+
+  validation {
+    condition     = can(regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", var.budget_alert_email))
+    error_message = "budget_alert_email must be a valid email address."
+  }
 }
 
 variable "budget_amount" {

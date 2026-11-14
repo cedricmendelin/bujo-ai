@@ -1,4 +1,4 @@
 resource_group_name = "rg-bujo-prod"
 location            = "switzerlandnorth"
-name_suffix         = "change-me"
+name_suffix         = "bujo001"
 budget_amount       = 50

@@ -7,8 +7,3 @@ output "key_vault_uri" {
   description = "URI of the production Key Vault."
   value       = module.key_vault.uri
 }
-
-output "sql_database_id" {
-  description = "Resource ID of the production SQL database."
-  value       = azurerm_mssql_database.bujo.id
-}

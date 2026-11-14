@@ -39,7 +39,7 @@ resource "azapi_update_resource" "sql_free_offer" {
   resource_id = azurerm_mssql_database.bujo.id
   body = {
     properties = {
-      useFreeLimit                 = true
+      useFreeLimit                = true
       freeLimitExhaustionBehavior = "AutoPause"
     }
   }

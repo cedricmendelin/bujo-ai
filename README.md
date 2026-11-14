@@ -7,7 +7,9 @@ planning, and reliable follow-through through a web app or your preferred AI
 assistant.
 
 **Status:** Local Squad configured; initial product decisions recorded. No
-application, cloud resources, or GitHub workflows have been created.
+application or cloud resources have been provisioned; infrastructure definitions
+and deployment workflows are documented in
+[the infrastructure guide](docs/infrastructure.md).
 
 ## Product and design
 
@@ -62,6 +64,9 @@ owning Squad custom agent → Squad Review (Architect, Security, Verifier, DevOp
 plus CI → squash auto-merge → deploy from `main`. Infrastructure is Terraform with
 Azure Verified Modules in Switzerland North, deployed via GitHub OIDC, budgeted
 under 50 USD/month.
+
+The [infrastructure guide](docs/infrastructure.md) documents the Terraform
+resources, OIDC bootstrap, costs, and teardown steps.
 
 Installation reference:
 [Squad installation and design choices](https://github.com/cedricmendelin/Agentic-Design-Patterns-MAF/blob/main/docs/squad-installation.md).

@@ -11,8 +11,10 @@ module "key_vault" {
   public_network_access_enabled = true
   role_assignments = {
     container_app_secrets_user = {
-      role_definition_id_or_name = "Key Vault Secrets User"
-      principal_id               = module.identity.principal_id
+      role_definition_id_or_name       = "Key Vault Secrets User"
+      principal_id                     = module.identity.principal_id
+      principal_type                   = "ServicePrincipal"
+      skip_service_principal_aad_check = true
     }
   }
   tags = local.common_tags

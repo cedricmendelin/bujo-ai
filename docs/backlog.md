@@ -38,7 +38,7 @@ and [.squad/decisions.md](../.squad/decisions.md) records agreed choices.
 | [#11](https://github.com/cedricmendelin/bujo-ai/issues/11) | Authenticated MCP tools, parity and setup guidance | #4, #5, #9 |
 | [#12](https://github.com/cedricmendelin/bujo-ai/issues/12) | Explicit weekly review, concrete approvals, safe closure | #3, #5, #10, #11 |
 | [#14](https://github.com/cedricmendelin/bujo-ai/issues/14) | Persistent knowledge capture, full-text/tag retrieval | #2, #4, #5, #10, #11 |
-| [#17](https://github.com/cedricmendelin/bujo-ai/issues/17) | Terraform (AVM) infrastructure and OIDC continuous deployment; pilots the delivery workflow | None |
+| [#17](https://github.com/cedricmendelin/bujo-ai/issues/17) | Terraform (AVM) infrastructure and OIDC continuous deployment; pilots the delivery workflow ([infrastructure guide](infrastructure.md)) | None |
 | [#13](https://github.com/cedricmendelin/bujo-ai/issues/13) | Acceptance evidence, recovery and Container Apps readiness | #2, #4, #10, #11, #12, #14 |
 
 Technology/auth discovery can start independently. Resolve ambiguous state,
