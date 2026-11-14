@@ -55,12 +55,8 @@ Blocking findings must be concrete and within the reviewer's scope.
 
 ## One-time setup (after this workflow is on `main`)
 
-1. **Secrets** (fine-grained PATs scoped to this repository; never commit them):
-   - `COPILOT_GITHUB_TOKEN`: Account permission *Copilot Requests* (gh-aw inference).
-   - `GH_AW_AGENT_TOKEN`: Repository permissions Metadata read; Actions, Contents,
-     Issues, Pull requests read/write (Copilot assignment, `@copilot` fix
-     comments, auto-merge).
-   - `gh secret set COPILOT_GITHUB_TOKEN` and `gh secret set GH_AW_AGENT_TOKEN`.
+1. **Secrets**: two fine-grained PATs owned by the repository owner. See
+   [Creating the tokens](#creating-the-tokens) below.
 2. **Labels**: `plan:proposed`, `plan:approved`, `squad:architect`,
    `squad:builder`, `squad:ai`, `squad:devops`, `needs:human`.
 3. **Repository settings**: allow auto-merge, squash merge, delete head branches.
@@ -74,6 +70,76 @@ Blocking findings must be concrete and within the reviewer's scope.
    `api.nuget.org` as needed.
 6. **Azure (with the IaC issue)**: OIDC federated credentials and the variables
    documented by that issue's plan. No Azure secrets are stored in GitHub.
+
+## Creating the tokens
+
+Both secrets are fine-grained personal access tokens (PATs) created by the
+repository owner, who needs an active Copilot license. OAuth tokens (`gho_…`)
+and GitHub App tokens are rejected. Never commit or paste a token anywhere
+except the secret prompt.
+
+| Secret | Used by | Purpose |
+| --- | --- | --- |
+| `COPILOT_GITHUB_TOKEN` | gh-aw workflows (`/plan`, Squad reviewers) | Copilot inference for the agentic workflows |
+| `GH_AW_AGENT_TOKEN` | `squad-plan-approved.yml`, `squad-review-gate.yml` | Assign the Copilot cloud agent, post `@copilot` fix comments, mark ready, enable auto-merge |
+
+### 1. Create `COPILOT_GITHUB_TOKEN`
+
+1. Open <https://github.com/settings/personal-access-tokens/new> (Settings →
+   Developer settings → Personal access tokens → Fine-grained tokens →
+   **Generate new token**).
+2. **Token name**: `bujo-ai copilot inference`. **Expiration**: 90 days (set a
+   rotation reminder).
+3. **Resource owner**: your personal account (not an organization).
+4. **Repository access**: *Public repositories* (no repository permissions are
+   needed).
+5. **Permissions → Account permissions → Copilot Requests**: *Read*. Leave all
+   other permissions at *No access*.
+6. Click **Generate token** and copy the value.
+
+### 2. Create `GH_AW_AGENT_TOKEN`
+
+1. Open <https://github.com/settings/personal-access-tokens/new> again.
+2. **Token name**: `bujo-ai agent automation`. **Expiration**: 90 days.
+3. **Resource owner**: your personal account.
+4. **Repository access**: *Only select repositories* → `cedricmendelin/bujo-ai`.
+5. **Permissions → Repository permissions**:
+   - Metadata: *Read* (selected automatically)
+   - Actions: *Read and write*
+   - Contents: *Read and write*
+   - Issues: *Read and write*
+   - Pull requests: *Read and write*
+6. Click **Generate token** and copy the value.
+
+Actions taken with this token appear as the owner. That is intentional: Copilot
+only acts on `@copilot` comments from users with write access, and comments
+posted by `GITHUB_TOKEN` do not trigger workflows.
+
+### 3. Add the secrets to the repository
+
+With the GitHub CLI (it prompts for the value, so the token stays out of your
+shell history):
+
+```powershell
+gh secret set COPILOT_GITHUB_TOKEN --repo cedricmendelin/bujo-ai
+gh secret set GH_AW_AGENT_TOKEN --repo cedricmendelin/bujo-ai
+gh secret list --repo cedricmendelin/bujo-ai
+```
+
+Or in the browser: repository **Settings → Secrets and variables → Actions →
+New repository secret**. Enter the name exactly as shown, paste the value, and
+click **Add secret**. Use repository secrets, not secrets in the `copilot`
+environment (that environment is only for the cloud agent's runtime).
+
+### 4. Verify and rotate
+
+- Verify by commenting `/plan` on an issue: the *Squad Plan* run must pass its
+  activation step. Then add `plan:approved`: the issue must be assigned to
+  Copilot.
+- Authentication failures appear in the run log with a remedy link. Check the
+  resource owner, permissions, expiration, and Copilot license.
+- To rotate, use **Regenerate token** on the token's settings page and run
+  `gh secret set` again with the same name. No workflow changes are needed.
 
 ## Limits and assumptions
 
