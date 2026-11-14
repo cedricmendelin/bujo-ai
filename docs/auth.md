@@ -106,9 +106,14 @@ host, using Entra authorization code + PKCE and server-side token handling.
 The browser sends a Secure, HttpOnly, SameSite cookie to the host; state-changing
 requests require CSRF protection. Validate OIDC state/nonce and redirect URI;
 protect session data, expire/revoke sessions, and re-evaluate the allowlist on
-every protected request. The BFF invokes shared application services under the
-authenticated principal or uses a separately acquired API-audience token when
-calling the API; it must enforce the same delegated permission policy. Protect
+every protected request. The BFF obtains a delegated API access token for
+`journal.access`, validates it as described below, and binds its validated
+`tid` and `oid` to the validated sign-in identity. Keep the token server-side.
+Before each protected operation, validate its lifetime, audience, issuer,
+signature, tenant and scope and ensure its identity still matches the session;
+refresh or reacquire it securely when needed, otherwise deny access. The BFF
+then invokes shared services under that authorized identity or calls the API
+with that token. An ID token alone is not evidence of an API scope. Protect
 Blazor circuits and reconnects as well as HTTP requests. Rendering mode and
 session persistence across replicas remain foundation decisions.
 
@@ -134,11 +139,14 @@ Configure consent for the delegated scope for each client; user or administrator
 consent depends on tenant policy and permission settings. Preauthorization of
 known clients may avoid prompts but is not user authorization. Where applicable,
 require assignment on the relevant enterprise applications as defense in depth;
-evaluate API and client enterprise apps separately, because assignment can affect
-client access and consent. Never treat assignment alone as the allowlist.
+evaluate API and client enterprise apps separately. Assignment required can
+require tenant-wide admin consent and, for the API, client app role assignments
+before token issuance. Verify both effects in the approved tenant; never treat
+assignment alone as the allowlist.
 See [Microsoft consent](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview)
-and [API scope configuration](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-protected-web-api-expose-scopes)
-(published pages not directly fetched during this research).
+(published page not directly fetched), [assignment](https://github.com/MicrosoftDocs/entra-docs/blob/main/docs/identity-platform/howto-restrict-your-app-to-a-set-of-users.md)
+and [API scope configuration](https://github.com/MicrosoftDocs/entra-docs/blob/main/docs/identity-platform/scenario-protected-web-api-expose-scopes.md)
+(repository documentation checked 2026-11-14).
 
 ## Shared authorization and rejection vectors
 
@@ -152,10 +160,14 @@ or tenant membership as identity authorization. An authenticated BFF session
 must carry a validated identity and evidence of the required delegated
 permission; it is rechecked against current configuration, not trusted forever.
 
-These are **future test vectors**, not executed tests. For PWA, the statuses
-refer to protected HTTP/data operations; an interactive page navigation may
-instead initiate sign-in. API and MCP always return the shown HTTP status;
-MCP `401` includes the discovery challenge.
+These are **future test vectors**, not executed tests. API and MCP receive
+bearer tokens and return the shown HTTP status; MCP `401` includes the
+discovery challenge. The PWA receives a cookie, not a bearer token. For PWA
+tests, use a test identity provider/token validator to create a BFF session
+with the corresponding underlying delegated-token condition; rejected token
+conditions must prevent session creation or further access. The PWA statuses
+refer to protected HTTP/data operations; interactive navigation may instead
+initiate sign-in.
 
 | Input on PWA, API and MCP | Expected result |
 | --- | --- |
@@ -168,9 +180,10 @@ MCP `401` includes the discovery challenge.
 | Valid tenant, audience, lifetime, scope and allowlisted `oid` | Allow the requested operation subject to domain rules |
 
 Also test missing `tid`/`oid`, missing allowlist, revoked/expired sessions,
-removed allowlist entries, and wrong Origin. Never invoke a service before
+removed allowlist entries, and a mismatched session/token identity. An MCP
+request with an invalid `Origin` receives 403. Never invoke a service before
 authorization succeeds. A BFF request without an access token is evaluated
-through its validated session, not as a raw bearer request.
+through its validated session and server-held token, not as a raw bearer request.
 
 ## Downstream consent, privacy and logging
 
