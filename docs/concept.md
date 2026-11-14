@@ -165,7 +165,8 @@ unavailable. The system must not silently treat missing evidence as proof.
 - Who executes later proactive reminders, through which delivery channel, and with what
   timezone, retry, deduplication, and missed-run guarantees?
 - Which supported .NET runtime, Blazor rendering mode, and Azure SQL configuration
-  provide the simplest affordable deployment?
+  provide the simplest affordable deployment? See the
+  [proposed technology baseline](adr/0001-technology-baseline.md), awaiting approval.
 - How does Entra ID authorization work in the actual Copilot and Claude clients?
 - How are retention, export/deletion, and backups handled?
 - Which knowledge entry fields/lifecycle and search-language behavior are needed?
