@@ -30,7 +30,7 @@ and [.squad/decisions.md](../.squad/decisions.md) records agreed choices.
 | Issue | Outcome | Prerequisites |
 |-------|---------|---------------|
 | [#2](https://github.com/cedricmendelin/bujo-ai/issues/2) | Approve runtime/rendering and validate Azure SQL configuration | None |
-| [#4](https://github.com/cedricmendelin/bujo-ai/issues/4) | Prove Entra authentication for app and actual MCP clients | None for discovery |
+| [#4](https://github.com/cedricmendelin/bujo-ai/issues/4) | Prove Entra authentication for app and actual MCP clients; [proposed design](auth.md) | None for discovery |
 | [#3](https://github.com/cedricmendelin/bujo-ai/issues/3) | Specify domain transitions and implement item/occurrence/planned-period invariants | #2 before implementation; specification can begin independently |
 | [#5](https://github.com/cedricmendelin/bujo-ai/issues/5) | Modular host, persistent shared services, authenticated API | #2, #3, #4 |
 | [#9](https://github.com/cedricmendelin/bujo-ai/issues/9) | Calendar contract and deterministic daily-start query | #3, #5 |
