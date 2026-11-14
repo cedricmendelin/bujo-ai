@@ -149,4 +149,4 @@ environment (that environment is only for the cloud agent's runtime).
   triggered; if a round stalls, dispatch the reviewers manually.
 - Required checks guarantee review of the merged head; a push after the gate
   enabled auto-merge waits for fresh checks.
-- Deployment from `main` is part of the IaC/CD issue, not this workflow.
+- Infrastructure deploys from `main`; see [infrastructure operations](infrastructure.md).

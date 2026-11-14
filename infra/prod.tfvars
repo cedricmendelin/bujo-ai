@@ -1,4 +1,4 @@
-resource_group_name = "rg-bujo-prod"
-location            = "switzerlandnorth"
-name_suffix         = "bujo001"
-budget_amount       = 50
+location       = "switzerlandnorth"
+name_suffix    = "bujo001"
+key_vault_name = "bujo-ai-prod-kv"
+budget_amount  = 50

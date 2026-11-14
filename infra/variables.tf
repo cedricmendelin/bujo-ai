@@ -3,6 +3,16 @@ variable "resource_group_name" {
   description = "Name of the owner-created production resource group."
 }
 
+variable "key_vault_name" {
+  type        = string
+  description = "Globally unique 3–24 character production Key Vault name."
+
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$", var.key_vault_name)) && !can(regex("--", var.key_vault_name))
+    error_message = "key_vault_name must be 3–24 letters, numbers, or hyphens, start with a letter, and contain no consecutive hyphens."
+  }
+}
+
 variable "location" {
   type        = string
   description = "Azure region for production resources."
@@ -25,14 +35,14 @@ variable "container_image" {
   default     = "mcr.microsoft.com/k8se/quickstart:latest"
 }
 
-variable "sql_entra_admin_name" {
+variable "sql_entra_admin_login" {
   type        = string
-  description = "Display name of the Entra user or group that administers Azure SQL."
+  description = "Display name of the Entra security group that administers Azure SQL."
 }
 
 variable "sql_entra_admin_object_id" {
   type        = string
-  description = "Object ID of the Entra user or group that administers Azure SQL."
+  description = "Object ID of the Entra security group that administers Azure SQL."
 
   validation {
     condition     = can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.sql_entra_admin_object_id))

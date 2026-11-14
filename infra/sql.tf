@@ -7,7 +7,7 @@ module "sql_server" {
   resource_group_name = data.azurerm_resource_group.prod.name
   server_version      = "12.0"
   azuread_administrator = {
-    login_username              = var.sql_entra_admin_name
+    login_username              = var.sql_entra_admin_login
     object_id                   = var.sql_entra_admin_object_id
     tenant_id                   = data.azurerm_client_config.current.tenant_id
     azuread_authentication_only = true

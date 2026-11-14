@@ -9,6 +9,6 @@ locals {
   log_analytics_name = "law-${var.name_suffix}"
   environment_name   = "cae-${var.name_suffix}"
   container_app_name = "ca-${var.name_suffix}"
-  key_vault_name     = "kv-${var.name_suffix}"
+  key_vault_name     = var.key_vault_name
   sql_server_name    = "sql-${var.name_suffix}"
 }

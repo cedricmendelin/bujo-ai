@@ -1,20 +1,22 @@
 # Production infrastructure
 
-The `infra/` root describes one production environment in Switzerland North. It
-uses pinned Azure Verified Modules, a pre-created resource group, and OIDC for
-GitHub Actions. It creates a consumption Container Apps environment and app, a
-user-assigned runtime identity, a capped Log Analytics workspace, a standard
-RBAC-enabled Key Vault, an Entra-only Azure SQL server and database, and a
-monthly resource-group budget. There are no VNets, private endpoints, NAT, ACR,
-SQL passwords, or Terraform-managed Key Vault values.
+The `infra/` Terraform root provisions one production environment in Switzerland
+North. It uses pinned Azure Verified Modules, an owner-created resource group,
+Azure Blob remote state, and one GitHub Actions OIDC deployment identity. Pull
+request workflows do not authenticate to Azure; the owner runs plans locally.
 
-The resource group `rg-bujo-prod` must exist before Terraform runs. Terraform
-looks it up as data rather than creating it, keeping deployment permissions
-scoped to that group. The app starts with
-`mcr.microsoft.com/k8se/quickstart:latest`, external ingress on port 80, 0.25
-vCPU/0.5 GiB, and zero to one replica. Once a root `Dockerfile` exists, the
-deploy workflow publishes its image to GHCR and updates the app to the commit
-tag.
+Terraform creates a consumption Container Apps environment and app, a
+user-assigned runtime identity, a capped Log Analytics workspace, a standard
+RBAC-enabled Key Vault, an Entra-only Azure SQL server and free-offer database,
+and a monthly resource-group budget. There are no VNets, private endpoints,
+NAT, ACR, SQL passwords, or Terraform-managed Key Vault values.
+
+The app resource group `bujo-ai-rg` must be created by the owner before the
+first deployment. Terraform looks it up as data rather than managing it. The
+app starts with `mcr.microsoft.com/k8se/quickstart:latest`, external ingress on
+port 80, 0.25 vCPU/0.5 GiB, and zero to one replica. Once a root `Dockerfile`
+exists, deployment publishes its image to GHCR and updates the app to the
+commit-SHA tag.
 
 ## Resources and modules
 
@@ -24,8 +26,8 @@ tag.
 | Log Analytics workspace | `Azure/avm-res-operationalinsights-workspace`, PerGB2018, 0.1 GB/day cap, 30-day retention |
 | Container Apps environment | `Azure/avm-res-app-managedenvironment`, default Consumption profile |
 | Container app | `Azure/avm-res-app-containerapp`, public ingress, scale to zero, UAMI attached |
-| Key Vault | `Azure/avm-res-keyvault-vault`, Standard, RBAC, purge protection, public endpoint |
-| SQL server | `Azure/avm-res-sql-server`, TLS 1.2, Entra-only admin, Azure-services firewall rule |
+| Key Vault | `Azure/avm-res-keyvault-vault`, Standard, RBAC, 7-day soft delete, purge protection, public endpoint |
+| SQL server | `Azure/avm-res-sql-server`, TLS 1.2, Entra-only group admin, Azure-services firewall rule |
 | SQL database | AzureRM plus AzAPI free-offer property update |
 | Monthly budget | AzureRM resource-group budget, $50 with forecast/actual alerts |
 | Terraform state | Owner-bootstrapped Azure Storage container, remote backend with Entra RBAC |
@@ -38,11 +40,11 @@ versions are recorded in `infra/.terraform.lock.hcl`.
 
 | Resource or operation | Reason |
 | --- | --- |
-| Resource group lookup | The owner pre-creates the empty app resource group so the apply identity does not need subscription-scope permissions. A Terraform data source references it without managing it. |
+| Resource group lookup | The owner pre-creates the app resource group so deployment needs no subscription-scope Contributor. A Terraform data source references it without managing it. |
 | `azurerm_mssql_database` | The SQL-server AVM does not expose the database free-offer settings. AzureRM manages the database's serverless SKU and auto-pause configuration. |
-| `azapi_update_resource` for SQL free offer | AzureRM 4.81.0 has no `use_free_limit` or free-limit exhaustion behavior attributes. AzAPI sets the corresponding SQL ARM API properties (`useFreeLimit` and `freeLimitExhaustionBehavior`) to enable the free offer and pause on exhaustion. |
+| `azapi_update_resource` for SQL free offer | AzureRM 4.81.0 has no free-limit attributes. AzAPI sets the SQL ARM API properties `useFreeLimit` and `freeLimitExhaustionBehavior` to enable the free offer and pause on exhaustion. |
 | `azurerm_consumption_budget_resource_group` | No `avm-res-consumption-budget` module is published in the Terraform Registry. |
-| State storage | The storage account and private state container are owner-bootstrapped, not part of the production stack. This avoids a bootstrap dependency on Terraform state itself. |
+| State storage | The storage account and private state container are owner-bootstrapped (#24), avoiding a bootstrap dependency on Terraform state itself. |
 
 ## Cost estimate
 
@@ -50,164 +52,187 @@ Indicative monthly costs for Switzerland North, excluding Microsoft Foundry.
 Prices depend on Azure billing currency, use, and current free grants; verify
 them with the Azure pricing calculator before provisioning. Idle assumes no
 Container Apps replicas and negligible Key Vault operations. Expected personal
-use assumes activity remains within the documented free grants.
+use assumes activity remains within documented free grants.
 
 | Resource | Idle estimate | Expected personal-use estimate |
 | --- | ---: | ---: |
 | Resource group and managed identity | $0 | $0 |
-| Container Apps consumption | $0 | $0–$10 |
-| Azure SQL serverless, free offer, auto-pause | $0 | $0–$5 |
+| Container Apps consumption | $0 | $0–$4 |
+| Azure SQL serverless, free offer, auto-pause | $0 | $0–$3 |
 | Log Analytics, maximum 0.1 GB/day | $0 | $0–$1 |
 | Standard Key Vault | $0 | $0–$1 |
 | Monthly Azure budget | $0 | $0 |
 | State storage, Standard_LRS | <$1 | <$1 |
-| **Estimated total** | **<$2/month** | **<$18/month** |
+| **Estimated total** | **<$1/month** | **<$10/month** |
 
-The estimates leave at least $32/month of headroom under the $50 budget. The
+The estimates leave at least $40/month of headroom under the $50 budget. The
 budget is scoped to the production resource group (not the separate state
 resource group), alerts at 80% forecast spend and 100% actual spend, and emails
 the configured `BUDGET_ALERT_EMAIL`. Container Apps and SQL can incur costs if
-usage exceeds free grants or the free SQL offer is unavailable. The SQL offer
+usage exceeds free grants or the SQL free offer is unavailable. The SQL offer
 is limited by Azure eligibility and quota; monitor usage and billing after
-deployment. The Log Analytics daily cap limits ingestion to 0.1 GB/day.
+deployment. The budget is an alert, not a spending cap.
 
-## Bootstrap (owner, one time)
+## Manual prerequisites (#24)
 
-Terraform does not create its own state storage or Entra applications. Complete
-these steps once before running either workflow.
+The owner completes these steps once before using the deployment workflow.
+Never put real Azure IDs, secrets, or the real SQL group name in source or this
+guide.
 
-### 1. Create remote state storage
+### Azure resources and state
 
-Use the Azure owner account and select the intended subscription. Create a
-separate Switzerland North resource group and a Standard_LRS StorageV2 account.
-Use a unique storage-account name. Configure HTTPS-only access, TLS 1.2 or
-later, disable shared-key access, enable blob versioning and soft delete, and
-create a private `tfstate` blob container. Do not enable public blob access or
-commit state files. The backend uses OIDC and Entra data-plane authorization;
-it does not use account keys or SAS tokens.
+1. Sign in to Azure and select the target subscription.
+2. Create the production resource group `bujo-ai-rg` in Switzerland North.
+3. In a separate bootstrap resource group, create a Standard_LRS StorageV2
+   account and a private Blob container named `tfstate`. Require HTTPS/TLS 1.2
+   or later, disable public blob access and shared-key access, and enable Blob
+   versioning. The state blob key defaults to `prod.tfstate`. Do not provision
+   this state account through the Terraform stack.
+4. Confirm the storage container and resource group exist before running
+   `terraform init`. Preserve prior blob versions so state can be restored.
 
-Assign the apply app **Storage Blob Data Contributor** on the state container
-or storage account, and the plan app **Storage Blob Data Reader** at the same
-scope. The apply identity needs blob write access to lock and update state.
-The plan workflow uses `-lock=false` and has read-only blob access.
+### One immutable-subject deployment application
 
-### 2. Register two OIDC applications
+1. Enable the repository's GitHub immutable OIDC subject format and use the
+   GitHub-provided numeric owner and repository IDs when constructing the
+   federated credential. Never copy those real IDs into this repository.
+2. Create exactly one Microsoft Entra app registration and service principal
+   for deployment. Do not create a client secret or certificate.
+3. Add exactly one federated credential:
+   * Issuer: `https://token.actions.githubusercontent.com`
+   * Audience: `api://AzureADTokenExchange`
+   * Subject: `repo:<owner>@<owner-id>/<repo>@<repo-id>:environment:prod`
+4. Create the GitHub Actions environment `prod`, restrict deployment branches
+   to `main`, and configure branch protection. The environment-bound apply
+   workflow receives the immutable `environment:prod` subject.
+5. Grant the deployment service principal only:
+   * **Contributor** on `bujo-ai-rg`
+   * **Storage Blob Data Contributor** on the `tfstate` container only
 
-Create separate Microsoft Entra app registrations for the plan and apply
-workflows. For each app, create its service principal and one federated
-credential. Do not create a client secret.
+Contributor does not include Azure RBAC role-assignment write actions or
+Key Vault data actions. Do not grant the deployment identity Owner, User Access
+Administrator, Role Based Access Control Administrator, or any Key Vault
+data-plane role. Terraform contains no role assignments. The owner performs
+the one runtime Key Vault role grant after the first apply (see below).
 
-| App | Issuer | Audience | Subject |
-| --- | --- | --- | --- |
-| Apply | `https://token.actions.githubusercontent.com` | `api://AzureADTokenExchange` | `repo:cedricmendelin/bujo-ai:ref:refs/heads/main` |
-| Plan | `https://token.actions.githubusercontent.com` | `api://AzureADTokenExchange` | `repo:cedricmendelin/bujo-ai:pull_request` |
+### GitHub Actions variables
 
-These are exact subjects: the apply credential is restricted to `main`, and
-the plan credential is restricted to pull-request runs. The plan workflow uses
-`pull_request`, not `pull_request_target`, and skips fork PRs.
-
-### 3. Assign minimum Azure roles
-
-Create `rg-bujo-prod` in Switzerland North before the first plan. Grant:
-
-* Apply app: **Contributor** and **User Access Administrator** on `rg-bujo-prod`.
-  When creating the User Access Administrator assignment, set condition version
-  `2.0` and use this condition to allow only the **Key Vault Secrets User** role:
-
-  ```text
-  (
-    @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId]
-    ForAnyOfAnyValues:GuidEquals {4633458b-17de-408a-b874-0445c86b69e6}
-  )
-  ```
-
-  Terraform grants that role to the runtime UAMI on the Key Vault.
-* Plan app: **Reader** on `rg-bujo-prod`.
-* Both app registrations: the state-storage data roles described above.
-
-The apply identity does not need subscription-scope Contributor. The plan
-identity cannot create or change production resources. The budget is scoped to
-the production resource group; verify the owner account has rights to read the
-billing scope used by Azure Consumption.
-
-### 4. Create the production resource group and SQL admin
-
-Create the empty `rg-bujo-prod` resource group in Switzerland North. Choose a
-SQL Entra administrator user or group and record its display name and object
-ID. The administrator must be able to connect to the server after deployment.
-The database user for the container app identity is added manually after the
-first apply; no SQL credentials are used by automation.
-
-### 5. Configure GitHub
-
-Create a GitHub Actions environment named `prod` and limit its deployment
-branch to `main`. The deploy workflow uses it as a gate before image build and
-apply. The apply job itself deliberately has no environment because GitHub
-changes the OIDC subject to `environment:prod` for environment-bound jobs; the
-apply credential must retain the exact `ref:refs/heads/main` subject. Add these
-**repository variables** (not secrets):
+Add these as repository Actions variables (not secrets); actual IDs stay in
+GitHub settings and are never committed:
 
 | Variable | Value |
 | --- | --- |
-| `AZURE_APPLY_CLIENT_ID` | Client/application ID of the apply app registration |
-| `AZURE_PLAN_CLIENT_ID` | Client/application ID of the plan app registration |
 | `AZURE_TENANT_ID` | Entra tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Subscription ID containing the production group and state storage |
-| `TF_STATE_RESOURCE_GROUP` | Resource group containing the state storage account |
-| `TF_STATE_STORAGE_ACCOUNT` | State storage account name |
-| `TF_STATE_CONTAINER` | Private blob container name, normally `tfstate` |
-| `SQL_ENTRA_ADMIN_NAME` | Entra administrator display name |
-| `SQL_ENTRA_ADMIN_OBJECT_ID` | Entra user/group object ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription containing the app RG and state storage |
+| `AZURE_CLIENT_ID` | Client/application ID of the single deployment app |
+| `AZURE_RESOURCE_GROUP` | `bujo-ai-rg` |
+| `TFSTATE_RESOURCE_GROUP` | Resource group containing the state account |
+| `TFSTATE_STORAGE_ACCOUNT` | State storage account name |
+| `TFSTATE_CONTAINER` | Private state container, normally `tfstate` |
+| `TFSTATE_KEY` | State blob name, normally `prod.tfstate` |
+| `SQL_ENTRA_ADMIN_OBJECT_ID` | Object ID of the Entra SQL administrator security group |
+| `SQL_ENTRA_ADMIN_LOGIN` | Display name of that Entra security group |
 | `BUDGET_ALERT_EMAIL` | Address to receive Azure budget alerts |
 
-Set `name_suffix` in `infra/prod.tfvars` to a unique 4–8 character lowercase
-alphanumeric value before applying. The Key Vault and SQL server names are
-globally unique and deployment fails if another Azure customer already uses
-them. Keep tenant IDs, subscription IDs, credentials, and state out of Git.
+Create an Entra security group for the SQL administrator, add the owner account
+as a member, and use the group's object ID and display name for the two SQL
+variables. The SQL module accepts the group object ID and display name; Azure
+resolves them as the Entra group administrator. No actual group name or ID
+belongs in source control.
 
-GHCR images are intended to be public so Container Apps needs no image-pull
-credential. If the first application image is private, stop before deployment
-and design a managed-identity pull strategy; do not add a registry password to
-Terraform.
+In `infra/prod.tfvars`, change `key_vault_name` to a globally unique name if the
+example name is already in use. The name must be 3–24 letters, numbers, or
+hyphens, start with a letter, and contain no consecutive hyphens.
 
-### 6. Run and verify deployment
+## Owner-run local plans
 
-Open a PR touching `infra/` to run formatting, validation, and an OIDC-backed
-plan. The plan comment includes the base commit and redacted plan output. Merge
-to `main` to build/push the image when a `Dockerfile` exists, apply Terraform,
-and update the container app revision. Until a `Dockerfile` exists, deployment
-uses the public placeholder image.
+PR checks only run non-Azure Terraform formatting and validation. They do not
+have `id-token: write`, Azure credentials, or access to the remote state. Before
+approving an infrastructure PR, the owner runs a plan locally:
 
-After the first apply, connect to Azure SQL as the configured Entra
-administrator and create a database principal for the runtime UAMI using
-`CREATE USER [<identity-name>] FROM EXTERNAL PROVIDER;`. Grant only the database
-roles the application requires; this task is intentionally not automated.
+1. Sign in using the owner account with `az login` and select the subscription.
+   The owner needs Reader on `bujo-ai-rg` and Storage Blob Data Reader on the
+   `tfstate` container.
+2. From the repository root, initialize the backend with the owner-provisioned
+   values:
 
-## Teardown
+   ```sh
+   terraform -chdir=infra init \
+     -backend-config="resource_group_name=<state-resource-group>" \
+     -backend-config="storage_account_name=<state-account>" \
+     -backend-config="container_name=tfstate" \
+     -backend-config="key=prod.tfstate"
+   ```
+3. Supply the SQL group object ID/display name and budget alert email as
+   `TF_VAR_sql_entra_admin_object_id`, `TF_VAR_sql_entra_admin_login`,
+   `TF_VAR_budget_alert_email`, and the resource group as
+   `TF_VAR_resource_group_name` in the local shell, then run:
 
-Run `terraform destroy -var-file=prod.tfvars` from `infra/` using the apply
-identity and the same remote backend settings. Review the destroy plan before
-applying it. Terraform does not delete the owner-created resource group or
-state storage. Key Vault purge protection is irreversible and deleted vaults
-remain recoverable during the retention period; do not attempt to purge it
-until the retention period and recovery requirements have been considered.
-Keep or explicitly remove the state account only after the production
-resources are gone and recovery/audit needs are met.
+   ```sh
+   terraform -chdir=infra plan -lock=false -var-file=prod.tfvars
+   ```
 
-## State and plan safety
+Do not post plan files or state blobs in pull requests. The approved PR may be
+merged after the owner has reviewed its local plan.
 
-The approved plan v2 requested committing local Terraform state. State contains
-resource IDs with tenant/subscription identifiers, so it is kept in an
-Azure Storage backend protected by Entra RBAC instead of being committed to
-the repository. The state account is outside the production stack and uses
-OIDC with no access keys. Terraform state and plan files are ignored by
-`.gitignore`.
+## First deployment and runtime Key Vault access
 
-The deploy workflow also uses `prod` as a gate job before the OIDC apply job.
-GitHub replaces the default `ref:refs/heads/main` OIDC subject with
-`environment:prod` when the environment is attached directly to the apply job,
-which would not match the approved main-ref federated credential.
+Merge to `main` to run `deploy.yml`. It builds and pushes a GHCR image only
+when a root `Dockerfile` exists, authenticates to Azure through the single
+immutable-subject OIDC identity, locks remote state, applies Terraform, and
+updates the container app revision. Without a `Dockerfile`, it deploys the
+public placeholder image.
 
-These are intentional deviations from plan v2. The owner requested proper
-remote state in an earlier issue comment; remote state also prevents publishing
-Azure identifiers contained in state.
+After the first successful apply, grant the runtime identity access to the
+workload vault. Terraform intentionally does not create this role assignment:
+
+```sh
+az role assignment create \
+  --assignee-object-id <runtime-identity-principal-id> \
+  --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" \
+  --scope <key-vault-id>
+```
+
+Obtain the placeholders from `terraform -chdir=infra output
+runtime_identity_principal_id` and `terraform -chdir=infra output key_vault_id`.
+Verify the grant with:
+
+```sh
+az role assignment list --scope <key-vault-id> --all
+```
+
+This assignment is owner-managed, not Terraform-managed, so it remains in
+place across applies and is not shown as Terraform drift. It is required before
+issue #5 introduces Key Vault secret references. Destroying and recreating the
+vault requires repeating the assignment. The deployment identity receives no
+Key Vault data-plane access.
+
+After deployment, the owner connects to Azure SQL as a member of the configured
+Entra admin group and creates a database principal for the runtime UAMI with
+`CREATE USER [<runtime-identity-name>] FROM EXTERNAL PROVIDER;`. Grant only the
+database roles the application requires; this remains manual until #5.
+
+## Teardown and recovery
+
+Run `terraform destroy -var-file=prod.tfvars` locally using the same backend
+configuration and an identity with sufficient rights on the app resource
+group and state. Review the destroy plan first. Terraform does not delete the
+owner-created app resource group or state storage. Key Vault soft delete is
+seven days and purge protection is enabled; a deleted vault name remains
+reserved during recovery. Use a new vault name if recreating before purge.
+Repeat the runtime role assignment after recreating the vault. Remove state
+storage and its bootstrap resource group only after production resources are
+gone and restore/audit needs have been met. Restore a prior state version from
+Blob versioning if state is corrupted.
+
+## Operations and accepted trade-offs
+
+- Networking is public as required; SQL and Key Vault require Entra/RBAC access.
+- The production resource group and the backend storage are separate. State
+  uses Azure AD authentication and OIDC in GitHub; no keys or SAS are used.
+- A repository rename or transfer requires updating the immutable federated
+  subject. A failed manual role grant does not block the first deployment
+  because the app has no vault secret references yet.
+- GHCR is expected to be public. Do not add a registry password to Terraform;
+  revisit managed-identity image pulls before making the image private.

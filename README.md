@@ -6,9 +6,9 @@ An AI-assisted bullet journal for capturing tasks and thoughts, intentional
 planning, and reliable follow-through through a web app or your preferred AI
 assistant.
 
-**Status:** Local Squad configured; initial product decisions recorded. No
-application or cloud resources have been provisioned; infrastructure definitions
-and deployment workflows are documented in
+**Status:** Local Squad configured; initial product decisions recorded. The
+application workload is not yet provisioned; its manually bootstrapped Azure
+prerequisites and deployment workflow are documented in
 [the infrastructure guide](docs/infrastructure.md).
 
 ## Product and design
@@ -62,11 +62,13 @@ Issues are implemented through the [governed delivery workflow](docs/workflow.md
 `/plan` → owner approves with `plan:approved` → Copilot cloud agent with the
 owning Squad custom agent → Squad Review (Architect, Security, Verifier, DevOps)
 plus CI → squash auto-merge → deploy from `main`. Infrastructure is Terraform with
-Azure Verified Modules in Switzerland North, deployed via GitHub OIDC, budgeted
-under 50 USD/month.
+Azure Verified Modules in Switzerland North. PR checks do not access Azure; the
+owner runs infrastructure plans locally. The `main` deployment uses GitHub OIDC,
+budgeted under 50 USD/month.
 
 The [infrastructure guide](docs/infrastructure.md) documents the Terraform
-resources, OIDC bootstrap, costs, and teardown steps.
+resources, OIDC bootstrap, owner-run plans, runtime Key Vault role assignment,
+costs, and teardown steps.
 
 Installation reference:
 [Squad installation and design choices](https://github.com/cedricmendelin/Agentic-Design-Patterns-MAF/blob/main/docs/squad-installation.md).
