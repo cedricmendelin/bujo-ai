@@ -1,0 +1,87 @@
+name: Squad Plan Approved
+
+# The repository owner applies `plan:approved` to an issue with a Squad plan.
+# This assigns the Copilot cloud agent with the plan owner's custom agent.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: squad-plan-approved-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  assign:
+    if: github.event.label.name == 'plan:approved'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Assign Copilot with the approved plan
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PLAN_HEADING: "## 📋 Implementation plan v"
+          AGENTS: "architect,builder,ai,devops"
+        with:
+          github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+            const sender = context.payload.sender.login;
+            const comment = (body) => github.rest.issues.createComment({ owner, repo, issue_number, body });
+            const revoke = async (reason) => {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:approved' }).catch(() => {});
+              await comment(`⚠️ Plan approval was not applied: ${reason}`);
+              core.setFailed(reason);
+            };
+
+            if (sender !== context.payload.repository.owner.login) {
+              return revoke(`only @${context.payload.repository.owner.login} can approve plans (label applied by @${sender}).`);
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const plan = comments
+              .filter(c => c.user?.login === 'github-actions[bot]' && (c.body || '').trimStart().startsWith(process.env.PLAN_HEADING))
+              .at(-1);
+            if (!plan) {
+              return revoke('no Squad plan found on this issue. Comment `/plan` first.');
+            }
+
+            const heading = plan.body.trimStart().split('\n', 1)[0];
+            const version = (heading.match(/plan v(\d+)/) || [])[1] || '?';
+            const allowed = process.env.AGENTS.split(',');
+            let agent = (heading.match(/owner:\s*`?([a-z]+)`?/) || [])[1];
+            if (!allowed.includes(agent)) {
+              const label = context.payload.issue.labels.map(l => l.name).find(n => n.startsWith('squad:'));
+              agent = label ? label.slice('squad:'.length) : 'builder';
+            }
+            if (!allowed.includes(agent)) agent = 'builder';
+
+            await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:proposed' }).catch(() => {});
+
+            const planBody = plan.body.length > 20000 ? plan.body.slice(0, 20000) + '\n\n[truncated — read the full plan comment]' : plan.body;
+            const instructions = [
+              `Implement exactly the owner-approved implementation plan v${version} for issue #${issue_number}: ${plan.html_url}`,
+              'Follow .github/copilot-instructions.md. List any deviation under "## Deviations from plan" in the PR description and reference the plan version.',
+              '',
+              planBody,
+            ].join('\n');
+
+            const { default_branch } = context.payload.repository;
+            await github.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+              owner, repo, issue_number,
+              assignees: ['copilot-swe-agent[bot]'],
+              agent_assignment: {
+                target_repo: `${owner}/${repo}`,
+                base_branch: default_branch,
+                custom_agent: agent,
+                custom_instructions: instructions,
+              },
+            });
+
+            await comment(`✅ Plan v${version} approved by @${sender}. Assigned Copilot with the \`${agent}\` agent; it will open a pull request that goes through Squad Review.`);

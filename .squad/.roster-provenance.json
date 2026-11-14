@@ -1,0 +1,17 @@
+{
+  "schema": "squad-roster-provenance/v1",
+  "backupFile": "team.md.roster-backup",
+  "originalSha256": "90d9e528fbd35938096158b7be900377224b2215567614d641fe047355cf6ea6",
+  "appliedSha256": "05cf3ad1b30f9725d081c5067cc144fab9b60f525d2b74b4aaadd16f41c678b7",
+  "diverged": false,
+  "additions": [
+    {
+      "id": "rai",
+      "line": "| Rai | RAI Reviewer | `.squad/agents/rai/charter.md` | 🛡️ RAI |"
+    },
+    {
+      "id": "fact-checker",
+      "line": "| Fact Checker | Devil's Advocate & Verification Agent | `.squad/agents/fact-checker/charter.md` | 🔍 Verifier |"
+    }
+  ]
+}
