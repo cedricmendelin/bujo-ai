@@ -205,6 +205,21 @@
   standard, user-assigned managed identity, budget alert. Foundry excluded until
   its milestone.
 
+### 2026-11-14: Domain state and transition semantics
+
+- Issue #3 plan v1 defines canonical items with list-local `Open`, `Done`,
+  `Abandoned`, and `Moved` occurrences and one linear move chain per item.
+- Done and abandoned occurrences can be explicitly reopened only on an open
+  list while still current; returning to an earlier list creates a new visit.
+  Historical views use current canonical text and tags.
+- Planned periods are independent calendar values; weeks use ISO 8601 and
+  today is derived in the user's IANA time zone. A conflicting planned day or
+  week in a weekly list is flagged without rewriting either value.
+- The Future Log is ongoing; closure of other lists requires disposition of
+  every open occurrence. Moves are atomic, idempotent and concurrency-checked.
+- The full specification is in `docs/domain.md`; code implementation awaits
+  approval of issue #2's technology baseline ADR.
+
 ## Governance
 
 - Significant product and architecture decisions require user approval
