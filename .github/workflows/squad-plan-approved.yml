@@ -1,10 +1,7 @@
 name: Squad Plan Approved
 
-# The repository owner applies `plan:approved` to an issue with a Squad plan.
-# This assigns the Copilot cloud agent with the plan owner's custom agent,
-# unless the issue has `handoff:local` (implemented in the GitHub Copilot app).
-# The owner applies `plan:waived` to a PR to hand over work without an issue plan.
-
+# The owner applies plan:approved after plan:bound is implemented. GITHUB_TOKEN
+# writes the durable bot record; the owner token is used only for Copilot assignment.
 on:
   issues:
     types: [labeled]
@@ -15,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: squad-plan-approved-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: squad-plan-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -24,91 +21,136 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
+      issues: write
+      pull-requests: read
     steps:
-      - name: Assign Copilot with the approved plan
+      - name: Checkout trusted default-branch modules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Bind approval and hand off safely
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PLAN_HEADING: "## 📋 Implementation plan v"
-          AGENTS: "architect,builder,ai,devops"
+          AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
         with:
-          github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
+            const { formatRecord, latestRecord, prepareApproval, sameApproval, verify } = require('./.github/scripts/plan-approval');
+            const agent = getOctokit(process.env.AGENT_TOKEN);
             const { owner, repo } = context.repo;
             const issue_number = context.payload.issue.number;
+            const issueOwner = context.payload.repository.owner.login;
             const sender = context.payload.sender.login;
             const comment = (body) => github.rest.issues.createComment({ owner, repo, issue_number, body });
+            const timeline = async () => github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number, per_page: 100 });
+            const snapshot = async () => {
+              const [{ data: issue }, comments, events] = await Promise.all([
+                github.rest.issues.get({ owner, repo, issue_number }),
+                github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 }),
+                timeline(),
+              ]);
+              return { issue, comments, timeline: events, labels: issue.labels.map(label => label.name) };
+            };
             const revoke = async (reason) => {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:approved' }).catch(() => {});
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:approved' });
+              // Keep plan:bound discoverable until the binding reconciler has
+              // disabled linked auto-merge and published failed binding checks.
+              // Both labels are required by verify(), so approval is already void.
               await comment(`⚠️ Plan approval was not applied: ${reason}`);
               core.setFailed(reason);
             };
 
-            if (sender !== context.payload.repository.owner.login) {
-              return revoke(`only @${context.payload.repository.owner.login} can approve plans (label applied by @${sender}).`);
+            if (sender !== issueOwner) {
+              return revoke(`only @${issueOwner} can approve plans (label applied by @${sender}).`);
             }
 
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
-            const plan = comments
-              .filter(c => c.user?.login === 'github-actions[bot]' && (c.body || '').trimStart().startsWith(process.env.PLAN_HEADING))
-              .at(-1);
-            if (!plan) {
-              return revoke('no Squad plan found on this issue. Comment `/plan` first.');
+            let data = await snapshot();
+            const prepared = prepareApproval({
+              issue: issue_number, owner: issueOwner, sender, comments: data.comments,
+              labels: data.labels, timeline: data.timeline,
+            });
+            if (!prepared.ok) return revoke(prepared.reason);
+            const preparedLocal = data.labels.includes('handoff:local');
+
+            let active = latestRecord(data.comments, issue_number);
+            if (!active || active.labelEvent !== prepared.record.labelEvent
+                || active.comment !== prepared.record.comment || active.sha256 !== prepared.record.sha256
+                || active.state === 'superseded') {
+              await comment(formatRecord(prepared.record));
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['plan:bound'] });
             }
 
-            const heading = plan.body.trimStart().split('\n', 1)[0];
-            const version = (heading.match(/plan v(\d+)/) || [])[1] || '?';
-            const allowed = process.env.AGENTS.split(',');
-            let agent = (heading.match(/owner:\s*`?([a-z]+)`?/) || [])[1];
-            if (!allowed.includes(agent)) {
-              const label = context.payload.issue.labels.map(l => l.name).find(n => n.startsWith('squad:'));
-              agent = label ? label.slice('squad:'.length) : 'builder';
-            }
-            if (!allowed.includes(agent)) agent = 'builder';
+            // Re-read after the bot record and durable label write. Label/plan events
+            // can be concurrent; no stale initial payload authorizes assignment.
+            data = await snapshot();
+            let checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
+            if (!sameApproval(prepared, checked)) return revoke(checked.reason || 'Prepared approval scope changed during binding.');
+            const local = data.labels.includes('handoff:local');
+            if (local !== preparedLocal) return revoke('Prepared handoff changed during binding.');
+            const member = checked.plan.member;
+            const planBody = checked.plan.comment.body;
 
-            await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:proposed' }).catch(() => {});
-
-            const planBody = plan.body.length > 20000 ? plan.body.slice(0, 20000) + '\n\n[truncated — read the full plan comment]' : plan.body;
-            const human = context.payload.repository.owner.login;
-
-            if (context.payload.issue.labels.some(l => l.name === 'handoff:local')) {
-              await comment(`✅ Plan v${version} approved by @${sender} for **local implementation** (\`handoff:local\`). Copilot cloud agent was not assigned. Open this issue in the GitHub Copilot app with the \`${agent}\` agent, open a ready (non-draft) PR, and turn on Agent merge. See README → How we work.`);
+            if (local) {
+              if (checked.record.state === 'local') return core.info('This approval is already bound to the local handoff.');
+              if (checked.record.state === 'assigned') {
+                await agent.request('DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+                  owner, repo, issue_number, assignees: ['copilot-swe-agent[bot]'],
+                });
+              }
+              await comment(formatRecord({ ...checked.record, state: 'local' }));
+              data = await snapshot();
+              checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
+              if (!sameApproval(prepared, checked) || !data.labels.includes('handoff:local')) return revoke(checked.reason || 'Prepared local handoff changed during publication.');
+              await comment(`✅ Plan v${checked.plan.version} approved by @${sender} for local implementation. No Copilot cloud assignment was made. Plan SHA-256: \`${checked.record.sha256}\`. Open the issue in the Copilot app with the \`${member}\` agent and create a ready PR that references plan v${checked.plan.version}.`);
               return;
             }
+            if (checked.record.state === 'assigned') return core.info('This approval is already assigned to Copilot.');
 
+            // Verify again immediately before the owner-token assignment.
+            data = await snapshot();
+            checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
+            if (!sameApproval(prepared, checked) || data.labels.includes('handoff:local') !== preparedLocal) return revoke(checked.reason || 'Prepared approval or handoff changed before assignment.');
             const instructions = [
-              `Implement exactly the owner-approved implementation plan v${version} for issue #${issue_number}: ${plan.html_url}`,
-              'Follow .github/copilot-instructions.md. List any deviation under "## Deviations from plan" in the PR description and reference the plan version.',
-              'Declare the PR with exactly one whole-line "Completion: full" or "Completion: partial". Full completion may close the issue only with evidence for every acceptance criterion, including code and relevant tests; a partial/specification-only fallback is not issue completion.',
-              'For partial delivery, use only a non-closing issue reference, state unfinished work and its dependency under "Remaining work", and leave the parent issue open. Remove any closing keyword from the entire PR description, including generated suffixes.',
-              'PR lifecycle: you do not need to mark the PR ready or request reviews. When your session ends, automation marks the PR ready and starts CI and Squad Review; blocking findings come back to you as @copilot comments, and the PR squash auto-merges when everything is green.',
-              `If you are blocked by something only a human can do (a secret, an Azure or repository setting, a product decision), say so under a "## 🙋 Needs human" heading in the PR description and mention @${human}; do not guess or work around it.`,
-              '',
-              planBody,
+              `Implement exactly owner-approved plan v${checked.plan.version} for issue #${issue_number}: ${checked.plan.comment.html_url}`,
+              'Use only the verified approved plan text below; plan changes revoke this assignment. Follow .github/copilot-instructions.md.',
+              'Declare exactly one whole-line Completion: full or Completion: partial. Full completion requires evidence for every acceptance criterion. Partial work uses a non-closing issue reference, lists unfinished work/dependency under Remaining work, and leaves the issue open.',
+              'Do not mark the PR ready or request reviews. The trusted shepherd waits for a successful latest Copilot session and re-verifies the plan binding before dispatching reviews.',
+              `If blocked by a human-only decision, add ## 🙋 Needs human and mention @${issueOwner}; do not guess.`,
+              '', planBody,
             ].join('\n');
-
-            const { default_branch } = context.payload.repository;
-            await github.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+            await agent.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
               owner, repo, issue_number,
               assignees: ['copilot-swe-agent[bot]'],
               agent_assignment: {
                 target_repo: `${owner}/${repo}`,
-                base_branch: default_branch,
-                custom_agent: agent,
+                base_branch: data.issue.repository?.default_branch || context.payload.repository.default_branch,
+                custom_agent: prepared.plan.member,
                 custom_instructions: instructions,
               },
             });
 
-            await comment(`✅ Plan v${version} approved by @${sender}. Assigned Copilot with the \`${agent}\` agent. It opens a pull request that is marked ready, reviewed by Squad Review, fixed by Copilot, and squash auto-merged without further action. You are only pinged (\`needs:human\`) if the loop gets stuck.`);
+            // Re-read immediately after assignment; if comment edits/labels raced,
+            // undo assignment when the approved bytes or handoff state changed.
+            data = await snapshot();
+            checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
+            if (!sameApproval(prepared, checked) || data.labels.includes('handoff:local') !== preparedLocal) {
+              await agent.request('DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+                owner, repo, issue_number, assignees: ['copilot-swe-agent[bot]'],
+              });
+              return revoke(checked.reason || 'handoff:local changed during assignment.');
+            }
+            await comment(formatRecord({ ...checked.record, state: 'assigned' }));
+            await comment(`✅ Plan v${checked.plan.version} approved by @${sender}; Copilot was assigned with the \`${checked.plan.member}\` agent. Plan SHA-256: \`${checked.record.sha256}\`.`);
 
   waiver:
-    # `plan:waived` lets the owner hand over non-issue work (for example a local
-    # change made in the GitHub Copilot app); reviewers then treat the PR
-    # description as the approved scope. Owner-only; applying it starts reviews.
+    # Preserve the owner-only plan:waived path; the PR description is its scope.
     if: github.event_name == 'pull_request_target' && github.event.label.name == 'plan:waived'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
+      actions: write
     steps:
       - name: Verify waiver and start Squad Review
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -117,7 +159,7 @@ jobs:
         with:
           github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
           script: |
-            // No checkout: this job only calls the API, so pull_request_target is safe.
+            // No checkout: pull_request_target remains API-only and never executes PR code.
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const sender = context.payload.sender.login;

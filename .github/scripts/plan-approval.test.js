@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BOT, digest, formatRecord, prepareApproval, selectPlan, verify } = require('./plan-approval');
+const { BOT, digest, formatRecord, latestRecord, prepareApproval, selectPlan, verify } = require('./plan-approval');
 
 const owner = 'owner';
 const issue = 12;
@@ -14,7 +14,7 @@ const label = (id = 20, login = owner, event = 'labeled') => ({
 });
 const input = () => ({
   issue, owner, sender: owner, comments: [plan(10, 1)],
-  labels: ['plan:approved', 'plan:bound'], timeline: [label()],
+  labels: ['plan:approved', 'plan:bound'], timeline: [label()], now: '2026-01-01T10:00:02Z',
 });
 function approved() {
   const data = input();
@@ -38,6 +38,7 @@ test('binds exact plan contents to the latest owner label event', () => {
   assert.equal(result.record.comment, 10);
   assert.equal(result.record.sha256, digest(data.comments[0].body));
   assert.equal(result.record.member, 'devops');
+  assert.equal(result.record.createdAt, '2026-01-01T10:00:02Z');
   data.comments[0].body += '\nChanged';
   assert.match(verify(data).reason, /no longer matches/);
 });
@@ -99,4 +100,21 @@ test('reapproval invalidates records from earlier label events', () => {
 
 test('normalizes line endings consistently', () => {
   assert.equal(digest('  example\r\ntext  '), digest('example\ntext'));
+});
+
+test('record transitions whitelist schema fields and retain the original approval timestamps', () => {
+  const data = approved();
+  const sizes = [];
+  for (let n = 0; n < 20; n++) {
+    const record = latestRecord(data.comments, issue);
+    const body = formatRecord({ ...record, state: 'assigned', arbitrary: 'not persisted' });
+    const serialized = JSON.parse(body.match(/\{.*\}/)[0]);
+    assert.equal(serialized.approvedAt, '2026-01-01T10:00:02Z');
+    assert.equal(serialized.createdAt, '2026-01-01T10:00:02Z');
+    assert.equal(serialized.recordComment, undefined);
+    assert.equal(serialized.arbitrary, undefined);
+    sizes.push(body.length);
+    data.comments.push({ id: 100 + n, user: { login: BOT }, body });
+  }
+  assert.equal(new Set(sizes).size, 1, 'repeated parse/transition/format must not nest history');
 });

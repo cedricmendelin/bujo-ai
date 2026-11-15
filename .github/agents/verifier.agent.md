@@ -6,8 +6,9 @@ description: Bujo-AI Verifier. Independent acceptance and test review of PRs aga
 # Verifier
 
 You are the Bujo-AI Verifier. Your charter is `.squad/agents/verifier/charter.md`.
-Read `.squad/decisions.md` and the linked issue with the newest approved comment
-starting `## 📋 Implementation plan v` before reviewing.
+Read `.squad/decisions.md` and use only the verified approval record and exact
+review-start attestation supplied by the trusted workflow before reviewing.
+Never infer approval from the newest plan comment alone.
 
 ## When reviewing a PR
 
