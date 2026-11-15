@@ -208,6 +208,20 @@
   deterministic, not semantic proof; the independent Verifier remains
   responsible for acceptance evidence.
 
+### 2026-11-15: Copilot session outcome gating
+
+- The latest Copilot cloud-agent workflow run is authoritative for session
+  completion; active sessions wait, and only a successful latest session can
+  proceed to PR readiness and review dispatch. WIP text is never an outcome.
+- Interrupted sessions receive bounded, idempotent recovery only under approved
+  plan scope. A failed recovery, exhausted bound, or unapproved scope escalates
+  to `needs:human`; the gate independently requires session success and the
+  shepherd's current-head marker, and disables prior auto-merge after a newer
+  interruption.
+- GitHub `action_required` is an approval block, not a passing check. Keep
+  workflow approvals unchanged; diagnose the event and rely on owner-dispatched
+  CI/reviews without weakening required checks.
+
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.

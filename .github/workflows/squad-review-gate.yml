@@ -1,7 +1,7 @@
 name: Squad Review Gate
 
 # Aggregates CI and the four Squad Review checks for each open PR head commit.
-# All green  -> mark ready, enable squash auto-merge (clears needs:human).
+# All green  -> enable squash auto-merge (clears needs:human).
 # Any failed -> send blocking findings back to the implementer (max 3 rounds),
 #               then needs:human with the human in the loop mentioned.
 # Copilot cloud agent PRs get an @copilot fix request; locally handed-over PRs
@@ -11,6 +11,7 @@ name: Squad Review Gate
 on:
   workflow_run:
     workflows:
+      - Copilot cloud agent
       - CI
       - Squad Review Architect
       - Squad Review Security
@@ -36,10 +37,11 @@ jobs:
       pull-requests: read
       issues: write
     steps:
-      - name: Checkout default branch completion check
+      - name: Checkout default branch decision modules
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Evaluate required checks
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -51,7 +53,10 @@ jobs:
         with:
           script: |
             const { createHash } = require('node:crypto');
+            const { pathToFileURL } = require('node:url');
+            const { resolve } = require('node:path');
             const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
+            const { classifySession, gateEligibility } = await import(pathToFileURL(resolve('.github/scripts/session-state.mjs')).href);
 
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and auto-merge work.
@@ -61,6 +66,8 @@ jobs:
             const run = context.payload.workflow_run;
             const required = process.env.REQUIRED_CHECKS.split(',');
             const max = Number(process.env.MAX_ROUNDS);
+            const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
+            const copilotWorkflow = workflows.find(w => (w.path || '').startsWith('dynamic/copilot-swe-agent'));
 
             // Dispatched reviews run on main, so their head SHA does not identify the PR.
             let numbers = (run.pull_requests || []).map(p => p.number);
@@ -131,6 +138,35 @@ jobs:
                 await comment(`${marker}\n🙋 @${human} ${text}\n\nRemove \`needs:human\` to hand the PR back to the automation.`);
               };
 
+              const sessionRuns = copilotWorkflow
+                ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: copilotWorkflow.id, branch: pr.head.ref, per_page: 20 })).data.workflow_runs
+                : [];
+              const session = classifySession(sessionRuns);
+              const eligibility = gateEligibility({
+                isAgentPr,
+                draft: pr.draft,
+                sessionState: session.state,
+                shepherdMarker: hasMarker(`<!-- squad-shepherd:review:${sha} -->`),
+              });
+              if (isAgentPr && session.state !== 'ok' && pr.auto_merge) {
+                const sessionStartedAt = session.run
+                  ? Date.parse(session.run.run_started_at || session.run.created_at)
+                  : null;
+                const priorApproval = comments.some(c => {
+                  const match = (c.body || '').match(/<!-- squad-gate:ok:([a-f0-9]+) -->/);
+                  const approvedAt = Date.parse(c.created_at);
+                  return match && (match[1] !== sha || !Number.isFinite(sessionStartedAt)
+                    || !Number.isFinite(approvedAt) || sessionStartedAt >= approvedAt);
+                });
+                if (priorApproval) {
+                  await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                  core.info(`#${number}: disabled auto-merge while the latest Copilot session is ${session.state}.`);
+                }
+              }
+              if (eligibility !== 'eligible') {
+                return core.info(`#${number}: waiting for shepherd/session safety decision (${eligibility}; latest session ${session.state}).`);
+              }
+
               const role = run.name.startsWith('Squad Review ') ? run.name.slice('Squad Review '.length) : null;
               const reviewerCrashed = direct && role && run.head_sha === sha
                 && ['failure', 'timed_out', 'startup_failure'].includes(run.conclusion)
@@ -150,15 +186,13 @@ jobs:
               if (!completion.ok) failed.push('Completion declaration');
               if (!failed.length) {
                 const marker = `<!-- squad-gate:ok:${sha} -->`;
-                if (hasMarker(marker)) return core.info(`#${number}: already approved for ${short}.`);
-                if (pr.draft) {
-                  await agent.graphql('mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
-                }
+                if (hasMarker(marker) && pr.auto_merge) return core.info(`#${number}: already approved for ${short}.`);
                 if (labels.includes('needs:human')) {
                   await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' }).catch(() => {});
                 }
                 const how = await merge(pr);
-                await comment(`${marker}\n✅ **Squad Review passed** for ${short}. ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
+                const status = hasMarker(marker) ? 'Auto-merge resumed after the latest Copilot session succeeded.' : `**Squad Review passed** for ${short}.`;
+                await comment(`${marker}\n✅ ${status} ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
                 return;
               }
 
