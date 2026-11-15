@@ -8,9 +8,21 @@ public sealed class PlannedPeriodTests
     public void Period_anchors_validate_calendar_values()
     {
         Assert.Equal(new DateOnly(2024, 2, 29), PlannedPeriod.ForDay(new DateOnly(2024, 2, 29)).Day);
-        Assert.Equal(2, PlannedPeriod.ForMonth(2024, 2).Month);
-        Assert.Equal(4, PlannedPeriod.ForQuarter(2024, 4).Quarter);
-        Assert.Equal(2024, PlannedPeriod.ForYear(2024).Year);
+        var month = PlannedPeriod.ForMonth(2024, 2);
+        Assert.Equal(PlannedPeriodKind.Month, month.Kind);
+        Assert.Equal(2024, month.Year);
+        Assert.Equal(2, month.Month);
+        var quarter = PlannedPeriod.ForQuarter(2024, 4);
+        Assert.Equal(PlannedPeriodKind.Quarter, quarter.Kind);
+        Assert.Equal(2024, quarter.Year);
+        Assert.Equal(4, quarter.Quarter);
+        var year = PlannedPeriod.ForYear(2024);
+        Assert.Equal(PlannedPeriodKind.Year, year.Kind);
+        Assert.Equal(2024, year.Year);
+        var week53 = PlannedPeriod.ForWeek(new IsoWeekKey(2020, 53));
+        Assert.Equal(PlannedPeriodKind.Week, week53.Kind);
+        Assert.Equal(new IsoWeekKey(2020, 53), week53.Week);
+        Assert.Equal(new DateOnly(2020, 12, 28), week53.Week!.Value.Monday);
         Assert.Throws<DomainException>(() => PlannedPeriod.ForMonth(2024, 13));
         Assert.Throws<DomainException>(() => PlannedPeriod.ForQuarter(2024, 5));
         Assert.Throws<DomainException>(() => PlannedPeriod.ForYear(0));
@@ -49,6 +61,9 @@ public sealed class PlannedPeriodTests
 
         Assert.Equal(fixture.FutureLog.Id, unplanned.Occurrence.ListId);
         Assert.Equal(PlannedPeriod.Unplanned, unplanned.Item.PlannedPeriod);
-        Assert.Equal(PlannedPeriodKind.Day, planned.Item.PlannedPeriod.Kind);
+        Assert.Equal(fixture.FutureLog.Id, planned.Occurrence.ListId);
+        Assert.Equal(
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 17)),
+            planned.Item.PlannedPeriod);
     }
 }

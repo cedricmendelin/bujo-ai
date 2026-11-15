@@ -56,15 +56,31 @@ public sealed class PeriodConflictTests
             PlannedPeriod.ForMonth(2026, 11),
             PlannedPeriod.ForQuarter(2026, 4),
             PlannedPeriod.ForYear(2026),
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 23)),
             PlannedPeriod.ForWeek(new IsoWeekKey(2026, 48))
         })
         {
             Assert.Null(fixture.Capture($"No conflict {period.Kind}", period, noKeyWeek.Id).PeriodConflict);
         }
 
-        Assert.Null(fixture.Capture(
-            "Month conflict undefined",
+        foreach (var period in new[]
+        {
+            PlannedPeriod.Unplanned,
             PlannedPeriod.ForMonth(2026, 12),
-            week47.Id).PeriodConflict);
+            PlannedPeriod.ForQuarter(2027, 1),
+            PlannedPeriod.ForYear(2027),
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 16)),
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 22))
+        })
+        {
+            var capture = fixture.Capture($"Keyed week {period.Kind}", period, week47.Id);
+            Assert.Null(capture.PeriodConflict);
+            Assert.Equal(period, capture.Item.PlannedPeriod);
+            Assert.Equal(week47.Id, capture.Occurrence.ListId);
+        }
+
+        Assert.Equal(
+            week47.WeekKey,
+            fixture.Journal.GetSnapshot().Lists.Single(list => list.Id == week47.Id).WeekKey);
     }
 }

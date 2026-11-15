@@ -53,7 +53,11 @@ public sealed class TransitionTableTests
         }
         else
         {
-            Assert.NotNull(result.Error);
+            Assert.Equal(
+                initialState == OccurrenceState.Moved
+                    ? DomainErrorCode.StaleOccurrence
+                    : DomainErrorCode.InvalidTransition,
+                result.Error!.Code);
         }
     }
 
@@ -84,6 +88,14 @@ public sealed class TransitionTableTests
             var expectedOccurrenceId = state == OccurrenceState.Moved ? source.Id : item.CurrentOccurrenceId;
             var result = fixture.Journal.Move(Guid.NewGuid(), item.Id, expectedOccurrenceId, target.Id);
             Assert.Equal(state == OccurrenceState.Open, result.IsSuccess);
+            if (state != OccurrenceState.Open)
+            {
+                Assert.Equal(
+                    state == OccurrenceState.Moved
+                        ? DomainErrorCode.StaleOccurrence
+                        : DomainErrorCode.InvalidTransition,
+                    result.Error!.Code);
+            }
         }
     }
 

@@ -72,15 +72,81 @@ public sealed class ConcurrencyTests
             if (moveResult.IsSuccess)
             {
                 Assert.False(closeResult.IsSuccess);
+                Assert.Contains(closeResult.Error!.Code, new[]
+                {
+                    DomainErrorCode.UnresolvedOccurrences,
+                    DomainErrorCode.ConcurrencyConflict
+                });
                 Assert.Equal(JournalListState.Open, list.State);
                 Assert.Single(openOccurrences);
             }
             else
             {
                 Assert.True(closeResult.IsSuccess);
+                Assert.Contains(moveResult.Error!.Code, new[]
+                {
+                    DomainErrorCode.ListClosed,
+                    DomainErrorCode.ConcurrencyConflict
+                });
                 Assert.Equal(JournalListState.Closed, list.State);
                 Assert.Empty(openOccurrences);
             }
         }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Move_rejects_stale_item_or_destination_versions_without_mutation(bool changeItem)
+    {
+        var fixture = new JournalTestFixture();
+        var destination = fixture.CreateWeekly(2026, 47);
+        var capture = fixture.Capture("Version check");
+        var command = new MoveCommand(
+            Guid.NewGuid(), capture.Item.Id, capture.Occurrence.Id, destination.Id,
+            capture.Item.Version, destination.Version, fixture.Clock.GetUtcNow());
+
+        if (changeItem)
+        {
+            Assert.True(fixture.Journal.EditItem(capture.Item.Id, "Edited", null, null).IsSuccess);
+        }
+        else
+        {
+            Assert.True(fixture.Journal.SetListGoal(destination.Id, "Changed goal").IsSuccess);
+        }
+
+        var before = fixture.Journal.GetSnapshot();
+        var rejected = fixture.Repository.Move(command);
+        var after = fixture.Journal.GetSnapshot();
+
+        Assert.False(rejected.IsSuccess);
+        Assert.Equal(DomainErrorCode.ConcurrencyConflict, rejected.Error!.Code);
+        Assert.Equal(before.Items, after.Items);
+        Assert.Equal(before.Lists, after.Lists);
+        Assert.Equal(before.Occurrences, after.Occurrences);
+        Assert.Equal(before.History, after.History);
+        Assert.Equal(before.MoveHistory, after.MoveHistory);
+    }
+
+    [Fact]
+    public void Capture_rejects_a_list_closed_after_reading_its_version_without_mutation()
+    {
+        var fixture = new JournalTestFixture();
+        var destination = fixture.CreateWeekly(2026, 47);
+        var command = new CaptureCommand(
+            "Stale capture", null, null, PlannedPeriod.Unplanned,
+            destination.Id, destination.Version, fixture.Clock.GetUtcNow());
+        Assert.True(fixture.Journal.CloseList(destination.Id).IsSuccess);
+        var before = fixture.Journal.GetSnapshot();
+
+        var rejected = fixture.Repository.Capture(command);
+        var after = fixture.Journal.GetSnapshot();
+
+        Assert.False(rejected.IsSuccess);
+        Assert.Equal(DomainErrorCode.ConcurrencyConflict, rejected.Error!.Code);
+        Assert.Equal(before.Items, after.Items);
+        Assert.Equal(before.Lists, after.Lists);
+        Assert.Equal(before.Occurrences, after.Occurrences);
+        Assert.Equal(before.History, after.History);
     }
 }

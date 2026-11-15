@@ -20,10 +20,15 @@ public sealed class IdempotencyTests
         var snapshotBeforeRetry = fixture.Journal.GetSnapshot();
 
         var retry = fixture.Journal.Move(operationId, capture.Item.Id, capture.Occurrence.Id, week47.Id);
+        var snapshotAfterRetry = fixture.Journal.GetSnapshot();
 
+        Assert.True(retry.IsSuccess);
         Assert.Same(first.Value, retry.Value);
-        Assert.Equal(snapshotBeforeRetry.Occurrences.Count, fixture.Journal.GetSnapshot().Occurrences.Count);
-        Assert.Equal(snapshotBeforeRetry.MoveHistory.Count, fixture.Journal.GetSnapshot().MoveHistory.Count);
+        Assert.Equal(snapshotBeforeRetry.Items, snapshotAfterRetry.Items);
+        Assert.Equal(snapshotBeforeRetry.Lists, snapshotAfterRetry.Lists);
+        Assert.Equal(snapshotBeforeRetry.Occurrences, snapshotAfterRetry.Occurrences);
+        Assert.Equal(snapshotBeforeRetry.History, snapshotAfterRetry.History);
+        Assert.Equal(snapshotBeforeRetry.MoveHistory, snapshotAfterRetry.MoveHistory);
         Assert.Equal(first.Value.HistoryEntry, retry.Value!.HistoryEntry);
     }
 
