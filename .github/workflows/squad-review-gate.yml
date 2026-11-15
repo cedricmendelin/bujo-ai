@@ -40,6 +40,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Evaluate required checks
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -52,6 +53,7 @@ jobs:
           script: |
             const { createHash } = require('node:crypto');
             const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
+            const { workflowComment, fixRequests, currentReview, latestSession, reviewsFinishedAfter } = require('./.github/scripts/pr-lifecycle');
 
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and auto-merge work.
@@ -119,7 +121,7 @@ jobs:
               }
 
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
-              const hasMarker = (m) => comments.some(c => (c.body || '').includes(m));
+              const hasMarker = (m) => comments.some(c => workflowComment(c, human) && (c.body || '').split(/\r?\n/).includes(m));
               const comment = (body) => agent.rest.issues.createComment({ owner, repo, issue_number: number, body });
               const table = [
                 ...required.map(n => `| ${n} | ${latest[n] ? (latest[n].conclusion || latest[n].status) : 'missing'} |`),
@@ -146,11 +148,32 @@ jobs:
               const pending = required.filter(n => !latest[n] || latest[n].status !== 'completed');
               if (pending.length) return core.info(`#${number}: waiting for ${pending.join(', ')}.`);
 
+              if (isAgentPr) {
+                const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
+                const copilot = workflows.find(w => (w.path || '').startsWith('dynamic/copilot-swe-agent'));
+                const sessions = copilot
+                  ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: copilot.id, branch: pr.head.ref, per_page: 20 })).data.workflow_runs
+                  : [];
+                const session = latestSession(sessions);
+                const revision = currentReview(comments, human, sha, pr.body);
+                if (!session || session.status !== 'completed' || session.conclusion !== 'success'
+                  || pr.draft || !reviewsFinishedAfter(latest, required.filter(n => n !== 'ci'), revision)) {
+                  if (pr.auto_merge) {
+                    await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                  }
+                  return core.info(`#${number}: waiting for shepherd and fresh reviews of the current description after a successful session.`);
+                }
+              }
+
               const failed = required.filter(n => latest[n].conclusion !== 'success');
               if (!completion.ok) failed.push('Completion declaration');
               if (!failed.length) {
                 const marker = `<!-- squad-gate:ok:${sha} -->`;
                 if (hasMarker(marker)) return core.info(`#${number}: already approved for ${short}.`);
+                const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (live.state !== 'open' || live.head.sha !== sha || live.body !== pr.body) {
+                  return core.info(`#${number}: PR changed before merge eligibility was applied; wait for re-evaluation.`);
+                }
                 if (pr.draft) {
                   await agent.graphql('mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
                 }
@@ -164,7 +187,7 @@ jobs:
 
               const fixMarker = `<!-- squad-gate:fix:${sha}:${bodyHash} -->`;
               if (hasMarker(fixMarker)) return core.info(`#${number}: findings already sent for ${short}.`);
-              const rounds = comments.filter(c => (c.body || '').includes('<!-- squad-gate:fix:')).length;
+              const rounds = fixRequests(comments, human).length;
 
               const details = failed.map(n => {
                 if (n === 'Completion declaration') {
@@ -183,7 +206,7 @@ jobs:
               }
 
               const ask = isAgentPr
-                ? `@copilot Squad Review found blocking issues (round ${rounds + 1}/${max}). Fix every blocking finding below, or reply in the PR explaining why a finding is incorrect. Stay within the approved plan. Reviews restart automatically when your session ends.`
+                ? `@copilot Squad Review found blocking issues (round ${rounds + 1}/${max}). Fix every blocking finding below, or reply in the PR explaining why a finding is incorrect. Stay within the approved plan. For PR-description changes, use a native update tool and verify the result; if unavailable, publish the structured squad-pr-metadata proposal from the repository instructions using your comment reply tool. Merely describing a correction does not apply it. Reviews restart automatically when your session ends.`
                 : `Squad Review found blocking issues (round ${rounds + 1}/${max}). Agent merge in the GitHub Copilot app (or the author) should fix every blocking finding below, or reply explaining why a finding is incorrect. Every push restarts the reviews.`;
               await comment(`${fixMarker}\n${ask}\n\n${details}`);
             }

@@ -16,6 +16,8 @@ on:
     types: [completed]
   push:
     branches: [main]
+  pull_request_target:
+    types: [edited]
   schedule:
     # Fallback for missed events (stalled reviews, conflicts after merges).
     - cron: "23 * * * *"
@@ -35,6 +37,7 @@ concurrency:
 
 jobs:
   shepherd:
+    if: github.event_name != 'pull_request_target' || (github.event.changes.body && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || github.actor == 'Copilot' || github.actor == 'copilot-swe-agent[bot]'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -44,6 +47,12 @@ jobs:
       pull-requests: read
       issues: write
     steps:
+      - name: Checkout trusted lifecycle decisions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Shepherd Copilot pull requests
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -53,6 +62,10 @@ jobs:
           REVIEW_TIMEOUT_MINUTES: "60"
         with:
           script: |
+            const {
+              bodyHash, workflowComment, latestSession, latestFix, currentReview,
+              reviewMarker, stalledSession, metadataProposal, validateProposal, referencesIssue,
+            } = require('./.github/scripts/pr-lifecycle');
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and dispatches trigger.
             const agent = getOctokit(process.env.AGENT_TOKEN);
@@ -74,6 +87,8 @@ jobs:
             let numbers;
             if (input) {
               numbers = [Number(input)];
+            } else if (context.eventName === 'pull_request_target') {
+              numbers = [context.payload.pull_request.number];
             } else if (context.eventName === 'workflow_run') {
               const branch = context.payload.workflow_run.head_branch;
               const { data } = await github.rest.pulls.list({ owner, repo, state: 'open', head: `${owner}:${branch}` });
@@ -103,14 +118,14 @@ jobs:
             }
 
             async function shepherd(number) {
-              const pr = await getPr(number);
+              let pr = await getPr(number);
               if (pr.state !== 'open' || !isAgentPr(pr)) return core.info(`#${number}: not an open Copilot PR.`);
               if (labelsOf(pr).includes('needs:human')) return core.info(`#${number}: waiting for @${human} (needs:human).`);
 
               const sha = pr.head.sha;
               const short = sha.slice(0, 7);
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
-              const findMarker = (m) => comments.find(c => (c.body || '').includes(m));
+              const findMarker = (m) => comments.find(c => workflowComment(c, human) && (c.body || '').split(/\r?\n/).includes(m));
               const comment = (body) => agent.rest.issues.createComment({ owner, repo, issue_number: number, body });
               const escalate = async (marker, reason) => {
                 if (findMarker(marker)) return;
@@ -120,10 +135,46 @@ jobs:
               };
 
               const agentRuns = copilotWorkflow
-                ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: copilotWorkflow.id, branch: pr.head.ref, per_page: 10 })).data.workflow_runs
+                ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: copilotWorkflow.id, branch: pr.head.ref, per_page: 20 })).data.workflow_runs
                 : [];
-              if (agentRuns.some(r => r.status !== 'completed')) return core.info(`#${number}: Copilot is still working.`);
-              if (!agentRuns.length && pr.draft) return core.info(`#${number}: no finished Copilot session yet.`);
+              const session = latestSession(agentRuns);
+              if (!session || session.status !== 'completed' || session.conclusion !== 'success') {
+                return core.info(`#${number}: waiting for a successful latest Copilot session; metadata and reviews cannot advance.`);
+              }
+
+              const proposal = metadataProposal(comments, human);
+              if (proposal && !findMarker(`<!-- squad-shepherd:metadata-applied:${proposal.id} -->`)
+                && !findMarker(`<!-- squad-shepherd:metadata-rejected:${proposal.id} -->`)) {
+                const scope = await approvedScope(pr);
+                let result = validateProposal(proposal, pr, scope);
+                if (result.ok) {
+                  // Revalidate state and approval immediately before the body-only write.
+                  const live = await getPr(number);
+                  result = validateProposal(proposal, live, await approvedScope(live));
+                  if (!isAgentPr(live) || labelsOf(live).includes('needs:human')) {
+                    result = { ok: false, reason: 'The PR was handed over or stopped; no metadata was written.' };
+                  }
+                  if (result.ok) {
+                    if (live.auto_merge) {
+                      await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: live.node_id });
+                    }
+                    await agent.rest.pulls.update({ owner, repo, pull_number: number, body: result.body });
+                    pr = await getPr(number);
+                    if (pr.body !== result.body) throw new Error('PR description did not match the applied proposal; inspect concurrent edits.');
+                    await comment(`<!-- squad-shepherd:metadata-applied:${proposal.id} -->\nApplied the explicit PR-description proposal. Required reviews will run again; completion is not inferred from session success.`);
+                  }
+                }
+                if (!result.ok) {
+                  await escalate(`<!-- squad-shepherd:metadata-rejected:${proposal.id} -->`, `metadata proposal ${proposal.id} was rejected: ${result.reason} Publish a corrected proposal after reading the current PR, then remove \`needs:human\`.`);
+                  return;
+                }
+              }
+
+              const revision = currentReview(comments, human, sha, pr.body);
+              const fix = latestFix(comments, human, sha);
+              if (stalledSession({ session, fix, body: pr.body, review: revision })) {
+                return escalate(`<!-- squad-shepherd:stalled:${session.id}:${fix.id} -->`, `Copilot session ${session.html_url} completed after the review request without a new commit or description revision. Read its reply; use the structured metadata handoff for description changes, dispatch reviews if the findings are incorrect, or apply \`handoff:local\`. No further fix request was sent.`);
+              }
 
               if (pr.draft) {
                 await agent.graphql('mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
@@ -134,18 +185,10 @@ jobs:
                 const { data: base } = await github.rest.repos.getBranch({ owner, repo, branch: pr.base.ref });
                 const marker = `<!-- squad-shepherd:conflict:${sha}:${base.commit.sha} -->`;
                 if (findMarker(marker)) return core.info(`#${number}: conflict fix already requested.`);
-                const previous = comments.filter(c => (c.body || '').includes('<!-- squad-shepherd:conflict:')).length;
+                const previous = comments.filter(c => workflowComment(c, human) && (c.body || '').startsWith('<!-- squad-shepherd:conflict:')).length;
                 if (previous >= 3) return escalate(`<!-- squad-shepherd:conflict-stuck:${sha} -->`, `this PR still conflicts with \`${pr.base.ref}\` after ${previous} attempts by Copilot. Resolve the conflicts manually.`);
                 await comment(`${marker}\n@copilot This PR has merge conflicts with \`${pr.base.ref}\`. Merge the latest \`${pr.base.ref}\` into this branch and resolve the conflicts, keeping the approved plan's scope. Do not change unrelated files.`);
                 return core.info(`#${number}: asked Copilot to resolve conflicts.`);
-              }
-
-              // A finished session that pushed nothing while blocking findings are open: the loop is stuck.
-              if (context.eventName === 'workflow_run') {
-                const fix = findMarker(`<!-- squad-gate:fix:${sha} -->`);
-                if (fix && new Date(context.payload.workflow_run.created_at) > new Date(fix.created_at)) {
-                  return escalate(`<!-- squad-shepherd:stalled:${sha} -->`, `Copilot finished a session after the Squad Review findings for ${short} without pushing changes. It may disagree with a finding; read its reply and either dispatch the reviewers again (Actions → *Squad Review X* → Run workflow with \`pr_number=${number}\`), fix it yourself, or close the PR.`);
-                }
               }
 
               const ciRuns = (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'ci.yml', head_sha: sha, per_page: 20 })).data.workflow_runs
@@ -155,24 +198,61 @@ jobs:
                 core.info(`#${number}: started CI for ${short}.`);
               }
 
-              const reviewMarker = `<!-- squad-shepherd:review:${sha} -->`;
-              const started = findMarker(reviewMarker);
+              const marker = reviewMarker(sha, pr.body);
+              const started = revision;
               if (!started) {
+                if (pr.auto_merge) {
+                  await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                }
+                // Drain older reviews before recording a revision, so an in-flight old
+                // snapshot cannot publish a passing result for the new description.
+                for (const r of reviews) {
+                  const active = (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: r.file, branch: defaultBranch, per_page: 100 })).data.workflow_runs
+                    .some(run => run.status !== 'completed');
+                  if (active) return core.info(`#${number}: waiting for older ${r.role} reviews before starting this description revision.`);
+                }
+                const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (live.state !== 'open' || live.head.sha !== sha || bodyHash(live.body) !== bodyHash(pr.body)
+                  || !isAgentPr(live) || labelsOf(live).includes('needs:human')) {
+                  return core.info(`#${number}: PR changed before review dispatch; a later tick will re-evaluate.`);
+                }
+                // Record the revision before dispatching: the gate waits for all four
+                // results completed after this timestamp. Partial dispatch fails visibly.
+                await comment(`${marker}\n🧭 Successful Copilot session at ${short}; starting CI and Squad Review for this description revision.`);
                 for (const r of reviews) {
                   await agent.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: r.file, ref: defaultBranch, inputs: { pr_number: String(number) } });
                 }
-                await comment(`${reviewMarker}\n🧭 Copilot finished a session at ${short}. Started CI and Squad Review (${reviews.map(r => r.role).join(', ')}). Blocking findings go back to Copilot automatically; when everything is green the PR squash auto-merges.`);
                 return core.info(`#${number}: started Squad Review for ${short}.`);
               }
 
               const ageMinutes = (Date.now() - new Date(started.created_at).getTime()) / 60000;
               if (ageMinutes > Number(process.env.REVIEW_TIMEOUT_MINUTES)) {
                 const checks = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 });
-                const missing = reviews.map(r => `Squad Review / ${r.role}`).filter(n => !checks.some(c => c.name === n && c.status === 'completed'));
+                const missing = reviews.map(r => `Squad Review / ${r.role}`).filter(n => !checks.some(c => c.name === n && c.status === 'completed' && Date.parse(c.completed_at) >= Date.parse(started.created_at)));
                 if (missing.length) {
-                  await escalate(`<!-- squad-shepherd:review-timeout:${sha} -->`, `${missing.join(', ')} did not publish a result for ${short} within ${process.env.REVIEW_TIMEOUT_MINUTES} minutes. Check the *Squad Review* runs in Actions, then re-run them with \`pr_number=${number}\`.`);
+                  await escalate(`<!-- squad-shepherd:review-timeout:${sha}:${bodyHash(pr.body).slice(0, 12)} -->`, `${missing.join(', ')} did not publish a result for this description revision within ${process.env.REVIEW_TIMEOUT_MINUTES} minutes. Check the *Squad Review* runs in Actions, then re-run them with \`pr_number=${number}\`.`);
                 }
               }
+            }
+
+            async function approvedScope(pr) {
+              if (pr.state !== 'open') return null;
+              if (labelsOf(pr).includes('plan:waived')) return { waived: true, owner: human };
+              const version = (pr.body || '').match(/\bplan\s+v(\d+)\b/i)?.[1];
+              if (!version) return null;
+              const candidates = [...new Set([...(pr.body || '').matchAll(/(?:issue\s+|relates to\s+|part of\s+|closes\s+|fixes\s+|resolves\s+)(?:[a-z0-9_.-]+\/[a-z0-9_.-]+)?#(\d+)\b/gi)].map(m => Number(m[1])))];
+              if (candidates.length > 20) throw new Error('Too many issue references to resolve metadata scope safely.');
+              for (const issueNumber of candidates) {
+                const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+                if (issue.pull_request || !issue.labels.some(l => l.name === 'plan:approved')) continue;
+                const plans = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: issueNumber, per_page: 100 });
+                const plan = plans.filter(c => /^## .*Implementation plan v\d+\b/.test(c.body || '')).at(-1);
+                if (plan?.body.match(/^## .*Implementation plan v(\d+)\b/)?.[1] === version
+                  && referencesIssue(pr.body, issueNumber, `${owner}/${repo}`)) {
+                  return { issueNumber, planVersion: Number(version), repoFullName: `${owner}/${repo}` };
+                }
+              }
+              return null;
             }
 
       - name: Escalate automation failure

@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Test completion declaration gate
-        run: node --test .github/scripts/*.test.js
+      - name: Test workflow decision scripts
+        run: node --test .github/scripts/*.test.*
 
       - name: Detect project types
         id: detect
