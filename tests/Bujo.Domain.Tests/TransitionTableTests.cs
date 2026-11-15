@@ -101,7 +101,7 @@ public sealed class TransitionTableTests
 
         var other = fixture.CreateWeekly(2026, 48);
         var moved = fixture.Journal.Move(Guid.NewGuid(), capture.Item.Id, capture.Occurrence.Id, other.Id);
-        Assert.False(moved.IsSuccess);
+        Assert.Equal(DomainErrorCode.ListClosed, moved.Error!.Code);
 
         var secondFixture = new JournalTestFixture();
         var original = secondFixture.Capture("moved occurrence");

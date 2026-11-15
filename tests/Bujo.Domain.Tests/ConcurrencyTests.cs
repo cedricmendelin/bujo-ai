@@ -26,6 +26,9 @@ public sealed class ConcurrencyTests
             var outcomes = await Task.WhenAll(results);
 
             Assert.Single(outcomes, result => result.IsSuccess);
+            Assert.All(
+                outcomes.Where(result => !result.IsSuccess),
+                result => Assert.Equal(DomainErrorCode.StaleOccurrence, result.Error!.Code));
             var snapshot = fixture.Journal.GetSnapshot();
             Assert.Single(snapshot.Occurrences, item =>
                 item.ItemId == capture.Item.Id && item.State == OccurrenceState.Open);
