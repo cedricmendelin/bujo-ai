@@ -29,8 +29,6 @@ changing anything.
   `terraform fmt`/`validate` (when `infra/` changes) before finishing.
 - Never commit secrets, tenant/subscription IDs, connection strings, or personal
   data. Azure access from GitHub Actions uses OIDC only.
-- Do not change `.github/workflows/`, `.github/agents/`, or `.squad/` unless the
-  approved plan explicitly lists those files.
 - Do not pull later-release scope (for example release 2 AI search/RAG) into
   the change.
 
