@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bujo.Domain/Bujo.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bujo.Domain.Tests/Bujo.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -115,7 +115,7 @@ test('action_required CI does not suppress owner-dispatched CI', () => {
 test('review gate workflow requires the shared shepherd/session decision and cannot mark an agent draft ready', async () => {
   const gate = await readFile(new URL('../workflows/squad-review-gate.yml', import.meta.url), 'utf8');
   assert.match(gate, /gateEligibility/);
-  assert.match(gate, /squad-shepherd:review:/);
+  assert.match(gate, /shepherdMarker: !!currentReview\(comments, human, sha, pr\.body\)/);
   assert.match(gate, /classifySession/);
   assert.doesNotMatch(gate, /markPullRequestReadyForReview/);
   assert.ok(gate.indexOf('eligibility !== \'eligible\'') < gate.indexOf('if (!failed.length)'));
@@ -131,7 +131,7 @@ test('shepherd returns on interrupted sessions before readiness or CI/review dis
   const shepherd = await readFile(new URL('../workflows/squad-pr-shepherd.yml', import.meta.url), 'utf8');
   const interruptedStart = shepherd.indexOf("if (session.state === 'interrupted')");
   const readyStart = shepherd.indexOf('markPullRequestReadyForReview');
-  const interruptedBlock = shepherd.slice(interruptedStart, shepherd.indexOf('if (pr.draft)', interruptedStart));
+  const interruptedBlock = shepherd.slice(interruptedStart, shepherd.indexOf('const proposal =', interruptedStart));
   assert.ok(interruptedStart >= 0);
   assert.ok(interruptedStart < readyStart);
   assert.match(interruptedBlock, /return core\.info/);

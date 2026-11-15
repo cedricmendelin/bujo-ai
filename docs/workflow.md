@@ -69,8 +69,67 @@ use `/plan revise <feedback>`, review the new version, and re-apply
 `plan:approved`.
 
 The gate re-reads the current PR description whenever a Copilot session, CI, or a
-Squad Review run completes. Editing the description alone does not trigger it;
-push a commit or re-run a check after correcting a completion finding.
+Squad Review run completes. For same-repository cloud PRs, an owner/Copilot description edit also
+triggers the shepherd using default-branch code; the hourly fallback detects
+missed edits. Reviews are keyed by both head and description hash. The gate
+waits for all four reviews of that revision, not old passing checks of the same
+commit. Local (`handoff:local` or other branches) PRs retain push-based reviews;
+re-run the reviewers manually after a description-only correction.
+
+### Cloud PR-description handoff
+
+The two PATs have distinct jobs: `COPILOT_GITHUB_TOKEN` permits Copilot
+inference; `GH_AW_AGENT_TOKEN` permits trusted workflow GitHub operations.
+Neither means the implementing cloud session has a PR-update tool. The session
+for #38 exposed read-only GitHub MCP tools and a comment-reply tool; it did not
+demonstrate a missing owner-token scope. Do not expose `GH_AW_AGENT_TOKEN` to the
+cloud session or add write-enabled MCP tools just to repair descriptions.
+
+An implementer first uses a native PR-update tool, if available, and reads back
+the result. Otherwise it replies on the PR with an explicit proposal:
+
+````text
+<!-- squad-pr-metadata -->
+```json
+{
+  "headSha": "<current 40-character head SHA>",
+  "baseBodySha256": "<SHA-256 of the exact current description's UTF-8 bytes>",
+  "body": "Completion: partial\nImplements plan v1 for issue #N.\n\n## Remaining work\nState unfinished scope and its dependency.\n\nRelates to #N"
+}
+```
+````
+
+Replace placeholders using the GitHub read tools. Encode the full replacement as
+a JSON string, with no trailing prose. The replacement begins with a completion
+declaration, retains the current approved issue/plan linkage, and remains subject
+to independent completion review. Publishing a proposal is not applying it.
+
+The shepherd accepts proposals only from the repository owner or the known
+`Copilot`/`copilot-swe-agent[bot]` bot identities. It accepts only a description,
+not titles, labels, draft changes or arbitrary API operations. The maximum
+replacement is 60,000 UTF-8 bytes. It rejects stale head/body snapshots,
+malformed JSON and invalid completion declarations. It resolves the current
+approved issue plan and re-fetches state and approval immediately before the
+REST write; GitHub does not provide an atomic body-hash compare-and-swap, so an
+external edit in the final read/write window still requires inspection.
+For `plan:waived`, only the owner may propose a replacement because the
+description is the approved scope. PR code is never checked out or executed
+with the owner PAT.
+
+An applied proposal disables prior auto-merge and dispatches all four reviews
+once per head/description revision after older reviews have drained. If dispatch
+partially fails, the workflow fails visibly; missing revision results time out
+to `needs:human` and must be re-run manually. Invalid/stale proposals escalate
+once with an actionable rejection; publish a corrected proposal and remove
+`needs:human` to resume.
+
+The shepherd recognizes both legacy and body-hashed fix-request markers from
+the owner/workflow bot. Every completion event, hourly tick and manual dispatch
+uses the latest session timestamps. A successful session that started after a
+fix request but changed neither head nor description escalates once, instead of
+silently waiting or issuing unbounded fixes. Active/interrupted sessions never
+apply metadata or start reviews. Read the reply, fix metadata or dispute the
+finding and re-run reviews; use `handoff:local` when taking over locally.
 
 ## Workflows
 
@@ -80,8 +139,8 @@ push a commit or re-run a check after correcting a completion finding.
 | `squad-plan-approved.yml` | Actions | Owner check, assigns `copilot-swe-agent[bot]` with `custom_agent` (skipped for `handoff:local`); guards `plan:waived` |
 | `squad-review-{architect,security,verifier,devops}.md` | gh-aw | Independent review, inline comments, required check `Squad Review / <Role>`. Copilot branches are reviewed only via dispatch from the shepherd; other PRs on open/push/ready |
 | `shared/squad-review.md` | gh-aw import | Common review protocol |
-| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, push to `main`, hourly fallback) | Requires the latest session to succeed before readiness or CI/reviews; bounded recovery, approval diagnostics, conflicts, and escalation |
-| `squad-review-gate.yml` | Actions (`workflow_run` on Copilot cloud agent, CI, and Squad Review) | Requires successful latest Copilot session and current-head shepherd marker; aggregates checks, validates completion declarations, auto-merge or fix loop |
+| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, guarded description edits, push to `main`, hourly fallback) | Requires a successful session before readiness, metadata proposals and reviews; bounded recovery, approval diagnostics, conflicts, and escalation |
+| `squad-review-gate.yml` | Actions (`workflow_run` on Copilot cloud agent, CI, and Squad Review) | Requires a successful session and current head/description shepherd marker; aggregates checks, validates completion declarations, auto-merge or fix loop |
 | `ci.yml` | Actions | Required check `ci`: .NET build/test, Terraform fmt/validate |
 | `copilot-setup-steps.yml` | Actions | .NET 10 and Terraform in the Copilot cloud agent environment |
 
