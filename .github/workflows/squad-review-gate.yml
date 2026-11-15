@@ -67,8 +67,29 @@ jobs:
               numbers = open.map(p => p.number);
             }
 
+            // One broken PR must not stop the others from being evaluated.
+            const errors = [];
             for (const number of numbers) {
-              await evaluate(number);
+              try {
+                await evaluate(number);
+              } catch (e) {
+                core.error(`#${number}: ${e.message}`);
+                errors.push(`#${number}: ${e.message}`);
+              }
+            }
+            if (errors.length) core.setFailed(errors.join('\n'));
+
+            // GitHub refuses to enable auto-merge when the PR is already mergeable
+            // ("clean"/"unstable" status), so merge directly in that case.
+            async function merge(pr) {
+              try {
+                await agent.graphql('mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}', { id: pr.node_id });
+                return 'Squash auto-merge is enabled';
+              } catch (e) {
+                if (!/clean status|unstable status|has_hooks status/i.test(e.message)) throw e;
+                await agent.rest.pulls.merge({ owner, repo, pull_number: pr.number, sha: pr.head.sha, merge_method: 'squash' });
+                return 'Squash-merged';
+              }
             }
 
             async function evaluate(number) {
@@ -122,8 +143,8 @@ jobs:
                 if (labels.includes('needs:human')) {
                   await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' }).catch(() => {});
                 }
-                await agent.graphql('mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}', { id: pr.node_id });
-                await comment(`${marker}\n✅ **Squad Review passed** for ${short}. Squash auto-merge is enabled; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
+                const how = await merge(pr);
+                await comment(`${marker}\n✅ **Squad Review passed** for ${short}. ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
                 return;
               }
 

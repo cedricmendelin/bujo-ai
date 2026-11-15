@@ -84,8 +84,10 @@ the shepherd is what starts the review loop.
    pushes; repository admin bypass for emergencies only.
 5. **Copilot cloud agent**: enable for the repository. In **Settings → Copilot →
    Cloud agent**, turn off **Require approval for workflow runs**; otherwise every
-   Copilot push leaves CI as *action required* (the shepherd still dispatches CI
-   per head, so the loop works, but with noise). This toggle has no API.
+   Copilot push leaves CI as *action required*. You never need to approve those
+   runs: the shepherd dispatches CI and the reviews itself for every Copilot head,
+   and the gate merges directly when GitHub already reports the PR as mergeable
+   (auto-merge cannot be enabled then). This toggle has no API.
    Firewall allowlist `registry.terraform.io`, `releases.hashicorp.com`,
    `api.nuget.org` as needed.
 6. **Azure (with the IaC issue)**: OIDC federated credentials and the variables
