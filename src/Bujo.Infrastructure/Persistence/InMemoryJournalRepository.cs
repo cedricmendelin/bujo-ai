@@ -1,6 +1,6 @@
 using Bujo.Domain;
 
-namespace Bujo.Domain;
+namespace Bujo.Infrastructure.Persistence;
 
 public sealed class InMemoryJournalRepository : IJournalRepository
 {

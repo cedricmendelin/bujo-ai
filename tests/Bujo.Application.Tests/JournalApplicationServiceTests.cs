@@ -1,5 +1,6 @@
 using Bujo.Application;
 using Bujo.Domain;
+using Bujo.Infrastructure.Persistence;
 
 namespace Bujo.Application.Tests;
 

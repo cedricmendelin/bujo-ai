@@ -1,4 +1,5 @@
 using Bujo.Domain;
+using Bujo.Infrastructure.Persistence;
 
 namespace Bujo.Domain.Tests;
 

@@ -1,4 +1,5 @@
 using Bujo.Domain;
+using Bujo.Application;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +12,13 @@ public static class DependencyInjection
     {
         services.AddDbContextFactory<JournalDbContext>(options => options.UseSqlServer(connectionString));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
+        return services;
+    }
+
+    public static IServiceCollection AddJournalApplication(this IServiceCollection services)
+    {
+        services.AddScoped<JournalService>();
+        services.AddScoped<JournalApplicationService>();
         return services;
     }
 }

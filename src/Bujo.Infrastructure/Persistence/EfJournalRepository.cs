@@ -1,6 +1,7 @@
 using System.Data;
 using Bujo.Domain;
 using Microsoft.EntityFrameworkCore;
+using Bujo.Infrastructure.Persistence;
 
 namespace Bujo.Infrastructure.Persistence;
 
