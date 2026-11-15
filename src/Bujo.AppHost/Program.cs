@@ -9,6 +9,9 @@ var journalDatabase = sqlServer.AddDatabase("journal");
 builder.AddProject<Projects.Bujo_Host>("journal")
     .WithReference(journalDatabase)
     .WaitFor(journalDatabase)
+    .WithEnvironment("Auth__TenantId", builder.Configuration["Auth:TenantId"] ?? string.Empty)
+    .WithEnvironment("Auth__Audience", builder.Configuration["Auth:Audience"] ?? string.Empty)
+    .WithEnvironment("Auth__AllowedPrincipals", builder.Configuration["Auth:AllowedPrincipals"] ?? string.Empty)
     .WithArgs("--migrate");
 
 builder.Build().Run();

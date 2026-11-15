@@ -44,7 +44,33 @@ jobs:
         run: |
           dotnet restore
           dotnet build --no-restore --configuration Release
-          dotnet test --no-build --configuration Release --verbosity normal
+          mkdir -p "$RUNNER_TEMP/test-results"
+          for project in tests/Bujo.*.Tests/*.csproj; do
+            test_name="$(basename "$project" .csproj)"
+            dotnet test "$project" --no-build --configuration Release --verbosity normal \
+              --logger "trx;LogFileName=${test_name}.trx" \
+              --results-directory "$RUNNER_TEMP/test-results"
+          done
+          python3 - "$RUNNER_TEMP/test-results" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          reports = sorted(Path(sys.argv[1]).glob("*.trx"))
+          if not reports:
+              raise SystemExit("No test result files were produced.")
+
+          skipped = 0
+          for report in reports:
+              root = ET.parse(report).getroot()
+              counters = next((node for node in root.iter() if node.tag.endswith("Counters")), None)
+              if counters is None:
+                  raise SystemExit(f"No test counters were found in {report.name}.")
+              skipped += int(counters.attrib.get("skipped", "0"))
+
+          if skipped:
+              raise SystemExit(f"CI must not skip tests; found {skipped} skipped tests.")
+          PY
 
       - name: Set up Terraform
         if: steps.detect.outputs.terraform == 'true'

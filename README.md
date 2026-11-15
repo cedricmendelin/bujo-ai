@@ -33,6 +33,9 @@ document decisions, create a GitHub issues backlog, then set up workflows.
 The [initial backlog](docs/backlog.md) separates the first usable release,
 AI-assisted planning, and the longer-term vision, with explicit prerequisites.
 
+See [local development](docs/development.md) for the .NET 11, Podman, and Aspire
+setup.
+
 ## Working with Squad
 
 The [team roster](.squad/team.md) and [routing rules](.squad/routing.md) define
