@@ -130,9 +130,9 @@ function workflowScript(file) {
   return script.split(/\r?\n/).map(line => line.slice(12)).join('\n');
 }
 
-function harness({ comments = [], sessions = [session], activeReview = false, checks = [], beforeRead } = {}) {
+function harness({ comments = [], sessions = [session], activeReview = false, checks = [], beforeRead, dryRun = false } = {}) {
   const state = {
-    pr: { ...structuredClone(pr), number: 38, draft: false, mergeable: true,
+    pr: { ...structuredClone(pr), number: 38, title: 'Test PR', draft: false, mergeable: true,
       node_id: 'PR_38', labels: [], head: { sha, ref: 'copilot/test', repo: { full_name: 'owner/repo' } },
       base: { ref: 'main' } },
     comments: structuredClone(comments), writes: [], logs: [], sessions,
@@ -155,6 +155,7 @@ function harness({ comments = [], sessions = [session], activeReview = false, ch
   };
   const actions = {
     listRepoWorkflows: async () => [{ id: 1, path: 'dynamic/copilot-swe-agent.yml' }],
+    listWorkflowRunsForRepo: async () => ({ data: { workflow_runs: [] } }),
     listWorkflowRuns: async ({ workflow_id }) => ({ data: { workflow_runs:
       workflow_id === 1 ? state.sessions
         : workflow_id === 'ci.yml' ? [{ conclusion: 'success' }]
@@ -184,6 +185,9 @@ function harness({ comments = [], sessions = [session], activeReview = false, ch
       const result = await method(args);
       return result.data || result;
     },
+    graphql: async () => ({ repository: { pullRequest: { closingIssuesReferences: {
+      nodes: [{ labels: { nodes: [{ name: 'plan:approved' }] } }],
+    } } } }),
   };
   const agent = { rest: github.rest, graphql: async query => state.writes.push({ operation: 'graphql', query }) };
   const core = {
@@ -195,6 +199,7 @@ function harness({ comments = [], sessions = [session], activeReview = false, ch
     HUMAN: owner, REVIEWS: 'Architect:architect.yml,Security:security.yml,Verifier:verifier.yml,DevOps:devops.yml',
     REVIEW_TIMEOUT_MINUTES: '60', MAX_ROUNDS: '3',
     REQUIRED_CHECKS: 'ci,Squad Review / Architect,Squad Review / Security,Squad Review / Verifier,Squad Review / DevOps',
+    DRY_RUN: String(dryRun),
   } };
   state.run = async (file, eventName = 'schedule', script = workflowScript(file)) => {
     const context = {
@@ -237,7 +242,7 @@ test('real shepherd applies an explicit proposal before stall handling and dispa
   assert.equal(state.writes.length, count);
 });
 
-test('real shepherd rejects stale proposals and never writes during an active/interrupted session', async () => {
+test('real shepherd rejects stale proposals and never applies them during an active/interrupted session', async () => {
   const rejected = harness({ comments: [proposal({ baseBodySha256: 'f'.repeat(64) })] });
   await rejected.run('squad-pr-shepherd.yml');
   assert.equal(rejected.writes.some(w => w.operation === 'update'), false);
@@ -245,8 +250,27 @@ test('real shepherd rejects stale proposals and never writes during an active/in
   for (const override of [{ status: 'in_progress' }, { conclusion: 'cancelled' }]) {
     const waiting = harness({ comments: [proposal()], sessions: [{ ...session, ...override }] });
     await waiting.run('squad-pr-shepherd.yml');
-    assert.deepEqual(waiting.writes, []);
+    assert.equal(waiting.writes.some(w => ['update', 'dispatch', 'graphql'].includes(w.operation)), false);
+    if (override.status === 'in_progress') assert.deepEqual(waiting.writes, []);
+    else assert.ok(waiting.writes.some(w => w.body?.includes('squad-shepherd:recover:10')));
   }
+});
+
+test('dry-run shepherd never applies a metadata proposal or disables auto-merge', async () => {
+  const state = harness({ comments: [proposal()], dryRun: true });
+  state.pr.auto_merge = {};
+  await state.run('squad-pr-shepherd.yml');
+  assert.equal(state.pr.body, body);
+  assert.deepEqual(state.writes, []);
+  assert.ok(state.logs.some(text => text.includes('would apply metadata proposal')));
+});
+
+test('dry-run shepherd does not disable auto-merge when starting a review revision', async () => {
+  const state = harness({ dryRun: true });
+  state.pr.auto_merge = {};
+  await state.run('squad-pr-shepherd.yml');
+  assert.deepEqual(state.writes, []);
+  assert.ok(state.logs.some(text => text.includes('would dispatch')));
 });
 
 test('real shepherd re-reads the PR and rejects a concurrent description edit before writing', async () => {
@@ -284,6 +308,20 @@ test('real gate refuses old green checks for a new body and accepts only fresh r
   for (const check of checks) check.completed_at = '2026-11-15T15:01:00Z';
   await state.run('squad-review-gate.yml');
   assert.ok(state.writes.some(w => w.query?.includes('enablePullRequestAutoMerge')));
+});
+
+test('real gate requires both the current revision marker and a successful latest session', async () => {
+  const names = ['ci', 'Squad Review / Architect', 'Squad Review / Security', 'Squad Review / Verifier', 'Squad Review / DevOps'];
+  const checks = names.map((name, id) => ({ id, name, status: 'completed', conclusion: 'success', completed_at: '2026-11-15T15:01:00Z' }));
+  for (const options of [
+    { comments: [comment(reviewMarker(sha, replacement))] },
+    { comments: [comment(reviewMarker(sha, body))], sessions: [{ ...session, status: 'in_progress' }] },
+    { comments: [comment(reviewMarker(sha, body))], sessions: [{ ...session, conclusion: 'failure' }] },
+  ]) {
+    const state = harness({ ...options, checks });
+    await state.run('squad-review-gate.yml');
+    assert.equal(state.writes.some(w => w.query?.includes('enablePullRequestAutoMerge') || w.operation === 'merge'), false);
+  }
 });
 
 test('mutation of the real shepherd marker lookup recreates the regression', async () => {

@@ -81,12 +81,19 @@ automation cannot continue. Details, commands, and one-time setup are in the
 
 ```text
 plan:approved ─▶ Copilot cloud agent (custom agent = plan owner) works on a draft PR
-              ─▶ session ends ─▶ Squad PR Shepherd marks PR ready, starts CI + Squad Review
-              ─▶ Squad Review Gate
+              ─▶ latest session succeeds ─▶ Shepherd marks ready, starts CI + Squad Review
+              ─▶ Gate requires session success + shepherd approval for this PR head
                    all green   ─▶ squash auto-merge ─▶ main ─▶ deploy
                    blocking    ─▶ "@copilot fix …" ─▶ Copilot fixes ─▶ shepherd re-reviews
-                   3 rounds / stuck / conflicts unresolved ─▶ needs:human + @cedricmendelin
+              ─▶ interrupted ─▶ at most 2 bounded recoveries; recovery failure/stall
+                                ─▶ needs:human + @cedricmendelin (no ready/merge)
 ```
+
+The latest Copilot cloud-agent workflow run is authoritative; a `[WIP]` title is
+only a hint. An active session is left alone. A failed, cancelled, or timed-out
+session is not reported as finished; duplicate events do not repeat its recovery
+request, and the gate cannot bypass the shepherd. If you intend to stop a session
+yourself, add `needs:human` or `handoff:local` before cancelling it.
 
 Copilot also resolves merge conflicts with `main` when asked by the shepherd,
 and you can steer it at any time with an `@copilot …` comment on the PR.

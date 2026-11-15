@@ -12,13 +12,15 @@ issue ──/plan──▶ Architect plan comment (v1, owner: builder|ai|devops|
         ├─ cloud (default) ──▶ Copilot cloud agent (custom agent = owner) ─▶ draft PR
         │                        │ session ends (workflow_run "Copilot cloud agent")
         │                        ▼
-        │                  Squad PR Shepherd: mark ready, dispatch CI + 4 reviews
+        │                  Squad PR Shepherd: classify latest session
+        │                      success ─▶ mark ready, dispatch CI + 4 reviews
+        │                      interrupted ─▶ bounded recovery or needs:human
         └─ handoff:local ──▶ GitHub Copilot app session ─▶ ready PR + Agent merge
                                          │
           CI + Squad Review / Architect · Security · Verifier · DevOps
                                          │
                       Squad Review Gate (workflow_run aggregator)
-           all success ──▶ ready + squash auto-merge ──▶ main ──▶ deploy
+           all success ──▶ squash auto-merge ──▶ main ──▶ deploy
            any failure ──▶ findings to @copilot (cloud) or Agent merge (local)
                            max 3 rounds ──▶ needs:human + @cedricmendelin
 ```
@@ -37,7 +39,7 @@ See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
 | Hand over a cloud PR | Add `handoff:local` to a `copilot/*` PR | Shepherd and `@copilot` fix requests stop; reviews run on every push; use Agent merge |
 | Waive the plan | Owner applies `plan:waived` to a PR | For work without an issue plan; reviewers use the PR description as scope; reviews start |
 | Re-review | Automatic after each Copilot session (shepherd) or push (local PRs); manually: Actions → *Squad Review X* → Run with `pr_number` | Reviewer check re-published for the PR head |
-| Escalation | `needs:human` + `@cedricmendelin` comment | 3 failed fix rounds, stalled Copilot session, unresolved conflicts, reviewer crash/timeout. Remove the label to resume automation |
+| Escalation | `needs:human` + `@cedricmendelin` comment | 3 failed fix rounds, interrupted recovery, exhausted recovery bound, unapproved recovery scope, unresolved conflicts, reviewer crash/timeout. Remove the label to resume automation |
 | Automation failure | Issue `Squad automation failing: <workflow>` | Shepherd or gate itself failed (for example an expired token) |
 
 Use `/plan` to draft and `/plan revise <feedback>` to revise; `/squad plan` is
@@ -66,8 +68,8 @@ closure: inspect prior merged work and remaining criteria; if the plan changes,
 use `/plan revise <feedback>`, review the new version, and re-apply
 `plan:approved`.
 
-The gate re-reads the current PR description whenever CI or a Squad Review check
-completes. For same-repository cloud PRs, an owner/Copilot description edit also
+The gate re-reads the current PR description whenever a Copilot session, CI, or a
+Squad Review run completes. For same-repository cloud PRs, an owner/Copilot description edit also
 triggers the shepherd using default-branch code; the hourly fallback detects
 missed edits. Reviews are keyed by both head and description hash. The gate
 waits for all four reviews of that revision, not old passing checks of the same
@@ -137,8 +139,8 @@ finding and re-run reviews; use `handoff:local` when taking over locally.
 | `squad-plan-approved.yml` | Actions | Owner check, assigns `copilot-swe-agent[bot]` with `custom_agent` (skipped for `handoff:local`); guards `plan:waived` |
 | `squad-review-{architect,security,verifier,devops}.md` | gh-aw | Independent review, inline comments, required check `Squad Review / <Role>`. Copilot branches are reviewed only via dispatch from the shepherd; other PRs on open/push/ready |
 | `shared/squad-review.md` | gh-aw import | Common review protocol |
-| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, guarded description edits, push to `main`, hourly fallback) | Marks successful Copilot PRs ready, applies explicit metadata proposals, dispatches reviews per head/description revision, resolves conflicts and escalates stalls |
-| `squad-review-gate.yml` | Actions (`workflow_run`) | Aggregates checks, validates completion declarations, auto-merge or fix loop |
+| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, guarded description edits, push to `main`, hourly fallback) | Requires a successful session before readiness, metadata proposals and reviews; bounded recovery, approval diagnostics, conflicts, and escalation |
+| `squad-review-gate.yml` | Actions (`workflow_run` on Copilot cloud agent, CI, and Squad Review) | Requires a successful session and current head/description shepherd marker; aggregates checks, validates completion declarations, auto-merge or fix loop |
 | `ci.yml` | Actions | Required check `ci`: .NET build/test, Terraform fmt/validate |
 | `copilot-setup-steps.yml` | Actions | .NET 10 and Terraform in the Copilot cloud agent environment |
 
@@ -167,16 +169,90 @@ the shepherd is what starts the review loop.
    `Squad Review / Architect`, `Squad Review / Security`,
    `Squad Review / Verifier`, `Squad Review / DevOps` (exact case); block force
    pushes; repository admin bypass for emergencies only.
-5. **Copilot cloud agent**: enable for the repository. In **Settings → Copilot →
-   Cloud agent**, turn off **Require approval for workflow runs**; otherwise every
-   Copilot push leaves CI as *action required*. You never need to approve those
-   runs: the shepherd dispatches CI and the reviews itself for every Copilot head,
-   and the gate merges directly when GitHub already reports the PR as mergeable
-   (auto-merge cannot be enabled then). This toggle has no API.
+5. **Copilot cloud agent**: enable it for the repository. Keep **Require approval
+   for workflow runs** enabled unless an administrator explicitly accepts the
+   security tradeoff described below. The shepherd's owner-token dispatches are
+   independent; do not treat an approval-blocked `pull_request` run as a CI result.
    Firewall allowlist `registry.terraform.io`, `releases.hashicorp.com`,
    `api.nuget.org` as needed.
 6. **Azure (with the IaC issue)**: OIDC federated credentials and the variables
    documented by that issue's plan. No Azure secrets are stored in GitHub.
+
+## Interrupted sessions and workflow approvals
+
+The shepherd classifies the newest *Copilot cloud agent* workflow run for the PR
+branch by creation time and run number. A running session waits; only `success`
+continues the lifecycle. A failed, cancelled, timed-out, approval-blocked, skipped,
+or otherwise non-success result is interrupted, regardless of the PR title or
+description. Repeated triggers do not repeat a recovery comment for the same run.
+The shepherd can request at most two recoveries for a PR, and only when its linked
+issue has `plan:approved` or the PR has `plan:waived`. If a recovery session is
+interrupted, recovery is exhausted, or the plan is not approved, it adds
+`needs:human`, assigns and mentions @cedricmendelin, and links the run. A later
+successful session supersedes the earlier interrupted result. A person who means
+to stop work should add `needs:human` or `handoff:local` before cancelling; GitHub
+does not identify whether a cancellation was human-initiated.
+
+The gate independently re-reads the latest session. For Copilot PRs it waits
+unless the session succeeded and the shepherd posted its marker for the current
+head commit. An active or interrupted session cannot produce a fix/approval
+marker or merge; if a newer non-success session appears after the gate enabled
+auto-merge, the gate disables it when it next evaluates that PR. Only the
+shepherd marks a Copilot draft ready.
+
+### Approval-blocked runs
+
+GitHub documents that Actions workflows do not run automatically when Copilot
+pushes a PR by default. The PR merge box offers **Approve and run workflows**;
+the repository administrator can optionally disable **Require approval for
+workflow runs** under **Settings → Copilot → Cloud agent → Policies**. GitHub
+warns that disabling it can let unreviewed Copilot code gain repository write
+access or access Actions secrets. Review every workflow's `GITHUB_TOKEN`
+permissions and secrets before changing this setting. The automation never
+changes or bypasses it. This Copilot-specific policy is distinct from
+**Settings → Actions → General** fork-pull-request approval policy.
+
+See GitHub's [Copilot cloud-agent workflow approval
+settings](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/configuring-agent-settings)
+and [March 2026 changelog](https://github.blog/changelog/2026-03-13-optionally-skip-approval-for-copilot-coding-agent-actions-workflows/).
+
+On 2026-11-15, [run 43717345116](https://github.com/cedricmendelin/bujo-ai/actions/runs/43717345116)
+and [run 43718023727](https://github.com/cedricmendelin/bujo-ai/actions/runs/43718023727),
+both *Squad PR Shepherd* `workflow_run`s, ended `action_required` with zero jobs.
+The owner reported that Copilot-actor
+`workflow_run`/`issue_comment` runs and Copilot-pushed PR workflows were gated;
+owner-dispatched runs succeeded. These are approval-blocked runs, not failed
+jobs or successful CI results. This evidence is consistent with GitHub's documented
+default, but Actions cannot expose the current Copilot setting value, so its
+current UI state and the reason it did not cover those events remain unverified.
+
+The shepherd reports matching `action_required` runs once per PR head, including
+workflow, event, actor, and URL. Copilot-actor `workflow_run`/`issue_comment`
+runs with no PR association are explicitly labeled repository-level rather than
+attributed to that PR. If `ci` already passes, those runs are not
+additional results and no approval action is needed. Otherwise, when the latest
+Copilot session succeeds, the shepherd dispatches CI and reviews as the owner;
+while a session is active or interrupted, it waits or requests recovery without
+dispatching them. A blocked run never satisfies a required check. If an owner
+chooses to approve one manually, first inspect the PR changes and workflow
+permissions; do not approve it merely to clear the status.
+
+### Validating the lifecycle
+
+1. First use **Actions → Squad PR Shepherd → Run workflow** on an open Copilot PR
+   with `dry_run: true`. Inspect the logs for the decision and confirm it added no
+   comments or labels, changed no draft state, and dispatched no workflow.
+2. For a live recovery test, use a throwaway Copilot PR with an approved test plan
+   (or owner-applied `plan:waived`). Cancel each Copilot session before it can
+   complete, then dispatch the shepherd normally. Verify one recovery marker for
+   each interrupted run, no ready transition or CI/review dispatch while
+   interrupted, and `needs:human` after the recovery failure/bound. The gate must
+   wait even if old checks are green. Do not allow a session on this PR to
+   complete; close the test PR unmerged after verification.
+3. Use the unit tests to verify the successful-session, later-retry-success, and
+   gate-eligibility paths. If exercising a real successful merge path, use an
+   isolated repository without production deployment or secrets.
+4. Roll back by reverting the change; no data migration is required.
 
 ## Creating the tokens
 
