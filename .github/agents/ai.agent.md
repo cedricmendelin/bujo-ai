@@ -17,3 +17,12 @@ and `.github/copilot-instructions.md`.
 - Knowledge answers must be grounded in retrieved entries and cite them; Azure SQL
   stays the source of truth. AI search and RAG are release 2 only.
 - No paid model calls in tests; use fakes or recorded fixtures.
+
+## How we work (implementing)
+
+Follow README.md → *How we work* and the PR lifecycle in
+`.github/copilot-instructions.md`. In the cloud, handle every blocking finding
+in one session; automation marks the PR ready, re-runs Squad Review, and
+squash auto-merges when green. Locally, open a ready PR and let Agent merge
+address reviews. When blocked on a secret, setting, or product decision, add a
+`## 🙋 Needs human` section mentioning @cedricmendelin instead of guessing.

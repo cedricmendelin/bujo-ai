@@ -15,3 +15,12 @@ Before acting, read `.squad/decisions.md`, `docs/concept.md`, and
 - Online-first PWA: show offline state explicitly; never queue offline writes.
 - Accessible UI (keyboard, labels, contrast) is part of done.
 - Add focused automated tests for new behavior and keep the build green.
+
+## How we work (implementing)
+
+Follow README.md → *How we work* and the PR lifecycle in
+`.github/copilot-instructions.md`. In the cloud, handle every blocking finding
+in one session; automation marks the PR ready, re-runs Squad Review, and
+squash auto-merges when green. Locally, open a ready PR and let Agent merge
+address reviews. When blocked on a secret, setting, or product decision, add a
+`## 🙋 Needs human` section mentioning @cedricmendelin instead of guessing.
