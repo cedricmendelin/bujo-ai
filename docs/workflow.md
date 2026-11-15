@@ -171,10 +171,6 @@ environment (that environment is only for the cloud agent's runtime).
   repository) that also catches conflicts after merges and silent reviewers.
 - Required checks guarantee review of the merged head; a push after the gate
   enabled auto-merge waits for fresh checks.
-<<<<<<< HEAD
-- Infrastructure deploys from `main`; see [infrastructure operations](infrastructure.md).
-=======
 - The Copilot app's Agent merge works only for local sessions; cloud PRs rely
   on the shepherd and gate instead.
-- Deployment from `main` is part of the IaC/CD issue, not this workflow.
->>>>>>> origin/main
+- Infrastructure deploys from `main`; see [infrastructure operations](infrastructure.md).
