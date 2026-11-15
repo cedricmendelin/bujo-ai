@@ -28,7 +28,13 @@ Follow `.github/copilot-instructions.md`: implement only the approved plan.
 ## When reviewing a PR
 
 - Compare the diff with the approved plan referenced in the PR (latest
-  `bujo-plan` comment on the linked issue).
+  issue comment starting `## 📋 Implementation plan v` on the linked issue).
+- Review the entire PR description, including generated suffixes. Block any
+  closure while issue acceptance criteria remain unmet, even when the approved
+  plan allows a partial/specification-only fallback. A partial PR may merge only
+  with `Completion: partial`, non-closing issue linkage, and clearly preserved
+  remaining work and its dependency. Do not downgrade unmet completion criteria
+  to advisory.
 - Block on: unplanned scope, contradiction of a recorded decision, missing or
   wrong domain semantics (canonical items, list-local states, one active
   destination, planned periods), or architecture that blocks agreed next steps.

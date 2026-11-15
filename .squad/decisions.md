@@ -194,6 +194,20 @@
 - Automation reads checks with `GITHUB_TOKEN` (fine-grained PATs cannot read
   Checks) and writes with the owner PAT.
 
+### 2026-11-15: Issue completion requires acceptance evidence
+
+- Every PR declares `Completion: full` or `Completion: partial`. Full completion
+  requires evidence for every issue acceptance criterion, including code and
+  relevant tests.
+- Partial deliveries use non-closing issue references, preserve unfinished work
+  and dependencies, and leave the issue open. A plan's partial fallback never
+  satisfies the issue; unmet completion criteria block closure and are not
+  advisory.
+- The merge gate rejects partial declarations with closing references and checks
+  the entire PR description, including generated suffixes. Its text check is
+  deterministic, not semantic proof; the independent Verifier remains
+  responsible for acceptance evidence.
+
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.

@@ -40,9 +40,35 @@ See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
 | Escalation | `needs:human` + `@cedricmendelin` comment | 3 failed fix rounds, stalled Copilot session, unresolved conflicts, reviewer crash/timeout. Remove the label to resume automation |
 | Automation failure | Issue `Squad automation failing: <workflow>` | Shepherd or gate itself failed (for example an expired token) |
 
-Only the repository owner can approve or waive (`squad-plan-approved.yml`
-removes the label otherwise). Approval binds to the newest plan comment; any
-revision clears it. You can also edit the plan comment directly before approving.
+Use `/plan` to draft and `/plan revise <feedback>` to revise; `/squad plan` is
+not a supported command. No label is needed to draft or revise. Only the
+repository owner can approve or waive (`squad-plan-approved.yml` removes the
+label otherwise). `plan:approved` is required after reviewing the newest plan
+comment; approval binds to that version and every revision clears it. You can
+also edit the plan comment directly before approving it.
+
+## Full completion and partial delivery
+
+Every PR declares exactly one whole-line `Completion: full` or
+`Completion: partial`. A full PR may close its issue only when it provides
+evidence for every acceptance criterion, including the implementation code and
+relevant automated tests. The independent Verifier checks this evidence; the
+declaration and gate parser are not semantic proof of completion.
+
+A partial or specification-only fallback is only a milestone. Use a non-closing
+reference such as `Relates to #N` or `Part of #N`, include a `Remaining work`
+section naming unfinished work and its dependency, and remove all closing
+keywords from the whole PR description, including generated suffixes. The issue
+remains open until the final full-completion PR delivers every criterion.
+Unmet completion criteria block closure and cannot be downgraded to advisory.
+This also applies when resuming an issue reopened after a partial or premature
+closure: inspect prior merged work and remaining criteria; if the plan changes,
+use `/plan revise <feedback>`, review the new version, and re-apply
+`plan:approved`.
+
+The gate re-reads the current PR description whenever CI or a Squad Review check
+completes. Editing the description alone does not trigger it; push a commit or
+re-run a check after correcting a completion finding.
 
 ## Workflows
 
@@ -53,7 +79,7 @@ revision clears it. You can also edit the plan comment directly before approving
 | `squad-review-{architect,security,verifier,devops}.md` | gh-aw | Independent review, inline comments, required check `Squad Review / <Role>`. Copilot branches are reviewed only via dispatch from the shepherd; other PRs on open/push/ready |
 | `shared/squad-review.md` | gh-aw import | Common review protocol |
 | `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, push to `main`, hourly fallback) | Marks finished Copilot PRs ready, dispatches CI and reviews per head, asks Copilot to resolve conflicts, escalates stalls |
-| `squad-review-gate.yml` | Actions (`workflow_run`) | Aggregates checks, auto-merge or fix loop |
+| `squad-review-gate.yml` | Actions (`workflow_run`) | Aggregates checks, validates completion declarations, auto-merge or fix loop |
 | `ci.yml` | Actions | Required check `ci`: .NET build/test, Terraform fmt/validate |
 | `copilot-setup-steps.yml` | Actions | .NET 10 and Terraform in the Copilot cloud agent environment |
 

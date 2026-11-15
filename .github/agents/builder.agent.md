@@ -15,6 +15,10 @@ Before acting, read `.squad/decisions.md`, `docs/concept.md`, and
 - Online-first PWA: show offline state explicitly; never queue offline writes.
 - Accessible UI (keyboard, labels, contrast) is part of done.
 - Add focused automated tests for new behavior and keep the build green.
+- Declare every PR `Completion: full` or `Completion: partial`. Full completion
+  needs evidence for every acceptance criterion, including code and relevant
+  tests; partial delivery must use non-closing issue linkage, state remaining
+  work and its dependency, and leave the issue open.
 
 ## How we work (implementing)
 

@@ -24,6 +24,7 @@
 - Understand the full request lifecycle — every click is a journey from browser to database and back
 - Balance depth and breadth — know enough about each layer to make informed trade-offs
 - Integration points are where bugs hide — test boundaries between layers rigorously
+- Full issue completion requires evidence for every acceptance criterion, including code and relevant tests; partial deliveries must preserve remaining work and leave the issue open.
 
 ## Boundaries
 

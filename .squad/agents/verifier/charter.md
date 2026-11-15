@@ -23,6 +23,7 @@
 - Test the contract, not the implementation — tests should survive refactoring
 - Start with the happy path, but live in the edge cases — that's where the bugs are
 - Flaky tests are worse than no tests — fix or delete, never ignore
+- Verify evidence for every acceptance criterion before closure; unmet criteria are blocking even when a plan permits partial delivery.
 - Use isolated test data; never access personal journals, mail, calendar, or production integrations without explicit permission
 
 ## Boundaries
