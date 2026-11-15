@@ -41,8 +41,7 @@ versions are recorded in `infra/.terraform.lock.hcl`.
 | Resource or operation | Reason |
 | --- | --- |
 | Resource group lookup | The owner pre-creates the app resource group so deployment needs no subscription-scope Contributor. A Terraform data source references it without managing it. |
-| `azurerm_mssql_database` | The SQL-server AVM does not expose the database free-offer settings. AzureRM manages the database's serverless SKU and auto-pause configuration. |
-| `azapi_update_resource` for SQL free offer | AzureRM 4.81.0 has no free-limit attributes. AzAPI sets the SQL ARM API properties `useFreeLimit` and `freeLimitExhaustionBehavior` to enable the free offer and pause on exhaustion. |
+| `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = AutoPause` in one request. |
 | `azurerm_consumption_budget_resource_group` | No `avm-res-consumption-budget` module is published in the Terraform Registry. |
 | State storage | The storage account and private state container are owner-bootstrapped (#24), avoiding a bootstrap dependency on Terraform state itself. |
 

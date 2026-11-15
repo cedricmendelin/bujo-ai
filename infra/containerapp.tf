@@ -8,7 +8,9 @@ module "container_app_environment" {
   log_analytics_workspace = {
     resource_id = module.log_analytics.resource_id
   }
-  tags = local.common_tags
+  # Zone redundancy requires a VNet infrastructure subnet; this environment has none.
+  zone_redundant = false
+  tags           = local.common_tags
 
   enable_telemetry = false
 }
