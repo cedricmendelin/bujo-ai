@@ -25,6 +25,7 @@
 - Design for change, not perfection — over-architecting is as dangerous as under-architecting
 - Start with domain modeling — understand the problem space before choosing patterns
 - Favor boring technology for core systems, experiment at the edges
+- A plan's partial fallback never completes an issue; unmet acceptance criteria block closure, while partial deliveries preserve remaining work and leave the issue open.
 
 ## Boundaries
 

@@ -11,9 +11,20 @@ changing anything.
   with `## 📋 Implementation plan v` while the issue has the `plan:approved`
   label, or, for a PR labeled `plan:waived` by the owner, the scope in the PR
   description. If neither exists, stop and say so in the PR.
+- Every PR description must include exactly one whole-line declaration:
+  `Completion: full` or `Completion: partial`. A full PR may close its issue
+  only when it provides evidence for every acceptance criterion, including code
+  and relevant tests. A plan's partial/specification-only fallback allows only
+  a partial delivery; unmet completion criteria remain blocking and cannot be
+  downgraded to advisory.
+- A partial PR must use a non-closing issue reference such as `Relates to #N`,
+  state the unfinished work and its dependency under `Remaining work`, and
+  leave the issue open. Remove closing references from the entire description,
+  including any Copilot-generated suffix.
 - If you must deviate from the plan, keep the deviation minimal and list it
   under a `## Deviations from plan` heading in the PR description.
-- Reference the issue (`Closes #N`) and the plan version in the PR description.
+- Reference the issue and plan version in the PR description; use `Closes #N`
+  only for a complete delivery and a non-closing reference for a partial one.
 - Add focused automated tests for new behavior; run the build, tests, and
   `terraform fmt`/`validate` (when `infra/` changes) before finishing.
 - Never commit secrets, tenant/subscription IDs, connection strings, or personal
@@ -36,10 +47,10 @@ do not silence checks or weaken tests.
   does that and starts CI and Squad Review. `@copilot` comments from the Squad
   Review Gate or shepherd are fix or conflict requests: handle every blocking
   finding in one session.
-- **Local (GitHub Copilot app):** open a ready (non-draft) PR with `Closes #N`
-  and the plan version; the owner turns on Agent merge. If the work has no
-  issue plan, state its scope in the PR description and ask the owner to apply
-  `plan:waived`.
+- **Local (GitHub Copilot app):** open a ready (non-draft) PR with the
+  completion declaration, issue reference, and plan version; the owner turns on
+  Agent merge. If the work has no issue plan, state its scope in the PR
+  description and ask the owner to apply `plan:waived`.
 - The gate squash auto-merges when every check passes; never merge yourself.
 
 ## Human in the loop

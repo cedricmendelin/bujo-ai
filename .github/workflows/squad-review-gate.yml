@@ -36,6 +36,11 @@ jobs:
       pull-requests: read
       issues: write
     steps:
+      - name: Checkout default branch completion check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
       - name: Evaluate required checks
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -45,6 +50,9 @@ jobs:
           MAX_ROUNDS: "3"
         with:
           script: |
+            const { createHash } = require('node:crypto');
+            const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
+
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and auto-merge work.
             const agent = getOctokit(process.env.AGENT_TOKEN);
@@ -95,11 +103,13 @@ jobs:
             async function evaluate(number) {
               const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
               if (pr.state !== 'open') return core.info(`#${number}: not open.`);
+              const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
               const labels = pr.labels.map(l => l.name);
               const isAgentPr = pr.head.ref.startsWith('copilot/') && pr.head.repo?.full_name === `${owner}/${repo}` && !labels.includes('handoff:local');
               if (pr.draft && !isAgentPr) return core.info(`#${number}: draft.`);
               const sha = pr.head.sha;
               const short = sha.slice(0, 7);
+              const bodyHash = createHash('sha256').update(pr.body || '').digest('hex').slice(0, 12);
 
               const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 });
               const latest = {};
@@ -111,7 +121,10 @@ jobs:
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
               const hasMarker = (m) => comments.some(c => (c.body || '').includes(m));
               const comment = (body) => agent.rest.issues.createComment({ owner, repo, issue_number: number, body });
-              const table = required.map(n => `| ${n} | ${latest[n] ? (latest[n].conclusion || latest[n].status) : 'missing'} |`).join('\n');
+              const table = [
+                ...required.map(n => `| ${n} | ${latest[n] ? (latest[n].conclusion || latest[n].status) : 'missing'} |`),
+                `| Completion declaration | ${completion.ok ? 'success' : 'failure'} |`,
+              ].join('\n');
               const needsHuman = async (marker, text) => {
                 await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                 await agent.rest.issues.addAssignees({ owner, repo, issue_number: number, assignees: [human] }).catch(() => {});
@@ -134,6 +147,7 @@ jobs:
               if (pending.length) return core.info(`#${number}: waiting for ${pending.join(', ')}.`);
 
               const failed = required.filter(n => latest[n].conclusion !== 'success');
+              if (!completion.ok) failed.push('Completion declaration');
               if (!failed.length) {
                 const marker = `<!-- squad-gate:ok:${sha} -->`;
                 if (hasMarker(marker)) return core.info(`#${number}: already approved for ${short}.`);
@@ -148,11 +162,14 @@ jobs:
                 return;
               }
 
-              const fixMarker = `<!-- squad-gate:fix:${sha} -->`;
+              const fixMarker = `<!-- squad-gate:fix:${sha}:${bodyHash} -->`;
               if (hasMarker(fixMarker)) return core.info(`#${number}: findings already sent for ${short}.`);
               const rounds = comments.filter(c => (c.body || '').includes('<!-- squad-gate:fix:')).length;
 
               const details = failed.map(n => {
+                if (n === 'Completion declaration') {
+                  return `### ${n}\n${completion.findings.map(f => `- ${f}`).join('\n')}`;
+                }
                 const o = latest[n].output || {};
                 const body = n === 'ci'
                   ? `CI failed: ${latest[n].details_url || latest[n].html_url}`

@@ -79,6 +79,8 @@ jobs:
             const instructions = [
               `Implement exactly the owner-approved implementation plan v${version} for issue #${issue_number}: ${plan.html_url}`,
               'Follow .github/copilot-instructions.md. List any deviation under "## Deviations from plan" in the PR description and reference the plan version.',
+              'Declare the PR with exactly one whole-line "Completion: full" or "Completion: partial". Full completion may close the issue only with evidence for every acceptance criterion, including code and relevant tests; a partial/specification-only fallback is not issue completion.',
+              'For partial delivery, use only a non-closing issue reference, state unfinished work and its dependency under "Remaining work", and leave the parent issue open. Remove any closing keyword from the entire PR description, including generated suffixes.',
               'PR lifecycle: you do not need to mark the PR ready or request reviews. When your session ends, automation marks the PR ready and starts CI and Squad Review; blocking findings come back to you as @copilot comments, and the PR squash auto-merges when everything is green.',
               `If you are blocked by something only a human can do (a secret, an Azure or repository setting, a product decision), say so under a "## 🙋 Needs human" heading in the PR description and mention @${human}; do not guess or work around it.`,
               '',

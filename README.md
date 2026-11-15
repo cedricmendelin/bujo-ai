@@ -66,10 +66,13 @@ automation cannot continue. Details, commands, and one-time setup are in the
 
 ### 1. Plan (always)
 
-1. Write or pick an issue. Comment `/plan`: the Architect posts
-   `## 📋 Implementation plan vN · owner: <member>` and labels `plan:proposed`.
-2. Iterate with `/plan revise <feedback>` or `/plan route <member>` until it is right.
-3. Choose **where** the work happens, then apply `plan:approved` (owner only):
+1. Write or pick an issue. Comment `/plan` (not `/squad plan`): the Architect
+   posts `## 📋 Implementation plan vN · owner: <member>` and labels
+   `plan:proposed`. No label is needed to draft or revise a plan.
+2. Iterate with `/plan revise <feedback>` or `/plan route <member>` until it is
+   right. Review the latest version before approving it.
+3. Choose **where** the work happens, then apply `plan:approved` (owner only)
+   to the latest reviewed plan:
    - no extra label → **cloud**: Copilot cloud agent implements it;
    - add `handoff:local` first → **local**: you implement it in the GitHub
      Copilot app.
@@ -99,8 +102,11 @@ issue plan.
    approved plan.
 2. **Other work** (no issue plan): describe it in a session; the owner applies
    `plan:waived` to the PR so reviewers use the PR description as the scope.
-3. The session opens a **ready (non-draft) PR** referencing `Closes #N` and the
-   plan version.
+3. The session opens a **ready (non-draft) PR** with one whole-line
+   `Completion: full` or `Completion: partial` declaration and the plan version.
+   Use `Closes #N` only when every acceptance criterion is delivered with
+   evidence, including code and relevant tests. A partial PR uses `Relates to #N`
+   (or another non-closing reference) and keeps the issue open.
 4. Turn on **Agent merge** for the session with *Address reviews*, *Fix CI*, and
    *Resolve conflicts*. Leave *Merge* off: the gate enables squash auto-merge
    once every check passes.
@@ -119,6 +125,23 @@ fix requests then stop for that PR.
 | `## 🙋 Needs human` in a PR description | The implementer needs a secret, setting, or product decision | Provide it, then comment `@copilot continue` (cloud) or tell the session (local). |
 | Issue `Squad automation failing: …` (`needs:human`) | A workflow itself failed (for example an expired token) | Fix the cause from the linked run, then close the issue. |
 | Issue labeled `needs:human` for setup | Something must be configured once in GitHub or Azure | Follow the checklist in the issue. |
+
+### Partial deliveries and reopened issues
+
+A partial/specification-only plan fallback authorizes a milestone, not completion
+of the issue. Mark the PR `Completion: partial`, link with `Relates to #N` rather
+than a closing keyword, and include a `Remaining work` section naming unfinished
+acceptance criteria and their dependencies. Reviewers block unmet completion
+criteria; they are never advisory. The issue stays open while partial PRs merge
+and is closed only by the final `Completion: full` PR after code, relevant tests,
+and evidence cover every acceptance criterion.
+
+To resume a reopened issue, inspect its latest approved plan, prior merged PRs,
+and remaining acceptance criteria. If scope or the completion contract changed,
+comment `/plan revise <feedback>`, review the new version, and have the owner
+apply `plan:approved` again; a revision clears approval. If the plan is unchanged,
+the owner must still ensure `plan:approved` applies to the latest reviewed version
+before implementation starts.
 
 ## Delivery workflow
 
