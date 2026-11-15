@@ -34,3 +34,20 @@ or over-broad permissions. Never edit the PR yourself.
 ## When implementing
 
 Follow `.github/copilot-instructions.md`: implement only the approved plan.
+
+## How we work (implementing)
+
+Follow README.md → *How we work* and the PR lifecycle in
+`.github/copilot-instructions.md`. In the cloud, handle every blocking finding
+in one session; automation marks the PR ready, re-runs Squad Review, and
+squash auto-merges when green. Locally, open a ready PR and let Agent merge
+address reviews. When blocked on a secret, setting, or product decision, add a
+`## 🙋 Needs human` section mentioning @cedricmendelin instead of guessing.
+## How we work (reviewing)
+
+Your check is a merge gate with no human code review behind it: the Squad
+Review Gate forwards blocking findings verbatim to the implementing agent
+(Copilot cloud agent or Agent merge) and auto-merges when every check passes.
+Write each blocking finding so an agent can fix it without asking (file:line,
+problem, required fix); if only a human can resolve it, say "needs human
+decision". A PR labeled `plan:waived` uses its description as the approved scope.

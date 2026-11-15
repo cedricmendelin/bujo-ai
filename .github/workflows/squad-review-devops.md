@@ -3,7 +3,7 @@ name: Squad Review DevOps
 description: Independent DevOps review of pull requests. Publishes the required "Squad Review / DevOps" check.
 on:
   pull_request:
-    types: [opened, ready_for_review, review_requested]
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -13,8 +13,9 @@ on:
   bots: [Copilot, copilot-swe-agent]
 if: >-
   github.event_name == 'workflow_dispatch' ||
-  (github.event.action == 'review_requested' && github.event.requested_reviewer.login == github.repository_owner) ||
-  (github.event.action != 'review_requested' && !github.event.pull_request.draft && github.event.pull_request.user.login != 'Copilot')
+  (!github.event.pull_request.draft &&
+  (!startsWith(github.event.pull_request.head.ref, 'copilot/') || contains(github.event.pull_request.labels.*.name, 'handoff:local')) &&
+  (github.event.action != 'review_requested' || github.event.requested_reviewer.login == github.repository_owner))
 concurrency:
   group: squad-review-devops-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
   cancel-in-progress: true

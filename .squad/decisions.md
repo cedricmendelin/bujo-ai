@@ -178,6 +178,22 @@
   for at most 3 rounds, then `needs:human`. The owner reviews plans, not code.
 - PATs are acceptable for Copilot inference and assignment/merge automation.
 
+### 2026-11-15: Hands-off PR lifecycle and human in the loop
+
+- After `plan:approved`, no human action is expected until merge. Squad PR
+  Shepherd marks finished Copilot cloud agent PRs ready, dispatches CI and the
+  four reviews per head commit, and asks Copilot to resolve conflicts. The gate
+  sends blocking findings to `@copilot` (or to Agent merge for local PRs) and
+  squash auto-merges when green.
+- Two equal entry points: cloud (default) and local GitHub Copilot app sessions
+  (`handoff:local`, Agent merge with reviews/CI/conflicts, merge left to the
+  gate). Owner-only `plan:waived` covers PRs without an issue plan.
+- Human in the loop is @cedricmendelin: `needs:human` plus a PR mention for stuck
+  loops, `needs:human` issues for workflow failures and one-time setup, and
+  `## 🙋 Needs human` in PR descriptions from implementers.
+- Automation reads checks with `GITHUB_TOKEN` (fine-grained PATs cannot read
+  Checks) and writes with the owner PAT.
+
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.
