@@ -167,6 +167,7 @@ unavailable. The system must not silently treat missing evidence as proof.
 - Which supported .NET runtime, Blazor rendering mode, and Azure SQL configuration
   provide the simplest affordable deployment?
 - How does Entra ID authorization work in the actual Copilot and Claude clients?
+  See the [proposed auth design and blocked client proofs](auth.md).
 - How are retention, export/deletion, and backups handled?
 - Which knowledge entry fields/lifecycle and search-language behavior are needed?
 - Which integrations and operating costs are acceptable in later phases?
