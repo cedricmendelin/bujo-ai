@@ -16,6 +16,16 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     {
     }
 
+    public static InMemoryJournalRepository CreateWithFutureLog(Guid listId)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(listId, Guid.Empty);
+        var repository = new InMemoryJournalRepository();
+        repository._lists.Add(
+            listId,
+            JournalList.Create(listId, "Future Log", JournalListKind.FutureLog, null, null));
+        return repository;
+    }
+
     public InMemoryJournalRepository(JournalSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);

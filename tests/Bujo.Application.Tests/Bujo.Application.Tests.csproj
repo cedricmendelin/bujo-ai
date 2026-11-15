@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Bujo.Domain\Bujo.Domain.csproj" />
     <ProjectReference Include="..\..\src\Bujo.Application\Bujo.Application.csproj" />
   </ItemGroup>
 
