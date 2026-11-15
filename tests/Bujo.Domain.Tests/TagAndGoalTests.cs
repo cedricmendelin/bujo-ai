@@ -57,10 +57,12 @@ public sealed class TagAndGoalTests
     [Fact]
     public void Domain_has_no_goal_hierarchy_types()
     {
-        var names = typeof(JournalService).Assembly.GetTypes().Select(type => type.Name).ToArray();
+        var types = typeof(JournalService).Assembly.GetTypes();
 
-        Assert.DoesNotContain(names, name => name.Contains("GoalHierarchy", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(names, name => name.Contains("ParentGoal", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(
+            types,
+            type => type.Name.Contains("Goal", StringComparison.OrdinalIgnoreCase)
+                && !type.Name.EndsWith("Command", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

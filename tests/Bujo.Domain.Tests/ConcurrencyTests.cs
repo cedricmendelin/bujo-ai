@@ -38,33 +38,46 @@ public sealed class ConcurrencyTests
     public async Task Concurrent_close_and_move_in_never_leave_an_open_occurrence_on_a_closed_list()
     {
         var fixture = new JournalTestFixture();
-        var destination = fixture.CreateWeekly(2026, 47);
-        var capture = fixture.Capture("Close race");
-        using var start = new ManualResetEventSlim(false);
-
-        var close = Task.Run(() =>
+        for (var iteration = 0; iteration < 25; iteration++)
         {
-            start.Wait();
-            return fixture.Journal.CloseList(destination.Id);
-        });
-        var move = Task.Run(() =>
-        {
-            start.Wait();
-            return fixture.Journal.Move(
-                Guid.NewGuid(),
-                capture.Item.Id,
-                capture.Occurrence.Id,
-                destination.Id);
-        });
-        start.Set();
-        var closeResult = await close;
-        var moveResult = await move;
+            var destination = fixture.CreateWeekly(2026, iteration + 1);
+            var capture = fixture.Capture($"Close race {iteration}");
+            using var start = new ManualResetEventSlim(false);
 
-        var snapshot = fixture.Journal.GetSnapshot();
-        var list = snapshot.Lists.Single(item => item.Id == destination.Id);
-        var openOccurrences = snapshot.Occurrences.Where(
-            item => item.ListId == destination.Id && item.State == OccurrenceState.Open);
-        Assert.False(list.State == JournalListState.Closed && openOccurrences.Any());
-        Assert.True(closeResult.IsSuccess || moveResult.IsSuccess);
+            var close = Task.Run(() =>
+            {
+                start.Wait();
+                return fixture.Journal.CloseList(destination.Id);
+            });
+            var move = Task.Run(() =>
+            {
+                start.Wait();
+                return fixture.Journal.Move(
+                    Guid.NewGuid(),
+                    capture.Item.Id,
+                    capture.Occurrence.Id,
+                    destination.Id);
+            });
+            start.Set();
+            var closeResult = await close;
+            var moveResult = await move;
+
+            var snapshot = fixture.Journal.GetSnapshot();
+            var list = snapshot.Lists.Single(item => item.Id == destination.Id);
+            var openOccurrences = snapshot.Occurrences.Where(
+                item => item.ListId == destination.Id && item.State == OccurrenceState.Open);
+            if (moveResult.IsSuccess)
+            {
+                Assert.False(closeResult.IsSuccess);
+                Assert.Equal(JournalListState.Open, list.State);
+                Assert.Single(openOccurrences);
+            }
+            else
+            {
+                Assert.True(closeResult.IsSuccess);
+                Assert.Equal(JournalListState.Closed, list.State);
+                Assert.Empty(openOccurrences);
+            }
+        }
     }
 }
