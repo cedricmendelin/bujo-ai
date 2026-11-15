@@ -1,6 +1,6 @@
 using Bujo.Domain;
 
-namespace Bujo.Domain.Tests.InMemory;
+namespace Bujo.Domain;
 
 public sealed class InMemoryJournalRepository : IJournalRepository
 {
@@ -11,6 +11,32 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     private readonly List<JournalEvent> _history = [];
     private readonly Dictionary<Guid, (MoveFingerprint Fingerprint, DomainResult<MoveResult> Result)> _moveResults = [];
     private long _nextHistorySequence;
+
+    public InMemoryJournalRepository()
+    {
+    }
+
+    public InMemoryJournalRepository(JournalSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        foreach (var item in snapshot.Items)
+        {
+            _items.Add(item.Id, Item.FromSnapshot(item));
+        }
+
+        foreach (var list in snapshot.Lists)
+        {
+            _lists.Add(list.Id, JournalList.FromSnapshot(list));
+        }
+
+        foreach (var occurrence in snapshot.Occurrences)
+        {
+            _occurrences.Add(occurrence.Id, Occurrence.FromSnapshot(occurrence));
+        }
+
+        _history.AddRange(snapshot.History);
+        _nextHistorySequence = snapshot.History.Count == 0 ? 0 : snapshot.History.Max(item => item.Sequence);
+    }
 
     public JournalSnapshot GetSnapshot()
     {

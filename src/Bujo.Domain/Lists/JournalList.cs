@@ -73,6 +73,16 @@ public sealed class JournalList
             weekKey);
     }
 
+    internal static JournalList FromSnapshot(JournalListSnapshot snapshot)
+    {
+        var list = new JournalList(snapshot.Id, snapshot.Name, snapshot.Kind, snapshot.GoalText, snapshot.WeekKey)
+        {
+            State = snapshot.State,
+            Version = snapshot.Version
+        };
+        return list;
+    }
+
     public void Rename(string name)
     {
         Name = DomainLimits.RequiredText(name, DomainLimits.ListName, "List name");

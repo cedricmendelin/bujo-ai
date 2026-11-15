@@ -1,5 +1,4 @@
 using Bujo.Domain;
-using Bujo.Domain.Tests.InMemory;
 
 namespace Bujo.Domain.Tests;
 
