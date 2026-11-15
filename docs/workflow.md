@@ -175,4 +175,4 @@ environment (that environment is only for the cloud agent's runtime).
   enabled auto-merge waits for fresh checks.
 - The Copilot app's Agent merge works only for local sessions; cloud PRs rely
   on the shepherd and gate instead.
-- Deployment from `main` is part of the IaC/CD issue, not this workflow.
+- Infrastructure deploys from `main`; see [infrastructure operations](infrastructure.md).

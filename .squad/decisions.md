@@ -197,13 +197,21 @@
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.
-- One `prod` environment in Switzerland North; merge to `main` deploys; PRs get a
-  `terraform plan` summary. GitHub Actions authenticate with OIDC only.
+- One `prod` environment in Switzerland North; merge to `main` deploys through
+  exactly one GitHub OIDC deployment identity with an immutable subject. PR
+  workflows never authenticate to Azure; the owner runs plans locally.
 - No private networking. Cheapest reasonable SKUs, target under 50 USD/month:
   Container Apps consumption (scale to zero), Azure SQL free offer
   (serverless/auto-pause), GHCR instead of ACR, capped Log Analytics, Key Vault
   standard, user-assigned managed identity, budget alert. Foundry excluded until
   its milestone.
+- Azure Blob remote state is bootstrapped manually. The production resource group
+  and state storage exist before Terraform; the deployment identity has only
+  resource-group Contributor and state-container Blob Data Contributor.
+- Terraform creates the RBAC-enabled workload Key Vault and runtime identity but
+  creates no role assignments. The owner grants Key Vault Secrets User to the
+  runtime identity at vault scope after first apply. The Azure SQL Entra-only
+  administrator is an owner-created security group.
 
 ### 2026-11-14: Domain state and transition semantics
 

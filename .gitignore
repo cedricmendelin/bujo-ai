@@ -442,3 +442,9 @@ FodyWeavers.xsd
 .squad/memory/
 .squad/.first-run
 .squad/*.roster-backup
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan

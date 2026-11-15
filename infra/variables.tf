@@ -1,0 +1,72 @@
+variable "resource_group_name" {
+  type        = string
+  description = "Name of the owner-created production resource group."
+}
+
+variable "key_vault_name" {
+  type        = string
+  description = "Globally unique 3–24 character production Key Vault name."
+
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$", var.key_vault_name)) && !can(regex("--", var.key_vault_name))
+    error_message = "key_vault_name must be 3–24 letters, numbers, or hyphens, start with a letter, and contain no consecutive hyphens."
+  }
+}
+
+variable "location" {
+  type        = string
+  description = "Azure region for production resources."
+  default     = "switzerlandnorth"
+}
+
+variable "name_suffix" {
+  type        = string
+  description = "Short, globally unique lowercase suffix used in Azure resource names."
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{4,8}$", var.name_suffix))
+    error_message = "name_suffix must contain 4 to 8 lowercase letters or digits."
+  }
+}
+
+variable "container_image" {
+  type        = string
+  description = "Container image and tag to deploy."
+  default     = "mcr.microsoft.com/k8se/quickstart:latest"
+}
+
+variable "sql_entra_admin_login" {
+  type        = string
+  description = "Display name of the Entra security group that administers Azure SQL."
+}
+
+variable "sql_entra_admin_object_id" {
+  type        = string
+  description = "Object ID of the Entra security group that administers Azure SQL."
+
+  validation {
+    condition     = can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.sql_entra_admin_object_id))
+    error_message = "sql_entra_admin_object_id must be a GUID."
+  }
+}
+
+variable "budget_alert_email" {
+  type        = string
+  description = "Email address for monthly budget alerts."
+
+  validation {
+    condition     = can(regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", var.budget_alert_email))
+    error_message = "budget_alert_email must be a valid email address."
+  }
+}
+
+variable "budget_amount" {
+  type        = number
+  description = "Monthly budget amount in the subscription billing currency."
+  default     = 50
+
+  validation {
+    condition     = var.budget_amount == 50
+    error_message = "The production monthly budget must remain 50."
+  }
+}
