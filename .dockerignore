@@ -2,6 +2,7 @@
 .github
 .squad
 .terraform
+**/.terraform
 **/bin
 **/obj
 **/TestResults

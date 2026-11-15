@@ -13,8 +13,7 @@ public sealed class InitialJournal : Migration
             name: "JournalDocuments",
             columns: table => new
             {
-                Id = table.Column<int>(type: "int", nullable: false)
-                    .Annotation("SqlServer:Identity", "1, 1"),
+                Id = table.Column<int>(type: "int", nullable: false),
                 Payload = table.Column<string>(type: "nvarchar(max)", nullable: false),
                 RowVersion = table.Column<byte[]>(type: "rowversion", rowVersion: true, nullable: false)
             },

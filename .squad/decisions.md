@@ -253,8 +253,22 @@
   week in a weekly list is flagged without rewriting either value.
 - The Future Log is ongoing; closure of other lists requires disposition of
   every open occurrence. Moves are atomic, idempotent and concurrency-checked.
-- The full specification is in `docs/domain.md`; code implementation awaits
-  approval of issue #2's technology baseline ADR.
+- The full specification is in `docs/domain.md`; the issue #5 technology
+  baseline is recorded below.
+
+### 2026-11-15: Issue #5 technology baseline
+
+- The owner-approved issue #5 plan v4 selects .NET 11, EF Core SQL Server, and a
+  single modular ASP.NET Core host with shared domain/application services.
+- Podman and Aspire are selected for local development only. Production remains
+  a single host deployment; the AppHost is not deployed.
+- This issue-specific approval does not finalize the Blazor render mode, Azure
+  SQL free-tier behavior, or MCP client compatibility. Those remain separate
+  decisions and proofs.
+- Production migrations use a separate manually triggered Container Apps job
+  with a dedicated identity; the web runtime identity retains data access only.
+  Infrastructure, permissions, and rollout feasibility must be verified before
+  production changes, and no Azure setup is authorized by this decision.
 
 ## Governance
 

@@ -17,6 +17,7 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
         {
             entity.ToTable("JournalDocuments");
             entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Payload).IsRequired().HasColumnType("nvarchar(max)");
             entity.Property(item => item.RowVersion).IsRowVersion();
         });

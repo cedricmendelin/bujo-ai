@@ -1,10 +1,13 @@
 # ADR 0001: Technology baseline
 
-**Status:** Proposed — awaiting owner approval of the choices below.
-Approval of [implementation plan v1](https://github.com/cedricmendelin/bujo-ai/issues/2#issuecomment-6883086218)
-authorizes this investigation, not the technology decisions. Evidence retrieved
-2026-11-14; links below are primary Microsoft sources. Prices, availability and
-product behavior must be rechecked before provisioning.
+**Status:** Partially approved for issue #5; UI rendering and SQL free-tier
+choices remain proposed. The owner-approved
+[implementation plan v4](https://github.com/cedricmendelin/bujo-ai/issues/5#issuecomment-6901233646)
+selects .NET 11, EF Core SQL Server, and one modular host for that issue only.
+This does not approve a Blazor render mode, Azure SQL free-tier operating
+behavior, or MCP client compatibility. Evidence retrieved 2026-11-14; links
+below are primary Microsoft sources. Prices, availability and product behavior
+must be rechecked before provisioning.
 
 ## Context and proposed decisions
 
@@ -18,15 +21,15 @@ guarantee. See [concept](../concept.md) and
 
 | Choice | Recommendation for owner review | Status |
 | --- | --- | --- |
-| Runtime | .NET 10 LTS, current servicing patch | Proposed |
+| Runtime | .NET 11, current supported servicing patch | Approved for issue #5 |
 | UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Proposed |
-| Database | Azure SQL Database General Purpose serverless free tier, subject to the operational checks below | Proposed; exhaustion behavior not chosen |
-| Persistence | EF Core SQL Server provider and reviewed migrations | Proposed |
-| Structure | One host with small in-process modules; no microservices | Proposed |
+| Database | Azure SQL Database; General Purpose serverless free tier remains subject to the operational checks below | Provider approved; tier and exhaustion behavior remain proposed |
+| Persistence | EF Core SQL Server provider and reviewed migrations | Approved for issue #5 |
+| Structure | One modular ASP.NET Core host with small in-process modules; no microservices | Approved for issue #5 |
 
-No choice in this ADR is final until the owner approves it. A failure of a
-specific Azure SQL configuration triggers review of another Azure SQL
-configuration; changing database provider requires evidence of a blocker and
+The issue #5 approval does not make the remaining proposed choices final. A
+failure of a specific Azure SQL configuration triggers review of another Azure
+SQL configuration; changing database provider requires evidence of a blocker and
 separate approval.
 
 ## Runtime
@@ -42,11 +45,10 @@ Its supported releases on 2026-11-14 are:
 
 .NET 8 LTS and .NET 9 STS ended support on 2026-11-10. LTS normally receives
 three years of support and STS two; here both supported versions have the same
-end date. Recommend .NET 10 for the LTS cadence, not because it has a longer
-remaining support window than .NET 11. .NET 11 is a supported alternative if its
-newer features justify adoption. Patch the SDK and container runtime regularly
-and plan an upgrade before November 2028; a container image is not patched
-automatically by updating the host.
+end date. The issue #5 implementation uses .NET 11 as selected in plan v4,
+despite the earlier .NET 10 LTS proposal. Patch the SDK and container runtime
+regularly and plan an upgrade before November 2028; a container image is not
+patched automatically by updating the host.
 
 ## Blazor rendering and installability
 
@@ -215,7 +217,7 @@ deployments.
 | --- | --- |
 | Domain unit | Identity, moves, one active destination, planned periods and list closure. |
 | Application | Shared use cases, authorization and explicit approval rules. |
-| Persistence integration | Real SQL Server with full-text; migration upgrade, constraints and queries; targeted Azure SQL parity and recovery checks. |
+| Persistence integration | Real SQL Server with full-text; migration upgrade, constraints and queries; targeted Azure SQL parity and recovery checks. The current issue #5 slice tests empty-database migration and basic journal persistence; broader recovery and concurrency evidence remains outstanding. |
 | API / MCP contract | Authentication, approved-account restriction, error and shared behavior contracts; actual MCP clients under the separate auth issue. |
 | PWA / E2E smoke, later | Target-browser installation, login, server-confirmed saves, offline indicator, disconnect/reconnect and resume behavior. |
 
