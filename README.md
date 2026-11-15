@@ -6,8 +6,8 @@ An AI-assisted bullet journal for capturing tasks and thoughts, intentional
 planning, and reliable follow-through through a web app or your preferred AI
 assistant.
 
-**Status:** Local Squad configured; initial product decisions recorded. No
-application, cloud resources, or GitHub workflows have been created.
+**Status:** Squad configured; product decisions recorded; issues are delivered
+through the governed, agent-driven workflow described in [How we work](#how-we-work).
 
 ## Product and design
 
@@ -54,14 +54,77 @@ Ralph runs only on request. Labels do not trigger Squad work locally. Do not run
 `squad upgrade` blindly: it can overwrite customized coordinator files and
 introduce workflows.
 
+## How we work
+
+Humans decide **what** gets built and **approve plans**; agents build, review,
+fix, and merge. A human (currently @cedricmendelin) is only pulled in when the
+automation cannot continue. Details, commands, and one-time setup are in the
+[governed delivery workflow](docs/workflow.md).
+
+### 1. Plan (always)
+
+1. Write or pick an issue. Comment `/plan`: the Architect posts
+   `## 📋 Implementation plan vN · owner: <member>` and labels `plan:proposed`.
+2. Iterate with `/plan revise <feedback>` or `/plan route <member>` until it is right.
+3. Choose **where** the work happens, then apply `plan:approved` (owner only):
+   - no extra label → **cloud**: Copilot cloud agent implements it;
+   - add `handoff:local` first → **local**: you implement it in the GitHub
+     Copilot app.
+
+### 2a. Cloud path (default, hands-off)
+
+```text
+plan:approved ─▶ Copilot cloud agent (custom agent = plan owner) works on a draft PR
+              ─▶ session ends ─▶ Squad PR Shepherd marks PR ready, starts CI + Squad Review
+              ─▶ Squad Review Gate
+                   all green   ─▶ squash auto-merge ─▶ main ─▶ deploy
+                   blocking    ─▶ "@copilot fix …" ─▶ Copilot fixes ─▶ shepherd re-reviews
+                   3 rounds / stuck / conflicts unresolved ─▶ needs:human + @cedricmendelin
+```
+
+Copilot also resolves merge conflicts with `main` when asked by the shepherd,
+and you can steer it at any time with an `@copilot …` comment on the PR.
+
+### 2b. Local path (GitHub Copilot app)
+
+Use this when you want to watch or steer the work, or for work that is not an
+issue plan.
+
+1. **From an approved issue** (`handoff:local` + `plan:approved`): open the issue
+   in the GitHub Copilot app, start a session with the plan owner's custom agent
+   (`builder`, `ai`, `devops`, or `architect`), and ask it to implement the
+   approved plan.
+2. **Other work** (no issue plan): describe it in a session; the owner applies
+   `plan:waived` to the PR so reviewers use the PR description as the scope.
+3. The session opens a **ready (non-draft) PR** referencing `Closes #N` and the
+   plan version.
+4. Turn on **Agent merge** for the session with *Address reviews*, *Fix CI*, and
+   *Resolve conflicts*. Leave *Merge* off: the gate enables squash auto-merge
+   once every check passes.
+5. Every push re-runs CI and Squad Review; the gate posts blocking findings for
+   Agent merge to fix (max 3 rounds).
+
+**Taking over a cloud PR locally:** add `handoff:local` to the PR, open it in
+the GitHub Copilot app, and turn on Agent merge. The shepherd and `@copilot`
+fix requests then stop for that PR.
+
+### 3. Human in the loop
+
+| Signal | Meaning | What to do |
+|--------|---------|------------|
+| `needs:human` label + `@cedricmendelin` comment on a PR | 3 failed fix rounds, Copilot stopped without fixing, unresolved conflicts, or a reviewer did not report | Decide: fix, re-dispatch reviewers, revise the plan, or close. Remove `needs:human` to hand back to automation. |
+| `## 🙋 Needs human` in a PR description | The implementer needs a secret, setting, or product decision | Provide it, then comment `@copilot continue` (cloud) or tell the session (local). |
+| Issue `Squad automation failing: …` (`needs:human`) | A workflow itself failed (for example an expired token) | Fix the cause from the linked run, then close the issue. |
+| Issue labeled `needs:human` for setup | Something must be configured once in GitHub or Azure | Follow the checklist in the issue. |
+
 ## Delivery workflow
 
 Issues are implemented through the [governed delivery workflow](docs/workflow.md):
-`/plan` → owner approves with `plan:approved` → Copilot cloud agent with the
-owning Squad custom agent → Squad Review (Architect, Security, Verifier, DevOps)
-plus CI → squash auto-merge → deploy from `main`. Infrastructure is Terraform with
-Azure Verified Modules in Switzerland North, deployed via GitHub OIDC, budgeted
-under 50 USD/month.
+`/plan` → owner approves with `plan:approved` → Copilot cloud agent (or a local
+GitHub Copilot app session) with the owning Squad custom agent → Squad Review
+(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → deploy from
+`main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
+North, deployed via GitHub OIDC, budgeted under 50 USD/month.
 
 Installation reference:
 [Squad installation and design choices](https://github.com/cedricmendelin/Agentic-Design-Patterns-MAF/blob/main/docs/squad-installation.md).

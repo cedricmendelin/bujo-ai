@@ -21,3 +21,12 @@ Read `.squad/decisions.md` and the linked issue with its latest approved
 ## When implementing (test-only issues)
 
 Follow `.github/copilot-instructions.md`: implement only the approved plan.
+
+## How we work (reviewing)
+
+Your check is a merge gate with no human code review behind it: the Squad
+Review Gate forwards blocking findings verbatim to the implementing agent
+(Copilot cloud agent or Agent merge) and auto-merges when every check passes.
+Write each blocking finding so an agent can fix it without asking (file:line,
+problem, required fix); if only a human can resolve it, say "needs human
+decision". A PR labeled `plan:waived` uses its description as the approved scope.

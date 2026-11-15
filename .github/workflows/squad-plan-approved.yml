@@ -1,22 +1,26 @@
 name: Squad Plan Approved
 
 # The repository owner applies `plan:approved` to an issue with a Squad plan.
-# This assigns the Copilot cloud agent with the plan owner's custom agent.
+# This assigns the Copilot cloud agent with the plan owner's custom agent,
+# unless the issue has `handoff:local` (implemented in the GitHub Copilot app).
+# The owner applies `plan:waived` to a PR to hand over work without an issue plan.
 
 on:
   issues:
+    types: [labeled]
+  pull_request_target:
     types: [labeled]
 
 permissions:
   contents: read
 
 concurrency:
-  group: squad-plan-approved-${{ github.event.issue.number }}
+  group: squad-plan-approved-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   assign:
-    if: github.event.label.name == 'plan:approved'
+    if: github.event_name == 'issues' && github.event.label.name == 'plan:approved'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,9 +69,18 @@ jobs:
             await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:proposed' }).catch(() => {});
 
             const planBody = plan.body.length > 20000 ? plan.body.slice(0, 20000) + '\n\n[truncated — read the full plan comment]' : plan.body;
+            const human = context.payload.repository.owner.login;
+
+            if (context.payload.issue.labels.some(l => l.name === 'handoff:local')) {
+              await comment(`✅ Plan v${version} approved by @${sender} for **local implementation** (\`handoff:local\`). Copilot cloud agent was not assigned. Open this issue in the GitHub Copilot app with the \`${agent}\` agent, open a ready (non-draft) PR, and turn on Agent merge. See README → How we work.`);
+              return;
+            }
+
             const instructions = [
               `Implement exactly the owner-approved implementation plan v${version} for issue #${issue_number}: ${plan.html_url}`,
               'Follow .github/copilot-instructions.md. List any deviation under "## Deviations from plan" in the PR description and reference the plan version.',
+              'PR lifecycle: you do not need to mark the PR ready or request reviews. When your session ends, automation marks the PR ready and starts CI and Squad Review; blocking findings come back to you as @copilot comments, and the PR squash auto-merges when everything is green.',
+              `If you are blocked by something only a human can do (a secret, an Azure or repository setting, a product decision), say so under a "## 🙋 Needs human" heading in the PR description and mention @${human}; do not guess or work around it.`,
               '',
               planBody,
             ].join('\n');
@@ -84,4 +97,35 @@ jobs:
               },
             });
 
-            await comment(`✅ Plan v${version} approved by @${sender}. Assigned Copilot with the \`${agent}\` agent; it will open a pull request that goes through Squad Review.`);
+            await comment(`✅ Plan v${version} approved by @${sender}. Assigned Copilot with the \`${agent}\` agent. It opens a pull request that is marked ready, reviewed by Squad Review, fixed by Copilot, and squash auto-merged without further action. You are only pinged (\`needs:human\`) if the loop gets stuck.`);
+
+  waiver:
+    # `plan:waived` lets the owner hand over non-issue work (for example a local
+    # change made in the GitHub Copilot app); reviewers then treat the PR
+    # description as the approved scope. Owner-only; applying it starts reviews.
+    if: github.event_name == 'pull_request_target' && github.event.label.name == 'plan:waived'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify waiver and start Squad Review
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEWS: "squad-review-architect.lock.yml,squad-review-security.lock.yml,squad-review-verifier.lock.yml,squad-review-devops.lock.yml"
+        with:
+          github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          script: |
+            // No checkout: this job only calls the API, so pull_request_target is safe.
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const sender = context.payload.sender.login;
+            const repoOwner = context.payload.repository.owner.login;
+            if (sender !== repoOwner) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:waived' }).catch(() => {});
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: `⚠️ Only @${repoOwner} can waive the plan requirement (label applied by @${sender}).` });
+              return core.setFailed('plan:waived applied by a non-owner.');
+            }
+            if (context.payload.pull_request.draft) return core.info('Draft PR; reviews start when it is marked ready.');
+            for (const workflow_id of process.env.REVIEWS.split(',')) {
+              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id, ref: context.payload.repository.default_branch, inputs: { pr_number: String(issue_number) } });
+            }
