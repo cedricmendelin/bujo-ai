@@ -40,6 +40,29 @@ Squad Review checks (Architect, Security, Verifier, DevOps) post blocking
 findings. Fix each blocking finding or explain in the PR why it is incorrect;
 do not silence checks or weaken tests.
 
+### PR-description fixes
+
+These rules apply to every implementing team member, not to read-only reviewers.
+Use a native PR-update tool if available, then read the PR again to verify the
+description actually changed. A comment describing an edit is not an edit.
+Do not request the owner PAT, broaden MCP permissions, or use an unauthenticated
+browser as a workaround.
+
+If a cloud session cannot update metadata, use its existing PR-comment reply
+tool to publish a standalone `<!-- squad-pr-metadata -->` line followed by one
+fenced `json` object with exactly `headSha`, `baseBodySha256`, and `body`.
+Read the current PR head and exact description through the GitHub read tools;
+hash that description's UTF-8 bytes with SHA-256. `body` is the full replacement
+description and must begin with `Completion: full` or `Completion: partial`.
+Preserve the approved issue reference and plan version. Escape JSON correctly;
+include no trailing text after the fence. See `docs/workflow.md` for the format.
+
+The trusted shepherd applies valid proposals and restarts reviews only after a
+successful latest session. Report a proposal as pending, never as already
+applied. A stale/rejected proposal or a no-progress session escalates to
+`needs:human`. For `plan:waived`, only the owner may propose a replacement:
+the description itself is the approved scope.
+
 ## PR lifecycle (see README → How we work)
 
 - **Cloud (Copilot cloud agent):** work on the draft PR Copilot creates. Do not
