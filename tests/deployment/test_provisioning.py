@@ -59,6 +59,40 @@ class ProvisioningTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "current merged main"):
                 review.check_current_main(COMMIT)
 
+    def test_approval_command_failure_reports_a_redacted_category_not_a_missing_approval(self):
+        private = "private-token-url-and-response"
+        for stderr, category in (
+            (f"GitHub API 403 for https://example.invalid/{private}", "github-api-http-403"),
+            ("The plan approval or binding label is missing.", "approval-labels-missing"),
+            (f"The plan approval or binding label is missing. {private}", "command-failed"),
+            (private, "command-failed"),
+        ):
+            with self.subTest(category=category), \
+                 patch.object(review.shutil, "which", side_effect=lambda command: command), \
+                 patch.object(review.subprocess, "run", side_effect=[
+                     subprocess.CompletedProcess(["git"], 0, stdout="", stderr=""),
+                     subprocess.CompletedProcess(["node"], 1, stdout=private, stderr=stderr),
+                 ]):
+                with self.assertRaisesRegex(ValueError, f"\\[{category}\\]") as caught:
+                    review.check_infrastructure_approval()
+                self.assertNotIn(private, str(caught.exception))
+                self.assertNotIn("must restore", str(caught.exception))
+
+    def test_approval_verifier_timeout_and_missing_executable_remain_blocking_and_redacted(self):
+        for executable, failure, category in (
+            ("node", subprocess.TimeoutExpired(["node", "private-argument"], 1), "command-timeout"),
+            (None, None, "command-unavailable"),
+        ):
+            with self.subTest(category=category), \
+                 patch.object(review.shutil, "which", side_effect=["git", executable]), \
+                 patch.object(review.subprocess, "run", side_effect=[
+                     subprocess.CompletedProcess(["git"], 0, stdout="", stderr=""),
+                     failure,
+                 ]):
+                with self.assertRaisesRegex(ValueError, f"\\[{category}\\]") as caught:
+                    review.check_infrastructure_approval()
+                self.assertNotIn("private-argument", str(caught.exception))
+
     def test_private_plan_storage_never_overlaps_state(self):
         for key in ("bootstrap/plans/123/plan.tfplan", "bootstrap/diagnostics/123/apply.log", ""):
             with self.subTest(key=key), patch.dict(os.environ, {"TFSTATE_KEY": key}):

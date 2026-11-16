@@ -1,5 +1,7 @@
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -129,6 +131,17 @@ class ReleaseAdmissionTests(unittest.TestCase):
             artifacts["artifacts"][0]["expired"] = True
             with self.assertRaises(ValueError):
                 release.admit(123, 2)
+            artifacts["artifacts"][0]["expired"] = False
+            for result, category in (
+                (types.SimpleNamespace(returncode=1, stderr="private-download-error"), "artifact-download"),
+                (types.SimpleNamespace(returncode=0), "artifact-layout"),
+            ):
+                with self.subTest(category=category), \
+                     patch.object(release.subprocess, "run", return_value=result):
+                    with self.assertRaises(ValueError) as caught:
+                        release.admit(123, 2)
+                    self.assertEqual(category, caught.exception.category)
+                    self.assertNotIn("private-download-error", str(caught.exception))
 
     def test_api_run_identity_cannot_drift_from_requested_run(self):
         with patch.object(release, "github", return_value=trusted_run() | {"id": 124}):
@@ -180,6 +193,53 @@ class ReleaseAdmissionTests(unittest.TestCase):
                 self.assertEqual(0, release.main())
                 path.write_text(json.dumps(manifest() | {"image": "untrusted"}))
                 self.assertEqual(1, release.main())
+
+    def test_admission_reports_safe_failure_categories_without_command_output(self):
+        private = "private-token-and-response"
+        for returncode, stdout, stderr, category in (
+            (1, "", f"gh: forbidden (HTTP 403) {private}", "github-api-http-403"),
+            (1, "", private, "github-api-command"),
+            (0, private, "", "github-api-json"),
+        ):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as directory:
+                event = Path(directory) / "event.json"
+                event.write_text(json.dumps({"action": "completed", "workflow_run": trusted_run()}))
+                output = io.StringIO()
+                with patch.object(release.sys, "argv", [
+                    "release_admission.py", "admit", "--manifest", str(Path(directory) / "release.json"),
+                ]), patch.dict(release.os.environ, {
+                    "GITHUB_EVENT_PATH": str(event), "GITHUB_EVENT_NAME": "workflow_run",
+                    "GITHUB_REPOSITORY": release.REPOSITORY,
+                }), patch.object(release.subprocess, "run", return_value=types.SimpleNamespace(
+                    returncode=returncode, stdout=stdout, stderr=stderr,
+                )), contextlib.redirect_stderr(output):
+                    self.assertEqual(1, release.main())
+                self.assertIn(f"[{category}]", output.getvalue())
+                self.assertNotIn(private, output.getvalue())
+                self.assertFalse((Path(directory) / "release.json").exists())
+
+    def test_event_and_unexpected_failures_have_distinct_redacted_categories(self):
+        private = "private-event-or-path"
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text(json.dumps({"action": private, "workflow_run": trusted_run()}))
+            for failure, category in (
+                (None, "event-workflow-run"),
+                (OSError(private), "inspection-io"),
+                (ValueError(private), "invalid-input"),
+                (release.subprocess.TimeoutExpired([private], 1), "inspection-timeout"),
+            ):
+                output = io.StringIO()
+                with self.subTest(category=category), patch.object(release.sys, "argv", [
+                    "release_admission.py", "admit", "--manifest", str(Path(directory) / "release.json"),
+                ]), patch.dict(release.os.environ, {
+                    "GITHUB_EVENT_PATH": str(event), "GITHUB_EVENT_NAME": "workflow_run",
+                    "GITHUB_REPOSITORY": release.REPOSITORY,
+                }), patch.object(release, "validate_event", wraps=release.validate_event,
+                                 side_effect=failure), contextlib.redirect_stderr(output):
+                    self.assertEqual(1, release.main())
+                self.assertIn(f"[{category}]", output.getvalue())
+                self.assertNotIn(private, output.getvalue())
 
     def test_workflows_preserve_ci_image_and_azure_trust_boundaries(self):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
