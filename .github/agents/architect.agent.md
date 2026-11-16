@@ -27,8 +27,9 @@ Follow `.github/copilot-instructions.md`: implement only the approved plan.
 
 ## When reviewing a PR
 
-- Compare the diff with the approved plan referenced in the PR (latest
-  issue comment starting `## 📋 Implementation plan v` on the linked issue).
+- Compare the diff only with the verified approval record and exact review-start
+  attestation supplied by the workflow; do not treat the newest plan comment as
+  approved unless its owner label event and content hash are verified.
 - Review the entire PR description, including generated suffixes. Block any
   closure while issue acceptance criteria remain unmet, even when the approved
   plan allows a partial/specification-only fallback. A partial PR may merge only

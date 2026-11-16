@@ -7,10 +7,15 @@ changing anything.
 
 ## Implementing an issue
 
-- Implement **only** the owner-approved plan: the newest issue comment starting
-  with `## 📋 Implementation plan v` while the issue has the `plan:approved`
-  label, or, for a PR labeled `plan:waived` by the owner, the scope in the PR
-  description. If neither exists, stop and say so in the PR.
+- Implement **only** the verified owner-approved plan: an owner- or
+  `github-actions[bot]`-authored versioned issue plan with a bot approval record
+  binding its exact comment/version/SHA-256 and owner approval timeline event.
+  Both `plan:approved` and `plan:bound` are necessary but not sufficient;
+  verify live state with `node .github/scripts/plan-approval.js verify --issue <N>`
+  from trusted default-branch code before starting. Publishing a plan never
+  authorizes implementation. For a PR labeled `plan:waived` by the owner,
+  implement the exact approved PR description instead. If neither scope can be
+  verified, stop and say so in the PR.
 - Every PR description must include exactly one whole-line declaration:
   `Completion: full` or `Completion: partial`. A full PR may close its issue
   only when it provides evidence for every acceptance criterion, including code
@@ -29,8 +34,6 @@ changing anything.
   `terraform fmt`/`validate` (when `infra/` changes) before finishing.
 - Never commit secrets, tenant/subscription IDs, connection strings, or personal
   data. Azure access from GitHub Actions uses OIDC only.
-- Do not change `.github/workflows/`, `.github/agents/`, or `.squad/` unless the
-  approved plan explicitly lists those files.
 - Do not pull later-release scope (for example release 2 AI search/RAG) into
   the change.
 

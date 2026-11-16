@@ -17,6 +17,7 @@ on:
       - Squad Review Security
       - Squad Review Verifier
       - Squad Review DevOps
+      - Squad Plan Binding
     types: [completed]
 
 permissions:
@@ -33,9 +34,10 @@ jobs:
     permissions:
       contents: read
       checks: read
-      actions: read
       pull-requests: read
+      statuses: read
       issues: write
+      actions: write
     steps:
       - name: Checkout default branch decision modules
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,8 +49,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           HUMAN: cedricmendelin
-          REQUIRED_CHECKS: "ci,Squad Review / Architect,Squad Review / Security,Squad Review / Verifier,Squad Review / DevOps"
+          REQUIRED_CHECKS: "ci,Squad Plan Binding,Squad Review / Architect,Squad Review / Security,Squad Review / Verifier,Squad Review / DevOps"
+          REVIEW_WORKFLOWS: "Architect:squad-review-architect.lock.yml,Security:squad-review-security.lock.yml,Verifier:squad-review-verifier.lock.yml,DevOps:squad-review-devops.lock.yml"
           MAX_ROUNDS: "3"
         with:
           script: |
@@ -57,7 +61,12 @@ jobs:
             const { resolve } = require('node:path');
             const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
             const { classifySession, gateEligibility } = await import(pathToFileURL(resolve('.github/scripts/session-state.mjs')).href);
-            const { workflowComment, fixRequests, currentReview, latestSession, reviewsFinishedAfter } = require('./.github/scripts/pr-lifecycle');
+            const { workflowComment, fixRequests, currentReview, latestSession } = require('./.github/scripts/pr-lifecycle');
+            const { hash, parseAttestationArtifact, publishedCheckIdFromJobLog, resolveScopeFromGitHub, verifyPublishedResult } = require('./.github/scripts/review-attestation');
+            const { execFileSync } = require('node:child_process');
+            const fs = require('node:fs');
+            const os = require('node:os');
+            const path = require('node:path');
 
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and auto-merge work.
@@ -65,18 +74,38 @@ jobs:
             const { owner, repo } = context.repo;
             const human = process.env.HUMAN;
             const run = context.payload.workflow_run;
-            const required = process.env.REQUIRED_CHECKS.split(',');
+            const baseRequired = process.env.REQUIRED_CHECKS.split(',');
             const max = Number(process.env.MAX_ROUNDS);
             const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
             const copilotWorkflow = workflows.find(w => (w.path || '').startsWith('dynamic/copilot-swe-agent'));
+            const scopeKey = (scope) => scope.waived
+              ? `waived:${scope.waiverLabelEvent}:${hash(scope.scopeText || '')}`
+              : `issue:${scope.issueNumber}:${scope.planCommentId}:${scope.planVersion}:${scope.planSha256}:${scope.ownerLabelEvent}`;
 
             // Dispatched reviews run on main, so their head SHA does not identify the PR.
-            let numbers = (run.pull_requests || []).map(p => p.number);
-            let direct = numbers.length > 0;
+            const dispatchedReview = run.event === 'workflow_dispatch'
+              && /^Squad Review (Architect|Security|Verifier|DevOps)$/.test(run.name)
+              && run.head_branch === context.payload.repository.default_branch;
+            const dispatchTarget = dispatchedReview
+              ? Number((run.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)$/)?.[1]) : null;
+            if (dispatchedReview && ['failure', 'timed_out', 'startup_failure', 'cancelled', 'action_required'].includes(run.conclusion)) {
+              if (!dispatchTarget) throw new Error(`Failed dispatched reviewer ${run.name} has no trusted PR target. Inspect ${run.html_url} and re-dispatch with a valid pr_number.`);
+              const { data: target } = await github.rest.pulls.get({ owner, repo, pull_number: dispatchTarget });
+              if (target.state === 'open') {
+                if (target.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: target.node_id });
+                const marker = `<!-- squad-gate:dispatch-failed:${run.id}:${run.run_attempt || 1} -->`;
+                const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: dispatchTarget, per_page: 100 });
+                if (!comments.some(c => workflowComment(c, human) && (c.body || '').split(/\r?\n/).includes(marker))) {
+                  await agent.rest.issues.addLabels({ owner, repo, issue_number: dispatchTarget, labels: ['needs:human'] });
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: dispatchTarget, body: `${marker}\n🙋 @${human} **${run.name}** dispatch failed (${run.conclusion}) before a trusted result was available: ${run.html_url}. Inspect the failed job, fix the cause, then re-dispatch with \`pr_number=${dispatchTarget}\`. Merge is blocked; do not reuse older green checks.` });
+                }
+              }
+              return;
+            }
+            let numbers = dispatchTarget ? [dispatchTarget] : (run.pull_requests || []).map(p => p.number);
             if (!numbers.length) {
               const { data } = await github.request('GET /repos/{owner}/{repo}/commits/{sha}/pulls', { owner, repo, sha: run.head_sha });
               numbers = data.filter(p => p.state === 'open').map(p => p.number);
-              direct = numbers.length > 0;
             }
             if (!numbers.length) {
               const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
@@ -97,13 +126,50 @@ jobs:
 
             // GitHub refuses to enable auto-merge when the PR is already mergeable
             // ("clean"/"unstable" status), so merge directly in that case.
-            async function merge(pr) {
+            async function liveScopeFor(number) {
+              const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              if (current.state !== 'open' && !current.merged_at) return { pr: current, scope: { ok: false, reason: 'PR is no longer open.' } };
+              const events = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number: number, per_page: 100 });
+              return {
+                pr: current,
+                scope: await resolveScopeFromGitHub(current, events, {
+                  token: process.env.GH_TOKEN, api: process.env.GITHUB_API_URL || 'https://api.github.com', owner, repo,
+                }),
+              };
+            }
+
+            async function merge(pr, expectedScope) {
+              const before = await liveScopeFor(pr.number);
+              if (!before.scope.ok || scopeKey(before.scope) !== scopeKey(expectedScope)
+                  || before.pr.head.sha !== pr.head.sha || before.pr.body !== pr.body) {
+                if (before.pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: before.pr.node_id });
+                throw new Error('PR head/body or approved plan changed immediately before merge eligibility.');
+              }
               try {
-                await agent.graphql('mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}', { id: pr.node_id });
+                await agent.graphql('mutation($id:ID!,$head:GitObjectID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH,expectedHeadOid:$head}){clientMutationId}}', { id: pr.node_id, head: pr.head.sha });
+                const after = await liveScopeFor(pr.number);
+                if (!after.scope.ok || scopeKey(after.scope) !== scopeKey(expectedScope)
+                    || after.pr.head.sha !== pr.head.sha || after.pr.body !== pr.body) {
+                  await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                  throw new Error('Approved plan or PR changed immediately after enabling auto-merge; auto-merge was disabled.');
+                }
                 return 'Squash auto-merge is enabled';
               } catch (e) {
                 if (!/clean status|unstable status|has_hooks status/i.test(e.message)) throw e;
+                const lastCheck = await liveScopeFor(pr.number);
+                if (!lastCheck.scope.ok || scopeKey(lastCheck.scope) !== scopeKey(expectedScope)
+                    || lastCheck.pr.head.sha !== pr.head.sha || lastCheck.pr.body !== pr.body) {
+                  if (lastCheck.pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: lastCheck.pr.node_id });
+                  throw new Error('Approved plan or PR changed before direct squash merge.');
+                }
                 await agent.rest.pulls.merge({ owner, repo, pull_number: pr.number, sha: pr.head.sha, merge_method: 'squash' });
+                const postMerge = await liveScopeFor(pr.number);
+                if (!postMerge.scope.ok || scopeKey(postMerge.scope) !== scopeKey(expectedScope)
+                    || postMerge.pr.head.sha !== pr.head.sha || postMerge.pr.body !== pr.body) {
+                  await agent.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['needs:human'] }).catch(() => {});
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: `🙋 @${process.env.HUMAN} Plan binding changed during direct merge of PR #${pr.number}. Review the merge and revert if necessary.` });
+                  throw new Error('Plan drift was detected immediately after a direct merge; human review is required.');
+                }
                 return 'Squash-merged';
               }
             }
@@ -113,6 +179,19 @@ jobs:
               if (pr.state !== 'open') return core.info(`#${number}: not open.`);
               const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
               const labels = pr.labels.map(l => l.name);
+              const isWaived = labels.includes('plan:waived');
+              const required = baseRequired;
+              const prTimeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number: number, per_page: 100 });
+              const liveScope = await resolveScopeFromGitHub(pr, prTimeline, {
+                token: process.env.GH_TOKEN,
+                api: process.env.GITHUB_API_URL || 'https://api.github.com',
+                owner, repo,
+              });
+              if (!liveScope.ok) {
+                if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                core.error(`#${number}: approved scope is not currently bound: ${liveScope.reason}`);
+                return;
+              }
               const isAgentPr = pr.head.ref.startsWith('copilot/') && pr.head.repo?.full_name === `${owner}/${repo}` && !labels.includes('handoff:local');
               if (pr.draft && !isAgentPr) return core.info(`#${number}: draft.`);
               const sha = pr.head.sha;
@@ -124,6 +203,23 @@ jobs:
               for (const r of runs) {
                 if (!required.includes(r.name)) continue;
                 if (!latest[r.name] || r.id > latest[r.name].id) latest[r.name] = r;
+              }
+
+              {
+                const binding = latest['Squad Plan Binding'];
+                const summary = binding?.output?.summary || '';
+                const { waiverBindingSummary } = require('./.github/scripts/plan-binding');
+                const matchesScope = isWaived
+                  ? summary === waiverBindingSummary(pr, liveScope)
+                  : summary.includes(liveScope.planSha256)
+                    && summary.includes(`issue #${liveScope.issueNumber}`)
+                    && summary.includes(`approval event ${liveScope.ownerLabelEvent}`);
+                if (!binding || binding.status !== 'completed' || binding.conclusion !== 'success'
+                    || !matchesScope) {
+                  if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                  core.info(`#${number}: current plan binding check is missing, failed, or belongs to a prior approval.`);
+                  return;
+                }
               }
 
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
@@ -168,20 +264,107 @@ jobs:
                 return core.info(`#${number}: waiting for shepherd/session safety decision (${eligibility}; latest session ${session.state}).`);
               }
 
-              const role = run.name.startsWith('Squad Review ') ? run.name.slice('Squad Review '.length) : null;
-              const reviewerCrashed = direct && role && run.head_sha === sha
-                && ['failure', 'timed_out', 'startup_failure'].includes(run.conclusion)
-                && !latest[`Squad Review / ${role}`];
-              if (reviewerCrashed) {
-                const marker = `<!-- squad-gate:crash:${run.name}:${sha} -->`;
-                if (!hasMarker(marker)) {
-                  await needsHuman(marker, `**${run.name}** did not publish its check (${run.html_url}). Re-run it, or dispatch it with \`pr_number=${number}\`.`);
-                }
+              const pending = required.filter(n => !latest[n] || latest[n].status !== 'completed');
+              const dispatchedRole = dispatchedReview && dispatchTarget === number
+                ? run.name.slice('Squad Review '.length) : null;
+              if (dispatchedRole && pending.includes(`Squad Review / ${dispatchedRole}`)) {
+                if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                const marker = `<!-- squad-gate:no-result:${run.id}:${run.run_attempt || 1} -->`;
+                if (!hasMarker(marker)) await needsHuman(marker, `**${run.name}** completed without its required check (${run.html_url}). Inspect safe-output processing, fix the cause, then re-dispatch with \`pr_number=${number}\`. Older green checks cannot replace this result.`);
                 return;
               }
-
-              const pending = required.filter(n => !latest[n] || latest[n].status !== 'completed');
               if (pending.length) return core.info(`#${number}: waiting for ${pending.join(', ')}.`);
+
+              // A check's started_at is publication time for gh-aw safe outputs,
+              // not proof of when the model reviewed. Bind each result to the
+              // trusted pre-agent attestation and the exact Process Safe Outputs
+              // job log for that workflow run + attempt.
+              const shepherdRevision = isAgentPr ? currentReview(comments, human, sha, pr.body) : null;
+              const roles = process.env.REVIEW_WORKFLOWS.split(',').map(value => {
+                const [role, workflowId] = value.split(':');
+                return { role, workflowId, checkName: `Squad Review / ${role}` };
+              });
+              const attestationFailures = [];
+              for (const role of roles) {
+                const checkRun = latest[role.checkName];
+                if (!checkRun || checkRun.status !== 'completed') {
+                  attestationFailures.push(`${role.role}: no completed check`);
+                  continue;
+                }
+                let accepted = false;
+                const reviewWorkflow = workflows.find(item => (item.path || '').endsWith(`/${role.workflowId}`));
+                const candidateRuns = reviewWorkflow
+                  ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: reviewWorkflow.id, branch: context.payload.repository.default_branch, per_page: 50 })).data.workflow_runs
+                    .filter(item => item.event === 'workflow_dispatch' && item.status === 'completed')
+                  : [];
+                for (const listedRun of candidateRuns) {
+                  const attempt = listedRun.run_attempt || 1;
+                  const artifacts = (await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: listedRun.id, per_page: 100 })).data.artifacts;
+                  const artifact = artifacts.find(item => !item.expired && item.name === `squad-review-start-${listedRun.id}-${attempt}`);
+                  if (!artifact) continue;
+                  const artifactResponse = await fetch(`${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${owner}/${repo}/actions/artifacts/${artifact.id}/zip`, {
+                    headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json' },
+                  });
+                  if (!artifactResponse.ok) continue;
+                  const artifactPath = path.join(os.tmpdir(), `review-start-${listedRun.id}-${attempt}.zip`);
+                  fs.writeFileSync(artifactPath, Buffer.from(await artifactResponse.arrayBuffer()));
+                  let artifactText = '';
+                  try { artifactText = execFileSync('unzip', ['-p', artifactPath], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }); }
+                  finally { fs.rmSync(artifactPath, { force: true }); }
+                  const attestation = parseAttestationArtifact(artifactText);
+                  if (!attestation || attestation.workflowRunId !== listedRun.id
+                      || attestation.workflowRunAttempt !== attempt
+                      || attestation.pr !== number || attestation.role !== role.role
+                      || attestation.headSha !== sha
+                      || attestation.bodySha256 !== createHash('sha256').update(pr.body || '').digest('hex')
+                      || attestation.waived !== isWaived
+                      || (isWaived
+                        ? attestation.waiverLabelEvent !== liveScope.waiverLabelEvent
+                        : attestation.issue !== liveScope.issueNumber || attestation.planComment !== liveScope.planCommentId
+                          || attestation.planVersion !== liveScope.planVersion || attestation.planSha256 !== liveScope.planSha256
+                          || attestation.ownerLabelEvent !== liveScope.ownerLabelEvent)) continue;
+                  const runResponse = await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}', {
+                    owner, repo, run_id: listedRun.id, attempt_number: attempt,
+                  });
+                  const reviewRun = runResponse.data;
+                  if (reviewRun.event !== 'workflow_dispatch' || reviewRun.name !== `Squad Review ${role.role}`) continue;
+                  const jobs = (await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs', {
+                    owner, repo, run_id: listedRun.id, attempt_number: attempt, per_page: 100,
+                  })).data.jobs;
+                  const job = jobs.find(item => item.steps?.some(step => step.name === 'Process Safe Outputs'));
+                  if (!job) continue;
+                  const publishedId = await publishedCheckIdFromJobLog(
+                    `${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${owner}/${repo}/actions/jobs/${job.id}/logs`,
+                    process.env.GH_TOKEN, role.checkName);
+                  if (!publishedId || publishedId !== checkRun.id) continue;
+                  const published = (await github.rest.checks.get({ owner, repo, check_run_id: publishedId })).data;
+                  const expected = {
+                    role: role.role, prNumber: number, headSha: sha, body: pr.body || '',
+                    waived: isWaived, waiverLabelEvent: liveScope.waiverLabelEvent,
+                    issueNumber: liveScope.issueNumber, planCommentId: liveScope.planCommentId,
+                    planVersion: liveScope.planVersion, planSha256: liveScope.planSha256,
+                    ownerLabelEvent: liveScope.ownerLabelEvent, loggedCheckRunId: publishedId,
+                    minimumAttestedAt: shepherdRevision?.created_at,
+                  };
+                  if (verifyPublishedResult({ attestation, run: reviewRun, checkRun: published, checkName: role.checkName, expected }).ok) {
+                    accepted = true;
+                    break;
+                  }
+                }
+                if (!accepted) attestationFailures.push(`${role.role}: missing or mismatched run/attempt attestation`);
+              }
+              if (attestationFailures.length) {
+                if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                const bindingId = isWaived ? `waived:${hash(pr.body || '')}` : `${liveScope.issueNumber}:${liveScope.ownerLabelEvent}:${liveScope.planSha256}`;
+                const marker = `<!-- squad-gate:attestation-retry:${sha}:${bodyHash}:${bindingId} -->`;
+                if (!hasMarker(marker)) {
+                  await comment(`${marker}\n⚠️ Review result attestation failed for this exact PR revision and approved scope (${attestationFailures.join('; ')}). Trusted reviews are being re-dispatched.`);
+                  for (const role of roles) {
+                    await agent.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: role.workflowId, ref: context.payload.repository.default_branch, inputs: { pr_number: String(number) } });
+                  }
+                }
+                return core.error(`#${number}: rejected stale or unbound review results: ${attestationFailures.join('; ')}`);
+              }
 
               if (isAgentPr) {
                 const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
@@ -190,9 +373,9 @@ jobs:
                   ? (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: copilot.id, branch: pr.head.ref, per_page: 20 })).data.workflow_runs
                   : [];
                 const session = latestSession(sessions);
-                const revision = currentReview(comments, human, sha, pr.body);
+                const revision = shepherdRevision;
                 if (!session || session.status !== 'completed' || session.conclusion !== 'success'
-                  || pr.draft || !reviewsFinishedAfter(latest, required.filter(n => n !== 'ci'), revision)) {
+                  || pr.draft || !revision) {
                   if (pr.auto_merge) {
                     await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
                   }
@@ -209,10 +392,16 @@ jobs:
                 if (live.state !== 'open' || live.head.sha !== sha || live.body !== pr.body) {
                   return core.info(`#${number}: PR changed before merge eligibility was applied; wait for re-evaluation.`);
                 }
+                const preMerge = await liveScopeFor(number);
+                if (!preMerge.scope.ok || scopeKey(preMerge.scope) !== scopeKey(liveScope)
+                    || preMerge.pr.head.sha !== sha || preMerge.pr.body !== pr.body) {
+                  if (live.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: live.node_id });
+                  return core.info(`#${number}: approved scope changed before merge eligibility; auto-merge was not enabled.`);
+                }
                 if (labels.includes('needs:human')) {
                   await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' }).catch(() => {});
                 }
-                const how = await merge(pr);
+                const how = await merge(pr, liveScope);
                 const status = hasMarker(marker) ? 'Auto-merge resumed after the latest Copilot session succeeded.' : `**Squad Review passed** for ${short}.`;
                 await comment(`${marker}\n✅ ${status} ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
                 return;

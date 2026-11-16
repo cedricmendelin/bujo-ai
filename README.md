@@ -80,44 +80,23 @@ automation cannot continue. Details, commands, and one-time setup are in the
    - add `handoff:local` first → **local**: you implement it in the GitHub
      Copilot app.
 
-#### Proposed: plan locally, implement locally or in the cloud
+#### Plan locally, implement locally or in the cloud
 
-This is a **proposed workflow, not yet supported**. Today the approval
-automation only accepts plan comments posted by `github-actions[bot]`; posting a
-local plan as the owner and applying `plan:approved` will not hand it off.
+Local plan publishing and approval are supported. Draft a versioned plan with
+the same heading and completion contract as `/plan`, then publish it as an
+owner-authored issue comment (for example, `gh issue comment <N> --body-file
+<plan-file>`). Publishing does **not** assign work. Apply `handoff:local` first
+for local implementation, then have the repository owner apply `plan:approved`.
+The trusted workflow records the exact plan comment, version, normalized SHA-256
+and owner label-timeline event, and adds the bot-managed `plan:bound` marker.
+Local handoff never assigns the cloud agent; without `handoff:local`, the
+verified plan is assigned to Copilot's plan-owner agent.
 
-The intended flow is:
-
-1. Draft and revise the plan in a local Copilot session, using the same
-   versioned heading, owner, completion contract and acceptance checks as
-   `/plan`. Review and approve the exact text locally.
-2. Publish that text as a new versioned issue comment, then select the
-   implementation path: apply `handoff:local` first for local work, or leave
-   it off for cloud work. The repository owner applies `plan:approved` to the
-   published version. Publishing alone must not start implementation.
-3. For cloud work, the existing handoff assigns Copilot with the plan owner's
-   custom agent; for local work, open the issue in the Copilot app. Both paths
-   use the same published, approved plan and existing review and completion
-   rules.
-4. To change the plan, publish a new version and obtain fresh owner approval
-   before continuing. Approval must not silently carry over to an edited or
-   newer plan.
-
-Implementing this requires changes to the approval workflow to accept trusted
-owner-authored plans as well as existing bot-authored plans, while retaining the
-owner-only approval check and `/plan` compatibility. It must bind approval to
-the exact issue, comment, version and content, invalidate it on edits or newer
-plans, and verify that binding at assignment and review time, including
-concurrent events. The current label and newest-comment checks alone do not
-provide that binding. Automated actions using the owner's token appear as the
-owner, so author identity alone is not evidence of a separate human approval.
-
-Update the shared review protocol, agent instructions, this guide and
-`docs/workflow.md` to use the same approved-plan rules; regenerate affected
-gh-aw lock files and add focused tests for authorization, revisions, stale
-approval and both handoff paths. Changes to `.github/workflows/` and
-`.github/agents/` require an owner-approved implementation plan that
-explicitly lists those files.
+The owner approval and binding are invalidated when the approved text is edited,
+a newer trusted plan is posted, the approval label changes, or a live check
+detects drift. Publish a new version and re-apply approval after choosing the
+handoff label. See [the workflow guide](docs/workflow.md) for hashes, review
+attestations, race limits, migration and rollout.
 
 ### 2a. Cloud path (default, hands-off)
 
