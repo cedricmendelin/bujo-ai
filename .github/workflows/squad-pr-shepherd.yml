@@ -56,6 +56,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           HUMAN: cedricmendelin
           REVIEWS: "Architect:squad-review-architect.lock.yml,Security:squad-review-security.lock.yml,Verifier:squad-review-verifier.lock.yml,DevOps:squad-review-devops.lock.yml"
           REVIEW_TIMEOUT_MINUTES: "60"
@@ -72,6 +73,7 @@ jobs:
               bodyHash, workflowComment, latestFix, currentReview,
               reviewMarker, stalledSession, metadataProposal, validateProposal, referencesIssue,
             } = require('./.github/scripts/pr-lifecycle');
+            const { resolveScopeFromGitHub } = require('./.github/scripts/review-attestation');
             // Reads use GITHUB_TOKEN (fine-grained PATs cannot read checks).
             // Writes use the owner PAT so @copilot comments and dispatches trigger.
             const agent = getOctokit(process.env.AGENT_TOKEN);
@@ -129,6 +131,12 @@ jobs:
               let pr = await getPr(number);
               if (pr.state !== 'open' || !isAgentPr(pr)) return core.info(`#${number}: not an open Copilot PR.`);
               if (labelsOf(pr).includes('needs:human')) return core.info(`#${number}: waiting for @${human} (needs:human).`);
+
+              const initialScope = await approvedScope(pr);
+              if (!initialScope) {
+                if (pr.auto_merge && !dryRun) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                return core.info(`#${number}: no verified live plan binding or owner waiver; no readiness/review dispatch.`);
+              }
 
               const sha = pr.head.sha;
               const short = sha.slice(0, 7);
@@ -291,8 +299,10 @@ jobs:
                   if (active) return core.info(`#${number}: waiting for older ${r.role} reviews before starting this description revision.`);
                 }
                 const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                const liveScope = await approvedScope(live);
                 if (live.state !== 'open' || live.head.sha !== sha || bodyHash(live.body) !== bodyHash(pr.body)
-                  || !isAgentPr(live) || labelsOf(live).includes('needs:human')) {
+                  || !isAgentPr(live) || labelsOf(live).includes('needs:human')
+                  || !liveScope || JSON.stringify(liveScope) !== JSON.stringify(initialScope)) {
                   return core.info(`#${number}: PR changed before review dispatch; a later tick will re-evaluate.`);
                 }
                 // Record the revision before dispatching: the gate waits for all four
@@ -316,22 +326,17 @@ jobs:
 
             async function approvedScope(pr) {
               if (pr.state !== 'open') return null;
-              if (labelsOf(pr).includes('plan:waived')) return { waived: true, owner: human };
-              const version = (pr.body || '').match(/\bplan\s+v(\d+)\b/i)?.[1];
-              if (!version) return null;
-              const candidates = [...new Set([...(pr.body || '').matchAll(/(?:issue\s+|relates to\s+|part of\s+|closes\s+|fixes\s+|resolves\s+)(?:[a-z0-9_.-]+\/[a-z0-9_.-]+)?#(\d+)\b/gi)].map(m => Number(m[1])))];
-              if (candidates.length > 20) throw new Error('Too many issue references to resolve metadata scope safely.');
-              for (const issueNumber of candidates) {
-                const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
-                if (issue.pull_request || !issue.labels.some(l => l.name === 'plan:approved')) continue;
-                const plans = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: issueNumber, per_page: 100 });
-                const plan = plans.filter(c => /^## .*Implementation plan v\d+\b/.test(c.body || '')).at(-1);
-                if (plan?.body.match(/^## .*Implementation plan v(\d+)\b/)?.[1] === version
-                  && referencesIssue(pr.body, issueNumber, `${owner}/${repo}`)) {
-                  return { issueNumber, planVersion: Number(version), repoFullName: `${owner}/${repo}` };
-                }
-              }
-              return null;
+              const timeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number: pr.number, per_page: 100 });
+              const scope = await resolveScopeFromGitHub(pr, timeline, {
+                token: process.env.GH_TOKEN, api: process.env.GITHUB_API_URL || 'https://api.github.com', owner, repo,
+              });
+              if (!scope.ok) return null;
+              if (scope.waived) return { waived: true, owner: human, waiverLabelEvent: scope.waiverLabelEvent, bodyHash: bodyHash(pr.body) };
+              return {
+                issueNumber: scope.issueNumber, planVersion: scope.planVersion,
+                planSha256: scope.planSha256, ownerLabelEvent: scope.ownerLabelEvent,
+                repoFullName: `${owner}/${repo}`,
+              };
             }
 
       - name: Escalate automation failure

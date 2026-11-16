@@ -181,7 +181,9 @@ function harness({ comments = [], sessions = [session], activeReview = false, ch
       issues, actions, pulls, checks: { listForRef: async () => checks },
       repos: { get: async () => ({ data: { default_branch: 'main' } }) },
     },
+    request: async (route) => ({ data: route.includes('/timeline') ? [] : [] }),
     paginate: async (method, args) => {
+      if (typeof method === 'string' && method.endsWith('/timeline')) return [];
       const result = await method(args);
       return result.data || result;
     },
@@ -210,7 +212,19 @@ function harness({ comments = [], sessions = [session], activeReview = false, ch
     };
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     await new AsyncFunction('require', 'github', 'getOctokit', 'core', 'context', 'process', script)(
-      path => require(path.replace('./.github/scripts/', './')), github, () => agent, core, context, processMock,
+      path => {
+        const module = require(path.replace('./.github/scripts/', './'));
+        if (!path.includes('review-attestation')) return module;
+        return {
+          ...module,
+          resolveScopeFromGitHub: async () => file === 'squad-review-gate.yml'
+            ? { ok: false, reason: 'No fake live approval binding was supplied.' }
+            : {
+              ok: true, waived: false, issueNumber: 39, planCommentId: 390,
+              planVersion: 1, planSha256: 'a'.repeat(64), ownerLabelEvent: 391,
+            },
+        };
+      }, github, () => agent, core, context, processMock,
     );
   };
   return state;
@@ -295,7 +309,7 @@ test('real shepherd re-reviews a description-only correction and drains older re
   assert.equal(waiting.writes.some(w => w.body?.includes('squad-shepherd:review:')), false);
 });
 
-test('real gate refuses old green checks for a new body and accepts only fresh revision results', async () => {
+test('real gate rejects old green checks when the live plan binding is missing', async () => {
   const names = ['ci', 'Squad Review / Architect', 'Squad Review / Security', 'Squad Review / Verifier', 'Squad Review / DevOps'];
   const checks = names.map((name, id) => ({ id, name, status: 'completed', conclusion: 'success', completed_at: '2026-11-15T14:59:00Z' }));
   const reviewed = comment(reviewMarker(sha, body));
@@ -307,10 +321,10 @@ test('real gate refuses old green checks for a new body and accepts only fresh r
   state.writes.length = 0;
   for (const check of checks) check.completed_at = '2026-11-15T15:01:00Z';
   await state.run('squad-review-gate.yml');
-  assert.ok(state.writes.some(w => w.query?.includes('enablePullRequestAutoMerge')));
+  assert.equal(state.writes.some(w => w.query?.includes('enablePullRequestAutoMerge')), false);
 });
 
-test('real gate requires both the current revision marker and a successful latest session', async () => {
+test('real gate cannot be bypassed by current markers or a successful latest session', async () => {
   const names = ['ci', 'Squad Review / Architect', 'Squad Review / Security', 'Squad Review / Verifier', 'Squad Review / DevOps'];
   const checks = names.map((name, id) => ({ id, name, status: 'completed', conclusion: 'success', completed_at: '2026-11-15T15:01:00Z' }));
   for (const options of [
