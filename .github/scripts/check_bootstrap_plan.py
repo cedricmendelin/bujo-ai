@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from urllib.parse import urlsplit
 
 
 PLACEHOLDER = (
@@ -28,7 +29,9 @@ AZAPI_TYPES = {
 BASELINE_ALLOWED = {
     "azapi_resource.sql_database": "azapi_resource",
     "azuread_application.api": "azuread_application",
+    "azuread_application.pwa_client": "azuread_application",
     "azuread_service_principal.api": "azuread_service_principal",
+    "azuread_service_principal.pwa_client": "azuread_service_principal",
     "azurerm_consumption_budget_resource_group.prod": "azurerm_consumption_budget_resource_group",
     "azurerm_container_app_job.migration": "azurerm_container_app_job",
     'module.container_app.azapi_resource.container_app': "azapi_resource",
@@ -67,7 +70,20 @@ BASELINE_UNKNOWN_PATHS = {
         "oauth2_permission_scope_ids", "object_id", "publisher_domain", "tags",
         "template_id",
     },
+    "azuread_application.pwa_client": {
+        "app_role_ids", "client_id", "disabled_by_microsoft", "id", "logo_url",
+        "oauth2_permission_scope_ids", "object_id", "publisher_domain", "tags",
+        "template_id", "required_resource_access[0].resource_access[0].id",
+        "required_resource_access[0].resource_app_id", "web[0].redirect_uris[0]",
+    },
     "azuread_service_principal.api": {
+        "app_role_ids", "app_roles", "application_tenant_id", "client_id",
+        "display_name", "feature_tags", "features", "homepage_url", "id", "logout_url",
+        "oauth2_permission_scope_ids", "oauth2_permission_scopes", "object_id",
+        "redirect_uris", "saml_metadata_url", "service_principal_names",
+        "sign_in_audience", "tags", "type",
+    },
+    "azuread_service_principal.pwa_client": {
         "app_role_ids", "app_roles", "application_tenant_id", "client_id",
         "display_name", "feature_tags", "features", "homepage_url", "id", "logout_url",
         "oauth2_permission_scope_ids", "oauth2_permission_scopes", "object_id",
@@ -186,6 +202,34 @@ def _require_dependency(relevant, resource, attribute):
         raise ValueError("Baseline plan is missing an approved computed-value dependency.")
 
 
+def _contains_credentials(value):
+    credential_fields = {
+        "client_secret", "certificate", "certificates", "key_credentials",
+        "password", "password_credentials", "federated_identity_credential",
+        "federated_identity_credentials",
+    }
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key.lower() in credential_fields and item not in (None, "", [], {}):
+                return True
+            if _contains_credentials(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_credentials(item) for item in value)
+    return False
+
+
+def _container_app_fqdn(resource):
+    for key in ("after", "before"):
+        output = (_value(resource, key).get("output") or {})
+        properties = output.get("properties") or {}
+        ingress = ((properties.get("configuration") or {}).get("ingress") or {})
+        fqdn = ingress.get("fqdn")
+        if isinstance(fqdn, str) and fqdn:
+            return fqdn
+    return None
+
+
 def _baseline_configuration(plan, expected_image, expected_owner, expected_app_id):
     if not all(isinstance(value, str) and value.strip() for value in (expected_image, expected_owner, expected_app_id)):
         raise ValueError("Baseline image, owner, and app target evidence are required.")
@@ -302,6 +346,128 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
             raise ValueError("Baseline API identifier is not bound to its root-generated UUID.")
     if "client_id" in set(_unknown_paths((resources["azuread_service_principal.api"].get("change") or {}).get("after_unknown"))):
         _require_dependency(relevant, "azuread_application.api", ("client_id",))
+
+    pwa_application_address = "azuread_application.pwa_client"
+    pwa_service_principal_address = "azuread_service_principal.pwa_client"
+    pwa_application_resource = resources[pwa_application_address]
+    pwa_service_principal_resource = resources[pwa_service_principal_address]
+    pwa_application = _value(pwa_application_resource)
+    pwa_service_principal = _value(pwa_service_principal_resource)
+    pwa_application_unknown = set(_unknown_paths(
+        (pwa_application_resource.get("change") or {}).get("after_unknown")
+    ))
+    pwa_service_principal_unknown = set(_unknown_paths(
+        (pwa_service_principal_resource.get("change") or {}).get("after_unknown")
+    ))
+
+    pwa_suffix_match = re.fullmatch(r"app-([a-z0-9]{4,8})-pwa", str(pwa_application.get("display_name") or ""))
+    if (
+        [str(owner).lower() for owner in pwa_application.get("owners") or []] != [expected_owner.lower()]
+        or [str(owner).lower() for owner in pwa_service_principal.get("owners") or []] != [expected_owner.lower()]
+        or pwa_suffix_match is None
+        or suffix_match is None
+        or pwa_suffix_match.group(1) != suffix_match.group(1)
+        or pwa_application.get("sign_in_audience") != "AzureADMyOrg"
+        or pwa_application.get("prevent_duplicate_names") is not True
+        or pwa_application.get("api") not in (None, [])
+        or pwa_application.get("app_role") not in (None, [])
+        or _contains_credentials(pwa_application)
+        or _contains_credentials(pwa_service_principal)
+        or pwa_service_principal.get("use_existing") is True
+    ):
+        raise ValueError("PWA application or service principal has unsafe ownership, naming, audience, permissions, or credentials.")
+
+    pwa_web = _require_exactly_one(pwa_application.get("web"), "PWA web configuration")
+    redirect_uris = pwa_web.get("redirect_uris")
+    if not isinstance(redirect_uris, list) or len(redirect_uris) != 1:
+        raise ValueError("PWA redirect URI must contain exactly one callback.")
+    redirect_uri = redirect_uris[0]
+    container_app_address = "module.container_app.azapi_resource.container_app"
+    container_fqdn = _container_app_fqdn(resources[container_app_address])
+    if redirect_uri is None:
+        if "web[0].redirect_uris[0]" not in pwa_application_unknown:
+            raise ValueError("PWA redirect URI is not bound to the Container App.")
+        _require_dependency(relevant, container_app_address, ("output",))
+    else:
+        if not isinstance(redirect_uri, str):
+            raise ValueError("PWA redirect URI must be an exact HTTPS callback.")
+        try:
+            parsed_redirect = urlsplit(redirect_uri)
+        except ValueError as error:
+            raise ValueError("PWA redirect URI must be one exact HTTPS Container App /signin-oidc callback.") from error
+        redirect_host = parsed_redirect.hostname
+        if (
+            parsed_redirect.scheme != "https"
+            or not redirect_host
+            or parsed_redirect.netloc.lower() != redirect_host.lower()
+            or redirect_host.lower() in {"localhost", "127.0.0.1", "::1"}
+            or parsed_redirect.path != "/signin-oidc"
+            or parsed_redirect.query
+            or parsed_redirect.fragment
+            or "*" in redirect_uri
+        ):
+            raise ValueError("PWA redirect URI must be one exact HTTPS Container App /signin-oidc callback.")
+        if container_fqdn is None or redirect_host.lower() != container_fqdn.lower():
+            raise ValueError("PWA redirect URI host does not match the Container App FQDN.")
+    implicit_grant = pwa_web.get("implicit_grant") or []
+    if (
+        not isinstance(implicit_grant, list)
+        or len(implicit_grant) > 1
+        or any(not isinstance(item, dict) for item in implicit_grant)
+        or any(
+            item.get("access_token_issuance_enabled") not in (None, False)
+            or item.get("id_token_issuance_enabled") not in (None, False)
+            for item in implicit_grant
+        )
+    ):
+        raise ValueError("PWA implicit grant flows must remain disabled.")
+
+    pwa_access = _require_exactly_one(
+        pwa_application.get("required_resource_access"), "PWA API permission"
+    )
+    pwa_scope = _require_exactly_one(pwa_access.get("resource_access"), "PWA delegated scope")
+    api_client_id = application.get("client_id")
+    pwa_resource_app_id = pwa_access.get("resource_app_id")
+    if pwa_resource_app_id is None:
+        if "required_resource_access[0].resource_app_id" not in pwa_application_unknown:
+            raise ValueError("PWA API permission is not bound to the managed API registration.")
+        _require_dependency(relevant, "azuread_application.api", ("client_id",))
+    elif api_client_id is not None:
+        if pwa_resource_app_id != api_client_id:
+            raise ValueError("PWA permission targets an unexpected API application.")
+    else:
+        _require_dependency(relevant, "azuread_application.api", ("client_id",))
+    if (
+        pwa_resource_app_id == "00000003-0000-0000-c000-000000000000"
+        or pwa_scope.get("type") != "Scope"
+    ):
+        raise ValueError("PWA client may request only the API's delegated journal.access scope.")
+
+    pwa_scope_id = pwa_scope.get("id")
+    api_scope_id = scopes[0].get("id")
+    generated_scope_id = _value(resources["random_uuid.api_scope"]).get("result")
+    if pwa_scope_id is None:
+        if "required_resource_access[0].resource_access[0].id" not in pwa_application_unknown:
+            raise ValueError("PWA delegated scope is not bound to the generated API scope.")
+        _require_dependency(relevant, "random_uuid.api_scope", ("result",))
+    elif api_scope_id is not None:
+        if pwa_scope_id != api_scope_id:
+            raise ValueError("PWA permission does not use the API journal.access scope.")
+    elif generated_scope_id is not None:
+        if pwa_scope_id != generated_scope_id:
+            raise ValueError("PWA permission does not use the generated API scope.")
+    else:
+        _require_dependency(relevant, "random_uuid.api_scope", ("result",))
+
+    pwa_client_id = pwa_application.get("client_id")
+    pwa_service_client_id = pwa_service_principal.get("client_id")
+    if pwa_client_id is not None and pwa_service_client_id is not None:
+        if pwa_client_id != pwa_service_client_id:
+            raise ValueError("PWA service principal is not bound to the managed application.")
+    else:
+        if "client_id" not in pwa_service_principal_unknown:
+            raise ValueError("PWA service principal is not bound to the managed application.")
+        _require_dependency(relevant, pwa_application_address, ("client_id",))
 
     database_unknown = set(_unknown_paths((resources["azapi_resource.sql_database"].get("change") or {}).get("after_unknown")))
     if "parent_id" in database_unknown:

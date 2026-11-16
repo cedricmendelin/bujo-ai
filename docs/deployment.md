@@ -444,6 +444,25 @@ manual app setup. It retains the image observed on the existing app, without
 starting the inert job or deploying an unmigrated Bujo image. Hosting
 configuration changes can leave that app unhealthy; record that separately.
 
+### PWA BFF client registration
+
+After issue #80 is merged, the owner-reviewed Terraform plan provisions a
+dedicated single-tenant web client and service principal for the PWA BFF. Its
+redirect is the existing Container App HTTPS FQDN plus `/signin-oidc`. The
+client requests only the API's delegated `journal.access` scope. Terraform
+does not add outputs for the client ID or redirect URI, and never creates or
+stores a client credential. Both non-secret values can be reviewed on the
+managed Entra application registration. This registration is not an MCP client
+and must not be reused for MCP without the separate compatibility proof.
+
+The owner creates the client secret in Entra and stores it only in the existing
+Key Vault; do not put its value in Terraform, state, outputs, GitHub variables
+or secrets, or source. Rotate by adding a replacement secret, updating the Key
+Vault version, verifying the BFF consumes it, and then deleting the old secret.
+Admin consent for `journal.access` and assignment of approved users to the API's
+`JournalUser` role remain separate owner actions. The API's approved-user
+object-ID allowlist remains an independent authorization check.
+
 Once manual configuration is complete and a fresh reviewed baseline has no
 pending authorization/identity/SQL changes, enable the application-release
 flags. The first release then updates and runs the migration job before

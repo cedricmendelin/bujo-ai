@@ -61,6 +61,13 @@ override_resource {
 }
 
 override_resource {
+  target = azuread_application.pwa_client
+  values = {
+    client_id = "00000000-0000-0000-0000-000000000032"
+  }
+}
+
+override_resource {
   target = random_uuid.api_scope
   values = {
     result = "00000000-0000-0000-0000-000000000011"

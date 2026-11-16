@@ -186,6 +186,13 @@ run "baseline_full_apply" {
   }
 
   override_resource {
+    target = azuread_application.pwa_client
+    values = {
+      client_id = "00000000-0000-0000-0000-000000000032"
+    }
+  }
+
+  override_resource {
     target = random_uuid.api_scope
     values = {
       result = "00000000-0000-0000-0000-000000000011"
@@ -217,6 +224,73 @@ run "baseline_infrastructure_plan" {
   assert {
     condition     = local.auth_allowed_principals == ""
     error_message = "An empty bootstrap allowlist must emit an empty deny-all value."
+  }
+
+  assert {
+    condition     = toset(azuread_application.pwa_client.owners) == toset([local.api_owner_object_id]) && toset(azuread_service_principal.pwa_client.owners) == toset([local.api_owner_object_id])
+    error_message = "The PWA application and service principal must be owned by the deployment principal."
+  }
+}
+
+run "pwa_client_configuration_plan" {
+  command = plan
+
+  override_resource {
+    target = azuread_application.api
+    values = {
+      client_id = "00000000-0000-0000-0000-000000000031"
+    }
+  }
+
+  override_resource {
+    target = random_uuid.api_scope
+    values = {
+      result = "00000000-0000-0000-0000-000000000011"
+      id     = "00000000-0000-0000-0000-000000000011"
+    }
+  }
+
+  variables {
+    bootstrap_only = true
+  }
+
+  assert {
+    condition     = length(azuread_application.pwa_client.web) == 1
+    error_message = "The PWA client must have exactly one web configuration."
+  }
+
+  assert {
+    condition     = toset(tolist(azuread_application.pwa_client.web)[0].redirect_uris) == toset(["${module.container_app.fqdn_url}/signin-oidc"])
+    error_message = "The PWA client must register exactly the computed callback URI."
+  }
+
+  assert {
+    condition     = startswith("${module.container_app.fqdn_url}/signin-oidc", "https://") && endswith("${module.container_app.fqdn_url}/signin-oidc", "/signin-oidc")
+    error_message = "The PWA callback must use the Container App HTTPS FQDN and end in /signin-oidc."
+  }
+
+  assert {
+    condition     = tolist(tolist(azuread_application.pwa_client.web)[0].implicit_grant)[0].access_token_issuance_enabled == false && tolist(tolist(azuread_application.pwa_client.web)[0].implicit_grant)[0].id_token_issuance_enabled == false
+    error_message = "Implicit grant flows must remain disabled for the PWA client."
+  }
+
+  assert {
+    condition     = length(azuread_application.pwa_client.required_resource_access) == 1 && length(tolist(azuread_application.pwa_client.required_resource_access)[0].resource_access) == 1 && tolist(azuread_application.pwa_client.required_resource_access)[0].resource_app_id == azuread_application.api.client_id && tolist(azuread_application.pwa_client.required_resource_access)[0].resource_app_id != "00000003-0000-0000-c000-000000000000" && tolist(tolist(azuread_application.pwa_client.required_resource_access)[0].resource_access)[0].id == random_uuid.api_scope.result && tolist(tolist(azuread_application.pwa_client.required_resource_access)[0].resource_access)[0].type == "Scope"
+    error_message = "The PWA client must request only the API's delegated journal.access scope."
+  }
+
+  assert {
+    condition     = length(azuread_application.api.api[0].oauth2_permission_scope) == 1 && tolist(azuread_application.api.api[0].oauth2_permission_scope)[0].value == "journal.access" && length(azuread_application.api.app_role) == 1 && tolist(azuread_application.api.app_role)[0].value == "JournalUser" && try(length(azuread_application.api.api[0].known_client_applications), 0) == 0
+    error_message = "The API scopes, user role, and pre-authorized client list must remain unchanged."
+  }
+
+  assert {
+    condition = alltrue([
+      for filename in fileset(path.root, "*.tf") :
+      length(regexall("(?m)^\\s*resource\\s+\"azuread_application_(password|certificate|federated_identity_credential)\"", file("${path.root}/${filename}"))) == 0
+      && length(regexall("(?i)client_secret|pwa_client_(secret|password)", file("${path.root}/${filename}"))) == 0
+    ]) && length(regexall("(?m)^output\\s+\"pwa_client_(secret|password)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
+    error_message = "Terraform must not create, store, or output a PWA client credential."
   }
 }
 
@@ -282,5 +356,10 @@ run "same_principal_owner_plan" {
 
   variables {
     deployment_client_id = "00000000-0000-0000-0000-000000000008"
+  }
+
+  assert {
+    condition     = toset(azuread_application.pwa_client.owners) == toset([data.azuread_client_config.current.object_id]) && toset(azuread_service_principal.pwa_client.owners) == toset([data.azuread_client_config.current.object_id])
+    error_message = "When deployment uses the current principal, it must own the PWA application and service principal."
   }
 }

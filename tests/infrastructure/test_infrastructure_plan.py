@@ -24,6 +24,7 @@ RUNS = (
     "baseline_full_plan",
     "baseline_full_apply",
     "baseline_infrastructure_plan",
+    "pwa_client_configuration_plan",
     "baseline_allowlist_preparation_plan",
     "baseline_allowlist_preparation_apply",
     "first_release_migration_plan",
@@ -230,6 +231,228 @@ class InfrastructurePlanTests(unittest.TestCase):
                 plan = self.plan("baseline_full_plan")
                 mutate(plan)
                 self.assert_rejected(plan, "owned|Graph permissions|application roles|delegated scope")
+
+    def test_pwa_client_plan_binds_owner_callback_scope_and_service_principal(self):
+        full_plan = self.plan("baseline_full_plan")
+        self.validate(full_plan)
+        pwa = resource(full_plan, "azuread_application.pwa_client")
+        pwa_unknown = set(bootstrap._unknown_paths(pwa["change"]["after_unknown"]))
+        self.assertIn("web[0].redirect_uris[0]", pwa_unknown)
+        self.assertIn("required_resource_access[0].resource_app_id", pwa_unknown)
+        self.assertIn(("module.container_app.azapi_resource.container_app", ("output",)), {
+            (item.get("resource"), tuple(item.get("attribute") or []))
+            for item in full_plan.get("relevant_attributes", [])
+        })
+
+        known_plan = self.plan("pwa_client_configuration_plan")
+        self.validate(known_plan)
+        application = resource(known_plan, "azuread_application.pwa_client")["change"]["after"]
+        service_principal = resource(known_plan, "azuread_service_principal.pwa_client")["change"]["after"]
+        api_permission = application["required_resource_access"][0]
+        self.assertEqual(application["owners"], [EXPECTED_OWNER])
+        self.assertEqual(application["display_name"], "app-test1234-pwa")
+        self.assertEqual(
+            application["web"][0]["redirect_uris"],
+            ["https://test-app.test.switzerlandnorth.azurecontainerapps.io/signin-oidc"],
+        )
+        self.assertEqual(api_permission["resource_app_id"], "00000000-0000-0000-0000-000000000031")
+        self.assertEqual(api_permission["resource_access"][0], {
+            "id": "00000000-0000-0000-0000-000000000011",
+            "type": "Scope",
+        })
+        self.assertEqual(service_principal["owners"], [EXPECTED_OWNER])
+        self.assertEqual(service_principal["client_id"], application["client_id"])
+
+    def test_rejects_pwa_ownership_name_and_application_configuration_drift(self):
+        mutations = (
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(owners=[]),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                owners=[EXPECTED_OWNER, "00000000-0000-0000-0000-000000000099"]
+            ),
+            lambda p: resource(p, "azuread_service_principal.pwa_client")["change"]["after"].update(
+                owners=["00000000-0000-0000-0000-000000000099"]
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                display_name="app-other-pwa"
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                sign_in_audience="AzureADMultipleOrgs"
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                prevent_duplicate_names=False
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                api=[{"known_client_applications": ["unexpected"]}]
+            ),
+            lambda p: resource(p, "azuread_service_principal.pwa_client")["change"]["after"].update(
+                use_existing=True
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"]["web"][0][
+                "implicit_grant"
+            ][0].update(id_token_issuance_enabled=True),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"]["web"][0].update(
+                implicit_grant="unexpected"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                plan = self.plan("pwa_client_configuration_plan")
+                mutate(plan)
+                self.assert_rejected(plan, "PWA")
+
+    def test_rejects_pwa_redirect_uri_drift(self):
+        known_plan = self.plan("pwa_client_configuration_plan")
+        application = resource(known_plan, "azuread_application.pwa_client")["change"]["after"]
+        redirect_uri = application["web"][0]["redirect_uris"][0]
+        host = redirect_uri.removeprefix("https://").removesuffix("/signin-oidc")
+        for invalid_uri in (
+            f"http://{host}/signin-oidc",
+            f"https://{host}/callback",
+            f"https://{host}/signin-oidc/",
+            f"https://{host}/signin-oidc?returnUrl=/",
+            f"https://*.{host}/signin-oidc",
+            "https://localhost/signin-oidc",
+            "https://other.example.test/signin-oidc",
+        ):
+            with self.subTest(uri=invalid_uri):
+                plan = self.plan("pwa_client_configuration_plan")
+                pwa = resource(plan, "azuread_application.pwa_client")["change"]["after"]
+                pwa["web"][0]["redirect_uris"][0] = invalid_uri
+                self.assert_rejected(plan, "PWA redirect URI")
+
+        plan = self.plan("pwa_client_configuration_plan")
+        pwa = resource(plan, "azuread_application.pwa_client")["change"]["after"]
+        pwa["web"][0]["redirect_uris"].append(redirect_uri)
+        self.assert_rejected(plan, "PWA redirect URI")
+
+        plan = self.plan("pwa_client_configuration_plan")
+        container_app = resource(plan, "module.container_app.azapi_resource.container_app")["change"]
+        container_app["after"]["output"] = {}
+        if isinstance(container_app.get("before"), dict):
+            container_app["before"]["output"] = {}
+        self.assert_rejected(plan, "Container App FQDN")
+
+    def test_rejects_pwa_permission_and_credential_drift(self):
+        mutations = (
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"][
+                "required_resource_access"
+            ][0].update(resource_app_id="00000003-0000-0000-c000-000000000000"),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"][
+                "required_resource_access"
+            ][0]["resource_access"][0].update(type="Role"),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"][
+                "required_resource_access"
+            ][0]["resource_access"][0].update(id="00000000-0000-0000-0000-000000000099"),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"][
+                "required_resource_access"
+            ][0]["resource_access"].append({"id": "unexpected", "type": "Scope"}),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"][
+                "required_resource_access"
+            ].append({"resource_app_id": "unexpected", "resource_access": []}),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                password=[{"display_name": "unexpected"}]
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                key_credentials=[{"display_name": "unexpected"}]
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                federated_identity_credentials=[{"display_name": "unexpected"}]
+            ),
+            lambda p: resource(p, "azuread_application.pwa_client")["change"]["after"].update(
+                certificate=[{"display_name": "unexpected"}]
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                plan = self.plan("pwa_client_configuration_plan")
+                mutate(plan)
+                self.assert_rejected(plan, "PWA")
+
+        for address, resource_type in (
+            ("azuread_application_password.pwa_client", "azuread_application_password"),
+            ("azuread_application_certificate.pwa_client", "azuread_application_certificate"),
+            (
+                "azuread_application_federated_identity_credential.pwa_client",
+                "azuread_application_federated_identity_credential",
+            ),
+        ):
+            with self.subTest(address=address):
+                plan = self.plan("baseline_full_plan")
+                plan["resource_changes"].append({
+                    "address": address,
+                    "type": resource_type,
+                    "mode": "managed",
+                    "change": {"actions": ["create"], "after": {}},
+                })
+                self.assert_rejected(plan, "unexpected managed resource")
+
+    def test_pwa_unknown_values_require_their_specific_producer_dependencies(self):
+        cases = (
+            (
+                "redirect",
+                "module.container_app.azapi_resource.container_app",
+                ["output"],
+                lambda app: (
+                    app["change"]["after"]["web"][0]["redirect_uris"].__setitem__(0, None),
+                    app["change"].setdefault("after_unknown", {}).setdefault("web", [{}])[0]
+                    .setdefault("redirect_uris", [True]),
+                ),
+            ),
+            (
+                "API application",
+                "azuread_application.api",
+                ["client_id"],
+                lambda app: (
+                    app["change"]["after"]["required_resource_access"][0].__setitem__(
+                        "resource_app_id", None
+                    ),
+                    app["change"].setdefault("after_unknown", {}).setdefault(
+                        "required_resource_access", [{}]
+                    )[0].__setitem__("resource_app_id", True),
+                ),
+            ),
+            (
+                "generated API scope",
+                "random_uuid.api_scope",
+                ["result"],
+                lambda app: (
+                    app["change"]["after"]["required_resource_access"][0]["resource_access"][0]
+                    .__setitem__("id", None),
+                    app["change"].setdefault("after_unknown", {}).setdefault(
+                        "required_resource_access", [{}]
+                    )[0].setdefault("resource_access", [{}])[0].__setitem__("id", True),
+                ),
+            ),
+        )
+        for label, dependency_resource, dependency_attribute, make_unknown in cases:
+            with self.subTest(dependency=label):
+                plan = self.plan("pwa_client_configuration_plan")
+                pwa = resource(plan, "azuread_application.pwa_client")
+                make_unknown(pwa)
+                plan["relevant_attributes"] = [
+                    item for item in plan["relevant_attributes"]
+                    if not (
+                        item.get("resource") == dependency_resource
+                        and item.get("attribute") == dependency_attribute
+                    )
+                ]
+                self.assert_rejected(plan, "computed-value dependency")
+
+        plan = self.plan("pwa_client_configuration_plan")
+        pwa = resource(plan, "azuread_application.pwa_client")
+        pwa["change"]["after"]["client_id"] = None
+        pwa["change"]["after_unknown"]["client_id"] = True
+        principal = resource(plan, "azuread_service_principal.pwa_client")
+        principal["change"]["after"]["client_id"] = None
+        principal["change"]["after_unknown"]["client_id"] = True
+        plan["relevant_attributes"] = [
+            item for item in plan["relevant_attributes"]
+            if not (
+                item.get("resource") == "azuread_application.pwa_client"
+                and item.get("attribute") == ["client_id"]
+            )
+        ]
+        self.assert_rejected(plan, "computed-value dependency")
 
     def test_rejects_mismatched_application_id_and_sensitive_sql_outputs(self):
         plan = self.plan("baseline_infrastructure_plan")
