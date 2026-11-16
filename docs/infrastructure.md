@@ -242,10 +242,10 @@ identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
 Approved plan v5 requires an owner-controlled staged bootstrap before these
-grants. The separate bootstrap plan path is not yet implemented; do not run
-production deployment until it is implemented, reviewed, and applied by the
-owner and all grants and other prerequisites are complete. Also grant the
-deployment application the Microsoft Graph permission described above.
+grants. Follow the [stage-one plan and review procedure](deployment.md#stage-one-bootstrap);
+do not run production deployment until the reviewed bootstrap plan is applied
+by the owner and all grants and other prerequisites are complete. Also grant
+the deployment application the Microsoft Graph permission described above.
 
 Connect to Azure SQL as a member of the configured Entra admin group and create
 the database principals and roles:
@@ -259,14 +259,27 @@ CREATE USER [<migration-identity-name>] FROM EXTERNAL PROVIDER;
 ALTER ROLE db_datareader ADD MEMBER [<migration-identity-name>];
 ALTER ROLE db_datawriter ADD MEMBER [<migration-identity-name>];
 ALTER ROLE db_ddladmin ADD MEMBER [<migration-identity-name>];
+
+SELECT role_principal.name AS role_name, member_principal.name AS member_name
+FROM sys.database_role_members AS membership
+JOIN sys.database_principals AS role_principal
+  ON role_principal.principal_id = membership.role_principal_id
+JOIN sys.database_principals AS member_principal
+  ON member_principal.principal_id = membership.member_principal_id
+WHERE member_principal.name IN (N'<runtime-identity-name>', N'<migration-identity-name>')
+ORDER BY member_principal.name, role_principal.name;
 ```
 
 Get the names with `terraform -chdir=infra output runtime_identity_name` and
 `terraform -chdir=infra output migration_identity_name`. Runtime identity
 permissions are limited to data access; only the one-shot migration job uses
 the schema-change identity. Repeat this setup if the database or either
-identity is replaced. Until these steps are complete, the workflow safely
-stops at the migration gate and leaves the application revision unchanged.
+identity is replaced. Before rerunning the statements, inspect existing users
+and memberships; `CREATE USER` is not idempotent. Verify two rows for the
+runtime identity (`db_datareader`, `db_datawriter`) and three for the
+migration identity (the same two plus `db_ddladmin`). Until these steps are
+complete, the workflow stops at the migration gate and leaves the application
+revision unchanged.
 
 After the first successful apply, grant the runtime identity access to the
 workload vault. Terraform intentionally does not create this role assignment:

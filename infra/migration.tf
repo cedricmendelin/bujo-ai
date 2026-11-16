@@ -26,20 +26,21 @@ resource "azurerm_container_app_job" "migration" {
   template {
     container {
       name    = "bujo-migrate"
-      image   = var.container_image
-      command = ["dotnet", "Bujo.Host.dll"]
-      args    = ["--migrate-only"]
+      image   = var.bootstrap_only ? "mcr.microsoft.com/k8se/quickstart-jobs@sha256:912ce4be4e9c4eb75cafa3f846d47d8d4ccebde1135c3059d1490d0b8c457187" : var.container_image
+      command = var.bootstrap_only ? ["/bootstrap-disabled"] : ["dotnet", "Bujo.Host.dll"]
+      args    = var.bootstrap_only ? [] : ["--migrate-only"]
       cpu     = 0.25
       memory  = "0.5Gi"
 
-      env {
-        name  = "DOTNET_ENVIRONMENT"
-        value = "Production"
-      }
-
-      env {
-        name  = "ConnectionStrings__journal"
-        value = local.migration_sql_connection_string
+      dynamic "env" {
+        for_each = var.bootstrap_only ? {} : {
+          DOTNET_ENVIRONMENT         = "Production"
+          ConnectionStrings__journal = local.migration_sql_connection_string
+        }
+        content {
+          name  = env.key
+          value = env.value
+        }
       }
     }
   }

@@ -277,7 +277,7 @@
   SQL grants and the later migration and application deployment.
 - Bootstrap must not run a migration or change an app revision. Production
   deployment is manually dispatched by the owner from `main`; merge alone does
-  not deploy. The stage-one plan path remains to be implemented.
+  not deploy. The owner reviews the exact stage-one plan before applying it.
 
 ## Governance
 

@@ -140,6 +140,9 @@ jobs:
       - name: Set up Terraform
         if: steps.detect.outputs.terraform == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.0
+          terraform_wrapper: false
 
       - name: Terraform fmt and validate
         if: steps.detect.outputs.terraform == 'true'
@@ -148,6 +151,10 @@ jobs:
           terraform fmt -check -recursive
           terraform init -backend=false -input=false
           terraform validate
+
+      - name: Test bootstrap plan safety
+        if: steps.detect.outputs.terraform == 'true'
+        run: python3 -m unittest discover -s tests/infrastructure -p 'test_*.py'
 
       - name: Nothing to build yet
         if: steps.detect.outputs.dotnet != 'true' && steps.detect.outputs.terraform != 'true'

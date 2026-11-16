@@ -3,10 +3,62 @@
 Production deployment is manually dispatched by the repository owner from
 `main` using `.github/workflows/deploy.yml`. The workflow builds an image tagged
 with the commit SHA, uses GitHub OIDC for Azure access, and serializes Terraform
-deployments. The separate stage-one bootstrap path required by plan v5 is not
-implemented yet: do not run this workflow to bootstrap a new environment. See
+deployments. Do not use this workflow for stage-one bootstrap. See
 [production infrastructure](infrastructure.md) for the owner-managed bootstrap
 and identity prerequisites.
+
+## Stage-one bootstrap
+
+The owner plans and applies the bootstrap separately, using the existing remote
+backend and an OIDC-authenticated Terraform session. Never run this path from
+PR CI or apply it on merge. Before starting, select the intended subscription,
+configure the backend and required variables as described in the infrastructure
+guide, and confirm the deployment identity and OIDC trust have the required
+access. `API_ALLOWED_PRINCIPAL_OBJECT_IDS` is not required for bootstrap; it
+remains mandatory for a normal application deployment.
+
+Choose an absolute `BOOTSTRAP_PLAN` path outside the repository. Plan files and
+unredacted plan output can contain sensitive infrastructure data; keep them
+private and do not commit them or publish them in a PR.
+
+```sh
+set -euo pipefail
+terraform -chdir=infra plan -input=false -var-file=prod.tfvars \
+  -var='bootstrap_only=true' \
+  -target=azurerm_container_app_job.migration \
+  -out="$BOOTSTRAP_PLAN"
+terraform -chdir=infra show -json "$BOOTSTRAP_PLAN" \
+  | python3 .github/scripts/check_bootstrap_plan.py
+terraform -chdir=infra show -no-color "$BOOTSTRAP_PLAN"
+```
+
+The checker rejects deletions/replacements, unexpected managed resources,
+role assignments, application changes and an executable migration job. It
+does not replace reviewing every change in the exact saved plan. The target
+includes the SQL server/database, the two identities, migration job, Container
+Apps environment, Log Analytics workspace and the existing SQL firewall rule;
+the latter dependencies support those resources. No API registration, Key Vault
+or application revision is targeted. The job has a manual trigger only and
+uses a pinned public placeholder with a deliberately nonexistent command and no
+database configuration. Creating it does not start it. Microsoft documents
+[manual job creation](https://learn.microsoft.com/en-us/azure/container-apps/jobs-get-started-cli);
+live image pull and creation remain unverified. If Azure rejects the
+placeholder, stop and ask the owner before moving the job to stage two (B6).
+
+Before any apply, the owner reviews the exact saved plan, publishes a
+redacted review package without IDs, and reviews the cost and prerequisites.
+SQL free-offer eligibility and limits, job execution consumption, and Log
+Analytics ingestion can affect costs; see the infrastructure guide. The owner
+alone then applies that same saved plan in an OIDC-authenticated session:
+
+```sh
+terraform -chdir=infra apply "$BOOTSTRAP_PLAN"
+```
+
+Do not regenerate the plan after review and treat it as the same plan. If the
+plan is stale or rejected, generate, check and review a new one. Do not start
+the job, run migrations, deploy the app, or change traffic in stage one.
+Afterward the owner performs SQL grants before any stage-two work.
 
 ## Migration gate
 
