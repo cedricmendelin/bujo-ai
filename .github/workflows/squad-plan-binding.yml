@@ -150,13 +150,13 @@ jobs:
                 await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
               },
               async removeLabel(number, name) {
-                await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
+                await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
               },
               async commentIssue(number, body) {
-                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+                await agent.rest.issues.createComment({ owner, repo, issue_number: number, body });
               },
               async commentPr(number, body) {
-                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+                await agent.rest.issues.createComment({ owner, repo, issue_number: number, body });
               },
               async disableAutoMerge(pr) {
                 await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id || (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data.node_id });
@@ -244,7 +244,15 @@ jobs:
             };
 
             try {
-              if (context.eventName === 'issue_comment' && !context.payload.issue.pull_request) {
+              if (context.eventName === 'issue_comment') {
+                if (context.payload.issue.pull_request) {
+                  return core.info('Ignoring pull request conversation comments; pull_request_target handles PR changes.');
+                }
+                const commentBody = context.payload.comment?.body || '';
+                if (commentBody.includes('<!-- squad-plan-binding-failure -->')
+                    || commentBody.includes('<!-- squad-plan-binding:')) {
+                  return core.info('Ignoring an internal binding notice.');
+                }
                 await runOne(issueNumber);
               } else if (context.eventName === 'issues') {
                 // The approval caller owns this event; its workflow_run completion
@@ -308,8 +316,18 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const title = 'Squad Plan Binding reconciliation failed';
-            const body = `@${process.env.HUMAN} **Squad Plan Binding** failed: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\nCheck the run logs and reconcile affected issues/PRs. The binding status fails closed where a current status could be published.`;
+            const marker = '<!-- squad-plan-binding-failure -->';
+            const body = `${marker}\n@${process.env.HUMAN} **Squad Plan Binding** failed: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\nCheck the run logs and reconcile affected issues/PRs. The binding status fails closed where a current status could be published.`;
             const open = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', labels: 'needs:human', per_page: 100 });
             const existing = open.find(issue => issue.title === title);
-            if (existing) await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
-            else await github.rest.issues.create({ owner, repo, title, body, labels: ['needs:human'], assignees: [process.env.HUMAN] });
+            if (!existing) {
+              await github.rest.issues.create({ owner, repo, title, body, labels: ['needs:human'], assignees: [process.env.HUMAN] });
+            } else {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: existing.number, per_page: 100 });
+              const report = comments.find(comment => comment.body?.includes(marker));
+              if (report) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: report.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
+              }
+            }
