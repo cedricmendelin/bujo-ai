@@ -38,7 +38,9 @@ ASPIRE_CONTAINER_RUNTIME=podman dotnet run --project src/Bujo.AppHost
 The AppHost's SQL data volume persists across local runs. Its `--migrate`
 argument applies EF migrations only while the host runs in Development. The
 production host does not run migrations at startup. The Aspire dashboard shows
-the host and SQL resource status.
+the host and SQL resource status. Only `/health/live` allows anonymous access;
+`/health/ready` is protected by the approved-principal policy and returns no
+response body.
 
 For Windows PowerShell, set the runtime with
 `$env:ASPIRE_CONTAINER_RUNTIME = "podman"` before `dotnet run`.
