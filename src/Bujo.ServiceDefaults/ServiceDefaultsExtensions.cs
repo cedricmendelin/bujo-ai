@@ -18,7 +18,7 @@ public static class ServiceDefaultsExtensions
     public static IEndpointRouteBuilder MapServiceDefaults(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapHealthChecks("/health/live", Options("live")).AllowAnonymous();
-        endpoints.MapHealthChecks("/health/ready", Options("ready")).AllowAnonymous();
+        endpoints.MapHealthChecks("/health/ready", Options("ready"));
         return endpoints;
     }
 

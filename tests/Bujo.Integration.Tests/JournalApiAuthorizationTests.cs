@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Net;
+using System.Net.Http.Json;
 using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Infrastructure.Persistence;
@@ -49,6 +50,97 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         using var response = await _client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task EveryJournalDataEndpointRequiresAuthentication()
+    {
+        var id = Guid.NewGuid();
+        var requests = new[]
+        {
+            new HttpRequestMessage(HttpMethod.Get, "/api/journal"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/lists")
+            {
+                Content = JsonContent.Create(new { name = "Custom", kind = JournalListKind.Custom })
+            },
+            new HttpRequestMessage(HttpMethod.Post, "/api/items")
+            {
+                Content = JsonContent.Create(new { name = "Item", plannedPeriod = new { kind = "unplanned" } })
+            },
+            new HttpRequestMessage(HttpMethod.Post, $"/api/items/{id}/move")
+            {
+                Content = JsonContent.Create(new { operationId = Guid.NewGuid(), expectedOccurrenceId = id, destinationListId = Guid.NewGuid() })
+            },
+            new HttpRequestMessage(HttpMethod.Post, $"/api/occurrences/{id}/transition")
+            {
+                Content = JsonContent.Create(new { action = OccurrenceAction.Done })
+            },
+            new HttpRequestMessage(HttpMethod.Post, $"/api/lists/{id}/close"),
+            new HttpRequestMessage(HttpMethod.Post, $"/api/lists/{id}/reopen"),
+            new HttpRequestMessage(HttpMethod.Put, $"/api/items/{id}")
+            {
+                Content = JsonContent.Create(new { name = "Edited" })
+            },
+            new HttpRequestMessage(HttpMethod.Put, $"/api/items/{id}/planned-period")
+            {
+                Content = JsonContent.Create(new { kind = "unplanned" })
+            },
+            new HttpRequestMessage(HttpMethod.Put, $"/api/lists/{id}/goal")
+            {
+                Content = JsonContent.Create(new { goalText = "Goal" })
+            },
+            new HttpRequestMessage(HttpMethod.Get, $"/api/occurrences/{id}/resolution")
+        };
+
+        foreach (var request in requests)
+        {
+            using (request)
+            using (var response = await _client.SendAsync(request))
+            {
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LivenessIsAnonymousButReadinessRequiresAuthentication()
+    {
+        using var live = await _client.GetAsync("/health/live");
+        using var ready = await _client.GetAsync("/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, ready.StatusCode);
+    }
+
+    [Fact]
+    public async Task DomainErrorsMapToValidationNotFoundAndConflictStatuses()
+    {
+        using var invalid = AuthenticatedJsonRequest(HttpMethod.Post, "/api/items", new { name = "" });
+        using var invalidResponse = await _client.SendAsync(invalid);
+        using var missing = AuthenticatedJsonRequest(
+            HttpMethod.Put,
+            $"/api/items/{Guid.NewGuid()}",
+            new { name = "Missing" });
+        using var missingResponse = await _client.SendAsync(missing);
+        using var conflict = AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = "Duplicate Future Log", kind = JournalListKind.FutureLog });
+        using var conflictResponse = await _client.SendAsync(conflict);
+
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missingResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, conflictResponse.StatusCode);
+    }
+
+    private static HttpRequestMessage AuthenticatedJsonRequest(HttpMethod method, string uri, object body)
+    {
+        var request = new HttpRequestMessage(method, uri)
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("Authorization", "Test allow");
+        return request;
     }
 }
 
