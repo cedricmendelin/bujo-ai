@@ -194,6 +194,9 @@ class ReleaseAdmissionTests(unittest.TestCase):
         self.assertIn("release_admission.py recheck", deploy)
         self.assertIn("BUJO_DEPLOYMENT_ENABLED", deploy)
         self.assertIn("cancel-in-progress: false", deploy)
+        apply_job = deploy.split("\n  apply:", 1)[1]
+        self.assertNotIn("runner.temp", apply_job.split("    steps:", 1)[0])
+        self.assertIn("BUJO_RELEASE_MANIFEST: ${{ runner.temp }}/release.json", apply_job)
         self.assertNotIn("docker build", deploy)
         self.assertNotIn("quickstart:latest", deploy)
 

@@ -85,7 +85,6 @@ jobs:
       BUJO_RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
       BUJO_RELEASE_RUN_ID: ${{ needs.authorize.outputs.run_id }}
       BUJO_RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.run_attempt }}
-      BUJO_RELEASE_MANIFEST: ${{ runner.temp }}/release.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,4 +126,5 @@ jobs:
       - name: Migrate exact release, promote, and verify runtime
         env:
           BUJO_RELEASE_VALIDATED: "true"
+          BUJO_RELEASE_MANIFEST: ${{ runner.temp }}/release.json
         run: python3 infra/deploy_gate.py
