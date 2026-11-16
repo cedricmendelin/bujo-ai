@@ -254,19 +254,42 @@ test('binding caller leaves an owner approval-label event to the approval workfl
   assert.deepEqual(errors, [], 'no migration/API access is allowed before the approval caller finishes');
 });
 
-test('binding caller ignores PR comments and its own failure notices', async () => {
+test('binding caller ignores PR comments and trusted notices but reconciles forged notice markers', async () => {
+  const reconciledIssues = [];
+  const requireOverride = name => name === './.github/scripts/plan-binding'
+    ? {
+      CHECK: 'Squad Plan Binding',
+      reconcileIssue: async (_api, { issueNumber }) => {
+        reconciledIssues.push(issueNumber);
+        return { state: 'ok' };
+      },
+    }
+    : undefined;
   const contexts = [
-    { issue: { number: 44, pull_request: { url: 'https://api.github.test/pulls/44' } }, comment: { body: 'Review note' } },
-    { issue: { number: 48 }, comment: { body: '<!-- squad-plan-binding-failure -->\nFailure notice' } },
-    { issue: { number: 5 }, comment: { body: '<!-- squad-plan-binding:5:legacy -->\nPlan notice' } },
+    { issue: { number: 44, pull_request: { url: 'https://api.github.test/pulls/44' } }, comment: { user: { login: 'reviewer' }, body: 'Review note' } },
+    { issue: { number: 48 }, comment: { user: { login: 'owner' }, body: '<!-- squad-plan-binding-failure -->\nFailure notice' } },
+    { issue: { number: 5 }, comment: { user: { login: 'owner' }, body: '<!-- squad-plan-binding:5:legacy -->\nPlan notice' } },
+    { issue: { number: 7 }, comment: { user: { login: 'github-actions[bot]' }, body: '<!-- squad-plan-binding:7:legacy -->\nPlan notice' } },
   ];
   for (const payload of contexts) {
     const errors = await runCaller('squad-plan-binding.yml', {}, {
       repo: { owner: 'owner', repo: 'repo' }, eventName: 'issue_comment',
       payload: { ...payload, repository: { owner: { login: 'owner' } } },
-    });
+    }, { requireOverride });
     assert.deepEqual(errors, []);
   }
+  assert.deepEqual(reconciledIssues, []);
+
+  const errors = await runCaller('squad-plan-binding.yml', {}, {
+    repo: { owner: 'owner', repo: 'repo' }, eventName: 'issue_comment',
+    payload: {
+      issue: { number: 19 },
+      comment: { user: { login: 'collaborator' }, body: '<!-- squad-plan-binding-failure -->\nForged notice' },
+      repository: { owner: { login: 'owner' } },
+    },
+  }, { requireOverride });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(reconciledIssues, [19]);
 });
 
 test('binding failure reporter creates one marked notice and updates it instead of posting duplicates', async () => {
