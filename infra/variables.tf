@@ -46,6 +46,17 @@ variable "bootstrap_only" {
   default     = false
 }
 
+variable "deployment_client_id" {
+  type        = string
+  description = "Optional Entra application client ID whose service principal owns the managed API registration."
+  default     = ""
+
+  validation {
+    condition     = var.deployment_client_id == "" || can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.deployment_client_id))
+    error_message = "deployment_client_id must be empty or a GUID."
+  }
+}
+
 variable "auth_allowed_principal_object_ids" {
   type        = string
   description = "Comma-separated Entra object IDs allowed to call the API."

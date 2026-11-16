@@ -16,6 +16,29 @@ spec.loader.exec_module(preflight)
 
 
 class PreflightTests(unittest.TestCase):
+    def test_plans_and_diagnostics_require_an_actually_private_storage_container(self):
+        env = {"TFSTATE_STORAGE_ACCOUNT": "private", "TFSTATE_CONTAINER": "private"}
+        with patch.object(preflight, "run_json", return_value=None):
+            preflight.require_private_storage(env)
+        for value in ("blob", "container", {}):
+            with self.subTest(value=value), patch.object(preflight, "run_json", return_value=value):
+                with self.assertRaisesRegex(ValueError, "must not allow public"):
+                    preflight.require_private_storage(env)
+
+    def test_infrastructure_configuration_does_not_depend_on_application_setup(self):
+        private = "private-setting"
+        env = {name: private for name in preflight.PROVISIONING_SETTINGS}
+        result = preflight.report(env, mode="infrastructure")
+        self.assertTrue(result["ready"])
+        self.assertNotIn(private, str(result))
+        self.assertNotIn("API_ALLOWED_PRINCIPAL_OBJECT_IDS", {item["requirement"] for item in result["checks"]})
+        self.assertIn("permissions are not certified", result["scope"])
+        self.assertIn("SQL users/grants", str(result["deferred_until_after_provisioning"]))
+        self.assertFalse(preflight.report(env)["ready"])
+        self.assertFalse(preflight.report(env | {"TFSTATE_STORAGE_ACCOUNT": ""}, mode="infrastructure")["ready"])
+        self.assertFalse(preflight.report(env | {"TFSTATE_KEY": "bootstrap/diagnostics/run/apply.log"},
+                                          mode="infrastructure")["ready"])
+
     def test_presence_is_redacted_and_external_checks_are_unknown(self):
         secret = "sensitive-private-value"
         result = preflight.report({name: secret for name in preflight.SETTINGS})

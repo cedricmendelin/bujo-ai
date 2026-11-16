@@ -10,8 +10,9 @@ assistant.
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
 The journal host/API and SQL persistence are implemented; a usable PWA and MCP
 tools remain separate stories. Production was last verified running the Azure
-quickstart image, not the journal host. Initial API/serving-configuration
-preparation, owner-controlled bootstrap and permission
+quickstart image, not the journal host. The owner-reviewed infrastructure-first
+path provisions API/hosting resources before manual application setup; an
+unhealthy app is an accepted intermediate state. Bootstrap and permission
 setup are documented in [the infrastructure guide](docs/infrastructure.md)
 and the [deployment guide](docs/deployment.md). On a prepared baseline, after one-time activation,
 successful `main` CI releases deploy the tested host image through the migration

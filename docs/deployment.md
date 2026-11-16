@@ -4,14 +4,19 @@ Production releases are automated but **disabled by default**. After a
 successful CI run for a push to `main`, `.github/workflows/deploy.yml` deploys
 that exact build, provided the owner has finished the one-time setup in
 [#55](https://github.com/cedricmendelin/bujo-ai/issues/55) and set both
-activation variables. Until then the workflow stops before any Azure write.
+activation variables. Until then the application-release workflow stops before
+any Azure write. The separate owner-only **Provision infrastructure** workflow
+does not require completed application setup or either activation flag.
 Production currently still runs the legacy quickstart image; no application
 release has been evidenced live yet.
 
-This is a partial delivery. The initial API/application configuration baseline
-is also unresolved: routine-release safety checks reject non-image
-infrastructure or authorization changes. Do not enable releases or apply the
-whole stack as a workaround; see [first-release baseline](#first-release-baseline).
+This is a partial delivery. Plan v9 separates **IaC provisioning -> manual
+application setup -> application release**. Provisioning includes the API
+registration and hosting baseline, retaining the existing app image; an
+unhealthy app is an accepted intermediate state, not a successful Bujo release.
+Routine-release safety checks still reject infrastructure/authorization drift.
+Use the reviewed [infrastructure-first path](#infrastructure-first-bootstrap),
+not an unrestricted apply or a weaker release gate.
 
 ## Release pipeline
 
@@ -59,7 +64,145 @@ Run the non-mutating configuration check with
 verified, missing or unknown by setting name only, never values, links #55 for
 remediation and never reports success by fallback.
 
-## Stage-one bootstrap
+## Infrastructure-first bootstrap
+
+After this code is merged, run **Provision infrastructure** on `main` as the
+repository owner. It uses the same scoped `prod` OIDC identity and existing
+private state backend as application releases, and shares `terraform-prod`
+serialization without cancellation. PRs and non-owner dispatches cannot run it.
+It validates the live v9 binding, exact merged source, target subscription,
+deployment-principal ownership, retained live image, inert migration job,
+absence of unfinished/ambiguous releases, and the bounded saved plan.
+The configured application resource group must contain exactly one existing
+Container App; an absent/ambiguous app or image stops planning rather than
+substituting a placeholder. Active/unknown executions of any job in that group
+also block provisioning. The state container's actual private access is checked
+before saving plans or diagnostics; configuration presence alone is insufficient.
+
+Only Azure/Graph/state access and private infrastructure inputs are needed now.
+The deployment principal must already be able to create/manage Entra
+applications; the workflow cannot grant its own Graph permission. Configure
+`TFSTATE_STORAGE_ACCOUNT` for the existing backend if absent. SQL users/grants,
+caller consent/assignment, `API_ALLOWED_PRINCIPAL_OBJECT_IDS`, a published Bujo
+image, application health and the release activation flags are **not**
+provisioning prerequisites. An initially empty allowlist denies everyone.
+
+### Owner-dispatched OIDC plan and apply
+
+1. Start a private plan; this performs no Terraform apply or migration start:
+
+   ```powershell
+   gh workflow run provision.yml --ref main -f operation=plan
+   ```
+
+2. Read the redacted summary and source/hash from the completed workflow.
+   The actual saved plan is **not** an Actions artifact or log: it is stored
+   using Entra authentication in the existing private state container as
+   `bootstrap/plans/<plan-run-id>/plan.tfplan`, with `review.json` alongside it.
+   The reserved `bootstrap/` prefix must not contain the Terraform state key.
+   Missing/inaccessible state or release-journal evidence stops provisioning.
+
+3. In a private local terminal, initialize the same backend/providers on that
+   exact merged source. Download and inspect the saved plan using the owner
+   state-container access. Use a private directory outside the repository with
+   owner-only access, as in the local authentication procedure below:
+
+   ```powershell
+   $plan = "<private-directory>\baseline.tfplan"
+   az storage blob download --auth-mode login `
+     --account-name "<existing-state-account>" --container-name "<state-container>" `
+     --name "bootstrap/plans/<plan-run-id>/plan.tfplan" --file "$plan" --output none
+   if ($LASTEXITCODE -ne 0) { throw "Private plan download failed" }
+   terraform -chdir=infra show -no-color "$plan"
+   if ($LASTEXITCODE -ne 0) { throw "Private plan inspection failed" }
+   $reviewedHash = (Get-FileHash -LiteralPath $plan -Algorithm SHA256).Hash.ToLowerInvariant()
+   ```
+
+   Review the full resource/configuration changes, costs and hash privately.
+   Never paste unredacted plans, identifiers or connection strings into GitHub.
+   A redacted summary alone is not the complete plan review.
+
+4. Only after that review, authorize the exact saved plan:
+
+   ```powershell
+   gh workflow run provision.yml --ref main -f operation=apply `
+     -f plan_run_id="<plan-run-id>" -f plan_sha256="$reviewedHash"
+   ```
+
+   Apply recovers only a successful owner workflow's plan for the exact current
+   merged commit, checks the owner-reviewed hash, live scope, image/target,
+   migration admission and plan safety again, and applies that saved file.
+   If `main`, state, the image or dependencies change, stop and prepare/review a
+   new plan; do not silently regenerate it. Use a new plan run rather than
+   overwriting a previous run's private files.
+
+5. Inspect the result. A failed Terraform apply remains **failed**, even when
+   some infrastructure exists or the owner accepts an unhealthy app. Unredacted
+   init/plan/apply diagnostics are stored privately under
+   `bootstrap/diagnostics/<run-id>/<attempt>/<phase>.log`, never in public artifacts.
+   Reconcile actual state before retrying; no automatic destroy/rollback occurs.
+   A successful infrastructure apply does not certify application readiness.
+
+After successful apply, use the private Terraform outputs to finish #55:
+runtime/migration SQL principals/grants, conditional SQL directory lookup,
+approved client consent and API user assignment/allowlist, and actual image
+access. Review any subsequent allowlist/configuration baseline change through
+this same plan/apply path **before** activating application releases; the
+routine release gate does not absorb authorization changes. The workflow never
+grants permissions, starts a migration, or sets either activation flag.
+Remove the specific private plan/review/diagnostic blobs and local files when
+their review/recovery purpose ends; do not delete the state container.
+
+### Local application of the same reviewed baseline
+
+The local-user authentication, backend setup and owner-only directory procedure
+below also work with the infrastructure mode. Use a clean checkout of current
+merged `main`, set `TF_VAR_deployment_client_id` to the intended deployment
+application's client ID (not the interactive user's object ID), and configure
+the existing private state settings. For live issue-scope verification, capture
+`gh auth token` into process-only `GH_TOKEN`, and set
+`GITHUB_REPOSITORY=cedricmendelin/bujo-ai`; do not print the token.
+Use only the authentication/backend/private-directory setup from the legacy
+procedure below, not its targeted plan/apply commands. Keep automatic releases
+disabled and do not run a local apply concurrently with a deployment workflow.
+
+```powershell
+$env:GH_TOKEN = gh auth token
+if ($LASTEXITCODE -ne 0) { throw "GitHub authentication failed" }
+$env:GITHUB_REPOSITORY = "cedricmendelin/bujo-ai"
+$env:TF_VAR_deployment_client_id = "<intended-deployment-client-id>"
+$env:TFSTATE_RESOURCE_GROUP = "<state-resource-group>"
+$env:TFSTATE_STORAGE_ACCOUNT = "<state-storage-account>"
+$env:TFSTATE_CONTAINER = "<state-container>"
+$env:TFSTATE_KEY = "<state-key>"
+$reviewedCommit = git rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw "Commit lookup failed" }
+$plan = "<private-directory>\baseline.tfplan"
+python .github\scripts\bootstrap_review.py --mode infrastructure --operation plan `
+  --plan "$plan" --subscription "$subscription" --expected-commit "$reviewedCommit"
+if ($LASTEXITCODE -ne 0) { throw "Infrastructure planning failed" }
+terraform -chdir=infra show -no-color "$plan"
+if ($LASTEXITCODE -ne 0) { throw "Private review failed" }
+$reviewedHash = (Get-FileHash -LiteralPath $plan -Algorithm SHA256).Hash
+# Only after the owner has reviewed the exact plan and costs:
+python .github\scripts\bootstrap_review.py --mode infrastructure --operation apply `
+  --plan "$plan" --subscription "$subscription" --expected-commit "$reviewedCommit" `
+  --expected-sha256 "$reviewedHash"
+if ($LASTEXITCODE -ne 0) { throw "Infrastructure apply failed; inspect private diagnostics and state" }
+```
+
+Keep the `.plan.log`/`.apply.log` beside the private local plan for diagnosis,
+then remove the specific files and temporary token/configuration environment
+variables after review. Local and OIDC paths share the same validator and
+redaction; neither makes app setup a provisioning prerequisite.
+
+## Legacy targeted job-only bootstrap
+
+<a id="stage-one-bootstrap"></a>
+
+The older narrow profile below remains available for reviewing a job-only plan;
+it does **not** provision the complete API/hosting baseline. Prefer the
+infrastructure-first procedure above for the first complete IaC setup.
 
 The owner plans and applies the bootstrap separately, using the existing remote
 backend. Never run this path from PR CI or apply it on merge.
@@ -235,21 +378,19 @@ app in stage one. The owner then performs the SQL grants.
 
 ## First-release baseline
 
-The narrow stage-one plan does not authorize a full-stack apply. The routine
-gate deliberately rejects API-registration, identity, authorization,
-environment, SQL and other infrastructure drift; it does not provision this
-missing baseline implicitly or deploy a different placeholder app.
+The infrastructure-first v9 baseline provisions API registration/configuration
+and the trusted outputs (`migration_job_id`, `container_app_id`,
+`migration_sql_connection_string`, `runtime_sql_connection_string`) before
+manual app setup. It retains the image observed on the existing app, without
+starting the inert job or deploying an unmigrated Bujo image. Hosting
+configuration changes can leave that app unhealthy; record that separately.
 
-Before the first release, the owner must privately inspect the actual state and
-provide a separately reviewed, bounded preparation plan for the missing API
-registration/configuration and trusted outputs (`migration_job_id`,
-`container_app_id`, `migration_sql_connection_string`,
-`runtime_sql_connection_string`). No initial serving-configuration transition
-has been verified yet. Preparing it must not start migrations, promote the host,
-change app traffic, widen permissions or bypass the routine plan validator.
-If those constraints cannot be met within v8, obtain a revised owner-approved
-and bound issue plan before implementing that transition. This remains
-blocking work on #5/#55, not an instruction to apply the whole stack.
+Once manual configuration is complete and a fresh reviewed baseline has no
+pending authorization/identity/SQL changes, enable the application-release
+flags. The first release then updates and runs the migration job before
+promoting the exact tested Bujo image. Unknown execution correlation still
+fails closed. Live infrastructure and application acceptance remain separate
+blocking evidence on #5/#55; local mock plans are not a production deployment.
 
 After a verified release exists, separately reviewed owner infrastructure changes use
 `TF_VAR_container_image=<currently deployed ghcr.io/cedricmendelin/bujo-ai@sha256:digest>`

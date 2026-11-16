@@ -116,8 +116,11 @@ separate verification work.
 
 ### Deployment, identity and availability
 
-Issue #5 plan v8 retains an owner-reviewed, owner-applied bootstrap and permission
-setup, then permits automatic routine deployment after successful trusted
+Issue #5 plan v9 separates owner-reviewed infrastructure provisioning from
+manual application setup and app readiness. An owner-authorized workflow or
+local helper applies the exact saved baseline, retaining the existing app image
+and an inert migration job; an unhealthy app is an accepted intermediate state,
+not a successful release. It then permits automatic routine deployment after successful trusted
 `main` CI and explicit one-time activation. PR execution never obtains Azure
 credentials. A single Container Apps host and the separately executed migration
 job use the same tested immutable image. The app image is promoted only after

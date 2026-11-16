@@ -25,8 +25,9 @@ passwords, or Terraform-managed Key Vault values.
 
 The app resource group `bujo-ai-rg` must be created by the owner before the
 first deployment. Terraform looks it up as data rather than managing it. The
-owner applies only the narrow reviewed bootstrap; initial API/serving-configuration
-preparation remains blocking work under #5/#55. Afterwards each routine release first moves
+owner reviews the exact infrastructure-first plan and authorizes its saved hash;
+the owner-only workflow or local helper can then provision the API/hosting baseline
+before application-specific manual setup. Afterwards each routine release first moves
 only the migration job to the release digest, runs one correlated execution,
 and only after it succeeds promotes the app image, then verifies the exact
 revision, the startup database check, `/health/live` and an anonymous 401 (see
@@ -34,8 +35,10 @@ revision, the startup database check, `/health/live` and an anonymous 401 (see
 external ingress forwards to container port 8080, with 0.25 vCPU/0.5 GiB and
 zero to one replica. Releases use only the CI-built
 `ghcr.io/cedricmendelin/bujo-ai@sha256:<digest>` image; `container_image` must
-be such a digest. `bootstrap_only=true` is only for the targeted inert migration
-job bootstrap, not a full-stack app deployment. There is no quickstart fallback.
+be such a digest. During the explicitly reviewed `bootstrap_only=true` baseline,
+the existing app image is read live and retained, and the migration job remains
+inert. No new app placeholder or real-release quickstart fallback is introduced.
+Application health may be incomplete while the owner configures manual setup.
 
 ## Resources and modules
 
@@ -146,7 +149,11 @@ principal. Grant the deployment service principal the Microsoft Graph
 in the target tenant. The Terraform-created application and service principal
 list that deployment principal as an owner. The pinned AzureAD 3.10.0 provider
 documents this permission for both resources when the Terraform principal owns
-them; `infra/api.tf` sets it as owner on each. This verifies the provider's
+them; `infra/api.tf` resolves `deployment_client_id` to the intended deployment
+service principal and sets it as owner on each, including when a local user
+creates the baseline. Provisioning and release workflows pass `AZURE_CLIENT_ID`
+through `TF_VAR_deployment_client_id`; this avoids changing ownership when
+switching from local bootstrap to OIDC. This verifies the provider's
 documented permission contract, not a live tenant apply. Do not grant
 `Application.ReadWrite.All`; the deployment identity otherwise retains only
 its resource-group and state-container roles described above.
@@ -168,7 +175,7 @@ GitHub settings and are never committed:
 | `TFSTATE_KEY` | State blob name, normally `prod.tfstate` |
 | `SQL_ENTRA_ADMIN_OBJECT_ID` | Object ID of the Entra SQL administrator security group |
 | `SQL_ENTRA_ADMIN_LOGIN` | Display name of that Entra security group |
-| `API_ALLOWED_PRINCIPAL_OBJECT_IDS` | Comma-separated object IDs of users allowed by the API authorization policy |
+| `API_ALLOWED_PRINCIPAL_OBJECT_IDS` | Comma-separated API account object IDs; can be absent for initial IaC (deny all), required before application activation |
 | `BUDGET_ALERT_EMAIL` | Address to receive Azure budget alerts |
 | `BUJO_OWNER_SETUP_CONFIRMED` | `true` only after the owner completes the #55 checklist; an explicit attestation, not automatic permission proof |
 | `BUJO_DEPLOYMENT_ENABLED` | `true` only once setup is verified; enables automatic releases (unset to stop) |
@@ -250,9 +257,9 @@ This permission is not granted to the runtime, migration, or deployment
 identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
-The owner-controlled staged bootstrap comes first. Follow the
-[stage-one plan and review procedure](deployment.md#stage-one-bootstrap), these
-grants, and resolve the [initial baseline](deployment.md#first-release-baseline); do not
+The owner-reviewed infrastructure baseline comes first. Follow the
+[infrastructure-first plan and review procedure](deployment.md#infrastructure-first-bootstrap), then these
+grants and the [application baseline](deployment.md#first-release-baseline); do not
 activate releases until all grants and other prerequisites are complete. Also grant
 the deployment application the Microsoft Graph permission described above.
 

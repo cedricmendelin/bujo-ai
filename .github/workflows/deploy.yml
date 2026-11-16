@@ -78,6 +78,7 @@ jobs:
       BUJO_OWNER_SETUP_CONFIRMED: ${{ vars.BUJO_OWNER_SETUP_CONFIRMED }}
       TF_VAR_container_image: ${{ needs.authorize.outputs.image }}
       TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
+      TF_VAR_deployment_client_id: ${{ vars.AZURE_CLIENT_ID }}
       TF_VAR_sql_entra_admin_object_id: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
       TF_VAR_sql_entra_admin_login: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
       TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}

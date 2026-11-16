@@ -1,13 +1,21 @@
 resource "random_uuid" "api_scope" {}
 resource "random_uuid" "api_user_role" {}
 
+data "azuread_service_principal" "deployment" {
+  count = (
+    var.deployment_client_id != ""
+    && lower(var.deployment_client_id) != lower(data.azuread_client_config.current.client_id)
+  ) ? 1 : 0
+  client_id = var.deployment_client_id
+}
+
 resource "azuread_application" "api" {
   display_name            = local.api_application_name
   description             = "Bujo-AI authenticated journal API"
   prevent_duplicate_names = true
   sign_in_audience        = "AzureADMyOrg"
   identifier_uris         = [local.api_identifier_uri]
-  owners                  = [data.azuread_client_config.current.object_id]
+  owners                  = [local.api_owner_object_id]
 
   api {
     requested_access_token_version = 2
@@ -37,5 +45,5 @@ resource "azuread_application" "api" {
 resource "azuread_service_principal" "api" {
   client_id                    = azuread_application.api.client_id
   app_role_assignment_required = true
-  owners                       = [data.azuread_client_config.current.object_id]
+  owners                       = [local.api_owner_object_id]
 }
