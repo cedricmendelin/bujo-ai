@@ -129,9 +129,9 @@ function workflowScript(file, stepName) {
   return block.split('\n').map(line => line.slice(12)).join('\n');
 }
 
-async function runCaller(file, github, context, { agent = github, env = {}, requireOverride, stepName } = {}) {
+async function runCaller(file, github, context, { agent = github, env = {}, requireOverride, stepName, outputs = {} } = {}) {
   const errors = [];
-  const core = { info() {}, error() {}, setFailed: text => errors.push(text) };
+  const core = { info() {}, error() {}, setOutput: (name, value) => { outputs[name] = value; }, setFailed: text => errors.push(text) };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const load = name => requireOverride?.(name) ?? (name.startsWith('./.github/scripts/')
     ? require(path.join(root, name)) : require(name));
@@ -294,7 +294,30 @@ test('binding caller ignores PR comments and trusted notices but reconciles forg
   assert.deepEqual(reconciledIssues, [19]);
 });
 
-test('binding failure reporter creates one marked notice and updates it instead of posting duplicates', async () => {
+test('binding job ignores only skipped Squad Plan completions and keeps other event paths', () => {
+  const workflow = read('.github/workflows/squad-plan-binding.yml');
+  const condition = workflow.match(/jobs:\s*\n\s+reconcile:\s*\n\s+if: >-\s*\n([\s\S]*?)\n\s+runs-on:/)?.[1];
+  assert.ok(condition, 'binding job must have an explicit event guard');
+  const assertSkipGuard = text => assert.match(text,
+    /github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.name != 'Squad Plan' \|\| github\.event\.workflow_run\.conclusion != 'skipped'/);
+  assertSkipGuard(condition);
+  assert.throws(() => assertSkipGuard(condition.replace("conclusion != 'skipped'", "conclusion != 'success'")));
+  const evaluate = new Function('github', `return (${condition});`);
+  const event = (eventName, { name = 'Squad Plan', conclusion = 'success', action = '', label = '' } = {}) => ({
+    event_name: eventName,
+    event: { workflow_run: { name, conclusion }, action, label: { name: label } },
+  });
+  assert.equal(evaluate(event('workflow_run', { conclusion: 'skipped' })), false);
+  assert.equal(evaluate(event('workflow_run', { conclusion: 'success' })), true);
+  assert.equal(evaluate(event('workflow_run', { conclusion: 'failure' })), true);
+  assert.equal(evaluate(event('workflow_run', { name: 'Squad Plan Approved', conclusion: 'skipped' })), true);
+  for (const name of ['issue_comment', 'issues', 'workflow_dispatch', 'schedule']) assert.equal(evaluate(event(name)), true, name);
+  assert.equal(evaluate(event('pull_request_target', { action: 'labeled', label: 'needs:human' })), false);
+  assert.equal(evaluate(event('pull_request_target', { action: 'labeled', label: 'plan:waived' })), true);
+  assert.equal(evaluate(event('pull_request_target', { action: 'edited' })), true);
+});
+
+test('binding failure reporter edits the notice only when the failure changes', async () => {
   const state = { comments: [], calls: [], nextId: 1 };
   const issues = {
     listForRepo: async () => ({ data: [{ number: 48, title: 'Squad Plan Binding reconciliation failed' }] }),
@@ -313,17 +336,44 @@ test('binding failure reporter creates one marked notice and updates it instead 
     paginate: async (method, args) => (await method(args)).data,
   };
   const context = { repo: { owner: 'owner', repo: 'repo' }, serverUrl: 'https://github.test', runId: 100 };
-  for (const runId of [100, 101]) {
+  for (const [runId, failureKey] of [[100, 'first'], [101, 'first'], [102, 'second'], [103, 'second']]) {
     context.runId = runId;
     assert.deepEqual(await runCaller('squad-plan-binding.yml', github, context, {
-      stepName: 'Report reconciliation failure', env: { HUMAN: 'owner' },
+      stepName: 'Report reconciliation failure', env: { HUMAN: 'owner', FAILURE_KEY: failureKey },
     }), []);
   }
   assert.deepEqual(state.calls.map(call => call[0]), ['create', 'update']);
   assert.equal(state.calls[0][1], 48);
   assert.equal(state.calls[1][1], state.comments[0].id);
   assert.match(state.comments[0].body, /<!-- squad-plan-binding-failure -->/);
-  assert.match(state.comments[0].body, /actions\/runs\/101/);
+  assert.match(state.comments[0].body, /squad-plan-binding-failure-key:second/);
+  assert.match(state.comments[0].body, /actions\/runs\/102/);
+});
+
+test('binding caller fingerprints actual errors independently of run order', async () => {
+  const outputKeys = [];
+  for (const messages of [['first failure', 'second failure'], ['second failure', 'first failure'], ['new failure']]) {
+    const outputs = {};
+    const github = {
+      rest: {
+        pulls: { list: async () => ({ data: [] }) },
+        issues: { listForRepo: async () => ({ data: [{ number: 41 }] }) },
+      },
+      paginate: async (method, args) => (await method(args)).data,
+    };
+    const requireOverride = name => name === './.github/scripts/plan-binding'
+      ? { sweep: async () => messages.map(reason => ({ issueNumber: reason === 'second failure' ? 42 : 41, state: 'error', reason })) }
+      : undefined;
+    const errors = await runCaller('squad-plan-binding.yml', github, {
+      repo: { owner: 'owner', repo: 'repo' }, eventName: 'schedule',
+      payload: { repository: { owner: { login: 'owner' } } },
+    }, { requireOverride, outputs });
+    assert.equal(errors.length, 1);
+    assert.match(outputs.failure_key, /^[a-f0-9]{64}$/);
+    outputKeys.push(outputs.failure_key);
+  }
+  assert.equal(outputKeys[0], outputKeys[1]);
+  assert.notEqual(outputKeys[0], outputKeys[2]);
 });
 
 test('real binding workflow follows PR connection cursors beyond 100 lifetime PRs and paginates timeline evidence', async () => {
