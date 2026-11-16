@@ -12,7 +12,12 @@ public static class JournalEndpoints
 
         api.MapGet("/journal", (JournalApplicationService journal) => Results.Ok(journal.GetSnapshot()));
         api.MapPost("/lists", (CreateListRequest request, JournalApplicationService journal) =>
-            ToHttpResult(journal.CreateList(request.Name, request.Kind, request.GoalText, request.WeekKey)));
+        {
+            var weekKey = ParseWeekKey(request.WeekKey);
+            return weekKey.IsSuccess
+                ? ToHttpResult(journal.CreateList(request.Name, request.Kind, request.GoalText, weekKey.Value))
+                : Error(weekKey.Error!);
+        });
         api.MapPost("/items", (CaptureRequest request, JournalApplicationService journal) =>
         {
             var period = ParsePeriod(request.PlannedPeriod);
@@ -100,7 +105,26 @@ public static class JournalEndpoints
         }
     }
 
-    public sealed record CreateListRequest(string Name, JournalListKind Kind, string? GoalText, IsoWeekKey? WeekKey);
+    private static DomainResult<IsoWeekKey?> ParseWeekKey(WeekKeyRequest? request)
+    {
+        if (request is null)
+        {
+            return DomainResult<IsoWeekKey?>.Success(null);
+        }
+
+        try
+        {
+            return DomainResult<IsoWeekKey?>.Success(new IsoWeekKey(request.Year, request.Week));
+        }
+        catch (DomainException exception)
+        {
+            return DomainResult<IsoWeekKey?>.Failure(exception.ToError());
+        }
+    }
+
+    public sealed record CreateListRequest(string Name, JournalListKind Kind, string? GoalText, WeekKeyRequest? WeekKey);
+
+    public sealed record WeekKeyRequest(int Year, int Week);
 
     public sealed record CaptureRequest(
         string Name,

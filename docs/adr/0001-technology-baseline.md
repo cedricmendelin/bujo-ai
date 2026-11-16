@@ -96,27 +96,29 @@ approved here.
 
 ### Local development and migrations
 
-Use local SQL Server with the full-text component for persistence integration
-tests; a developer container is disposable infrastructure, not the production
-database. SQL Server containers and Windows LocalDB are developer alternatives
+Use local SQL Server for persistence integration tests; a developer container
+is disposable infrastructure, not the production database. SQL Server
+containers and Windows LocalDB are developer alternatives
 ([containers](https://learn.microsoft.com/en-us/sql/linux/quickstart-install-connect-docker?view=sql-server-ver17),
 [LocalDB](https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/sql-server-express-localdb)).
 LocalDB alone does not establish full-text parity. SQL Server and Azure SQL
 are not identical: test SQL dialect, collation, full-text language and migration
 behavior against the actual Azure SQL configuration before release.
 
-Use the [EF Core SQL Server provider](https://learn.microsoft.com/en-us/ef/core/providers/sql-server/)
+Issue #5 implements the [EF Core SQL Server provider](https://learn.microsoft.com/en-us/ef/core/providers/sql-server/)
 and versioned [migrations](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/).
-Generate and review deployment scripts or a migration bundle, test upgrades
-against real SQL Server and the target Azure SQL tier, and run migrations with a
-separate appropriately authorized identity rather than granting the runtime
-schema-owner privileges. Include full-text DDL and its transaction constraints in
-the migration test; avoid relying on automatic application-start migrations.
+The production migration job uses a separate identity rather than granting the
+runtime schema-owner privileges. Avoid automatic application-start migrations.
+Azure SQL-specific parity, full-text behavior and restore procedures remain
+separate verification work.
 
 ### Deployment, identity and availability
 
-Provisioning is a later issue. Candidate: one General Purpose serverless database
-with the [free tier explicitly enabled](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier?view=azuresql);
+Issue #5 prepares a single Container Apps host and a separately triggered
+migration job, but does not authorize or perform Azure provisioning. The app
+image is promoted only after the migration execution succeeds; see the
+[deployment guide](../deployment.md). The database remains a candidate General
+Purpose serverless database with the [free tier explicitly enabled](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier?view=azuresql);
 ordinary serverless without the free-limit setting is billable. Verify eligible
 subscription and regional availability. Use the Container App managed identity,
 an Entra administrator and a least-privilege database principal; automated
@@ -217,7 +219,7 @@ deployments.
 | --- | --- |
 | Domain unit | Identity, moves, one active destination, planned periods and list closure. |
 | Application | Shared use cases, authorization and explicit approval rules. |
-| Persistence integration | Real SQL Server with full-text; migration upgrade, constraints and queries; targeted Azure SQL parity and recovery checks. The current issue #5 slice tests empty-database migration and basic journal persistence; broader recovery and concurrency evidence remains outstanding. |
+| Persistence integration | SQL Server integration tests cover empty-database migration, normalized journal rows, multi-hop persistence across restarts, idempotency, transactional rollback, concurrent moves and close/move races. Azure SQL parity, full-text behavior and restore/recovery checks remain unverified. |
 | API / MCP contract | Authentication, approved-account restriction, error and shared behavior contracts; actual MCP clients under the separate auth issue. |
 | PWA / E2E smoke, later | Target-browser installation, login, server-confirmed saves, offline indicator, disconnect/reconnect and resume behavior. |
 
@@ -229,13 +231,14 @@ deployments.
   lack of an SLA, resume latency, restore charges and backup limits need owner
   acceptance. Full-text/tier and region compatibility remain to be tested.
 - Verify local versus Azure SQL parity, language behavior, backup restore,
-  permissions, and actual monthly spend during implementation. Do not copy
-  personal journal data into test fixtures.
+  permissions, and actual monthly spend before production. Do not copy personal
+  journal data into test fixtures.
 - Release-two AI search/RAG ([#16](https://github.com/cedricmendelin/bujo-ai/issues/16))
   and auth compatibility are separate decisions. Original SQL data remains
   authoritative.
 
-**Owner review requested:** approve or revise the proposed baseline and select the
-free-limit availability/cost trade-off before treating these choices as final.
-Record an accepted decision separately only after approval. No resources are
-provisioned by this ADR.
+**Approval boundary:** issue #5 approves .NET 11, EF Core SQL Server, and one
+modular host with a separate production migration job. Blazor rendering,
+Azure SQL free-tier behavior, MCP client compatibility, actual Azure
+permissions, and provisioning remain unapproved or unverified. No resources
+are provisioned by this ADR.

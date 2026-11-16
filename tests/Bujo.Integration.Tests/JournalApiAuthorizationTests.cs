@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Infrastructure.Persistence;
@@ -131,6 +132,36 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, missingResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, conflictResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(2026, 48, HttpStatusCode.OK)]
+    [InlineData(2026, 54, HttpStatusCode.BadRequest)]
+    [InlineData(0, 1, HttpStatusCode.BadRequest)]
+    public async Task WeeklyListValidatesAndPreservesTheRequestedIsoWeek(
+        int year,
+        int week,
+        HttpStatusCode expectedStatus)
+    {
+        using var request = AuthenticatedJsonRequest(HttpMethod.Post, "/api/lists", new
+        {
+            name = "Weekly list",
+            kind = JournalListKind.Weekly,
+            weekKey = new { year, week }
+        });
+        using var response = await _client.SendAsync(request);
+        Assert.Equal(expectedStatus, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        if (expectedStatus == HttpStatusCode.OK)
+        {
+            var weekKey = body.RootElement.GetProperty("weekKey");
+            Assert.Equal(year, weekKey.GetProperty("year").GetInt32());
+            Assert.Equal(week, weekKey.GetProperty("week").GetInt32());
+        }
+        else
+        {
+            Assert.Equal("InvalidInput", body.RootElement.GetProperty("code").GetString());
+        }
     }
 
     private static HttpRequestMessage AuthenticatedJsonRequest(HttpMethod method, string uri, object body)

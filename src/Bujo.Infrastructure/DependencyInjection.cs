@@ -10,7 +10,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddJournalPersistence(this IServiceCollection services, string connectionString)
     {
-        services.AddDbContextFactory<JournalDbContext>(options => options.UseSqlServer(connectionString));
+        services.AddDbContextFactory<JournalDbContext>(options =>
+            options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure()));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
         return services;
     }

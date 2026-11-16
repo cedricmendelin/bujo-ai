@@ -35,6 +35,20 @@ variable "container_image" {
   default     = "mcr.microsoft.com/k8se/quickstart:latest"
 }
 
+variable "auth_allowed_principal_object_ids" {
+  type        = string
+  description = "Comma-separated Entra object IDs allowed to call the API."
+  sensitive   = true
+
+  validation {
+    condition = length(split(",", var.auth_allowed_principal_object_ids)) > 0 && alltrue([
+      for object_id in split(",", var.auth_allowed_principal_object_ids) :
+      can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", trimspace(object_id)))
+    ])
+    error_message = "auth_allowed_principal_object_ids must be a comma-separated list of GUIDs."
+  }
+}
+
 variable "sql_entra_admin_login" {
   type        = string
   description = "Display name of the Entra security group that administers Azure SQL."

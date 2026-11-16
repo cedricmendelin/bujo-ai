@@ -37,8 +37,10 @@ ASPIRE_CONTAINER_RUNTIME=podman dotnet run --project src/Bujo.AppHost
 
 The AppHost's SQL data volume persists across local runs. Its `--migrate`
 argument applies EF migrations only while the host runs in Development. The
-production host does not run migrations at startup. The Aspire dashboard shows
-the host and SQL resource status. Only `/health/live` allows anonymous access;
+production host does not run migrations at startup; production deployment uses
+the dedicated `--migrate-only` job entry point before promoting an app revision.
+The Aspire dashboard shows the host and SQL resource status. Only
+`/health/live` allows anonymous access;
 `/health/ready` is protected by the approved-principal policy and returns no
 response body.
 
@@ -47,10 +49,11 @@ For Windows PowerShell, set the runtime with
 
 ## SQL-backed integration test
 
-The integration suite includes a SQL Server test that migrates an empty database
-and verifies that a captured, moved, and completed item remains resolvable from
-a fresh repository instance. CI starts a disposable SQL Server and supplies the
-test connection string as an ephemeral environment variable.
+The integration suite migrates an empty database and verifies normalized
+journal rows, multi-hop moves across repository restarts, idempotent retries,
+close/move races, transactional rollback, and concurrent writes. CI starts a
+disposable SQL Server and supplies the test connection string as an ephemeral
+environment variable.
 
 To run this test locally, start a disposable SQL Server with Podman or Docker,
 then set `BUJO_SQL_TEST_CONNECTION` in your shell to a connection string for
@@ -59,6 +62,3 @@ databases. Run `dotnet test tests/Bujo.Integration.Tests/Bujo.Integration.Tests.
 the test fails rather than skips when the variable or SQL Server is unavailable.
 The CI job uses a pinned SQL Server container on an x64 runner. The documented
 container architecture is validated on x64; ARM host behavior is not yet verified.
-
-Host-restart behavior, transactional failure rollback, and database concurrency
-tests remain outstanding.

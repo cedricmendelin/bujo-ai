@@ -6,7 +6,7 @@ var sqlServer = builder.AddSqlServer("sql", password: sqlPassword)
     .WithLifetime(ContainerLifetime.Persistent);
 var journalDatabase = sqlServer.AddDatabase("journal");
 
-builder.AddProject<Projects.Bujo_Host>("journal")
+builder.AddProject<Projects.Bujo_Host>("journal-host")
     .WithReference(journalDatabase)
     .WaitFor(journalDatabase)
     .WithEnvironment("Auth__TenantId", builder.Configuration["Auth:TenantId"] ?? string.Empty)

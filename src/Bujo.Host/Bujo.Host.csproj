@@ -4,7 +4,6 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <ProjectReference Include="..\Bujo.Application\Bujo.Application.csproj" />
     <ProjectReference Include="..\Bujo.Infrastructure\Bujo.Infrastructure.csproj" />
-    <ProjectReference Include="..\Bujo.ServiceDefaults\Bujo.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

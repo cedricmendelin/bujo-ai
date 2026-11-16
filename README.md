@@ -9,8 +9,8 @@ assistant.
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
 The application workload is not yet provisioned; its manually bootstrapped Azure
-prerequisites and deployment workflow are documented in
-[the infrastructure guide](docs/infrastructure.md).
+prerequisites are documented in [the infrastructure guide](docs/infrastructure.md)
+and the [deployment guide](docs/deployment.md).
 
 ## Product and design
 

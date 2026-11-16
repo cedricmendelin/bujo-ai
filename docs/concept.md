@@ -164,9 +164,10 @@ unavailable. The system must not silently treat missing evidence as proof.
 - What are the exact list-local states and reopening rules?
 - Who executes later proactive reminders, through which delivery channel, and with what
   timezone, retry, deduplication, and missed-run guarantees?
-- Which supported .NET runtime, Blazor rendering mode, and Azure SQL configuration
-  provide the simplest affordable deployment? See the
-  [proposed technology baseline](adr/0001-technology-baseline.md), awaiting approval.
+- Which Blazor rendering mode and Azure SQL configuration provide the simplest
+  affordable deployment? Issue #5 approves .NET 11, EF Core SQL Server and the
+  modular host; see the [technology baseline](adr/0001-technology-baseline.md)
+  for the remaining proposed choices.
 - How does Entra ID authorization work in the actual Copilot and Claude clients?
   See the [proposed auth design and blocked client proofs](auth.md).
 - How are retention, export/deletion, and backups handled?

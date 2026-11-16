@@ -23,6 +23,9 @@ jobs:
       - name: Test workflow decision scripts
         run: node --test .github/scripts/*.test.*
 
+      - name: Test deployment migration gate
+        run: python3 -m unittest discover -s tests/deployment -p 'test_*.py'
+
       - name: Detect project types
         id: detect
         shell: bash
@@ -96,6 +99,39 @@ jobs:
           if skipped:
               raise SystemExit(f"CI must not skip tests; found {skipped} skipped tests.")
           PY
+
+      - name: Verify production publish boundary
+        if: steps.detect.outputs.dotnet == 'true'
+        run: |
+          dotnet publish src/Bujo.Host/Bujo.Host.csproj --no-restore --configuration Release \
+            --output "$RUNNER_TEMP/host-publish"
+          for assembly in Bujo.AppHost.dll Bujo.ServiceDefaults.dll; do
+            if [[ -e "$RUNNER_TEMP/host-publish/$assembly" ]]; then
+              echo "Unexpected production publish artifact: $assembly" >&2
+              exit 1
+            fi
+          done
+          test -f "$RUNNER_TEMP/host-publish/Bujo.Host.dll"
+
+      - name: Smoke-test production image
+        if: steps.detect.outputs.dotnet == 'true'
+        run: |
+          docker build --tag bujo-host-test .
+          docker run --rm --entrypoint sh bujo-host-test -c \
+            'test -f /app/Bujo.Host.dll && test ! -e /app/Bujo.AppHost.dll && test ! -e /app/Bujo.ServiceDefaults.dll'
+          trap 'docker rm --force bujo-host-test >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name bujo-host-test --publish 127.0.0.1::8080 \
+            --env 'ConnectionStrings__journal=Server=localhost;Database=journal;Integrated Security=true;TrustServerCertificate=true' \
+            bujo-host-test
+          port="$(docker port bujo-host-test 8080/tcp | sed 's/.*://')"
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://127.0.0.1:${port}/health/live" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs bujo-host-test
+          exit 1
 
       - name: Stop SQL Server test container
         if: always() && steps.detect.outputs.dotnet == 'true'

@@ -2,15 +2,17 @@ using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Infrastructure;
 using Bujo.Infrastructure.Persistence;
-using Bujo.ServiceDefaults;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 
 var shouldMigrate = args.Contains("--migrate", StringComparer.Ordinal);
-var builder = WebApplication.CreateBuilder(args.Where(argument => argument != "--migrate").ToArray());
-builder.Services.AddServiceDefaults();
+var shouldMigrateOnly = args.Contains("--migrate-only", StringComparer.Ordinal);
+var builder = WebApplication.CreateBuilder(args.Where(argument =>
+    argument is not "--migrate" and not "--migrate-only").ToArray());
 
 var tenantSetting = builder.Configuration["Auth:TenantId"];
 var tenantId = Guid.TryParse(tenantSetting, out var parsedTenantId)
@@ -61,28 +63,47 @@ var connectionString = builder.Configuration.GetConnectionString("journal")
 builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
 builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
     .AddCheck<JournalDatabaseHealthCheck>("journal-database", tags: ["ready"]);
 
 var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapServiceDefaults();
+app.MapHealthChecks("/health/live", HealthOptions("live")).AllowAnonymous();
+app.MapHealthChecks("/health/ready", HealthOptions("ready"));
 
-if (shouldMigrate)
+if (shouldMigrate || shouldMigrateOnly)
 {
-    if (!app.Environment.IsDevelopment())
+    if (shouldMigrate && !app.Environment.IsDevelopment())
     {
         throw new InvalidOperationException("Database migrations can only run in Development.");
+    }
+
+    if (shouldMigrateOnly && !app.Environment.IsProduction())
+    {
+        throw new InvalidOperationException("The migration job can only run in Production.");
     }
 
     await using var scope = app.Services.CreateAsyncScope();
     var contextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<JournalDbContext>>();
     await using var context = await contextFactory.CreateDbContextAsync();
     await context.Database.MigrateAsync();
+
+    if (shouldMigrateOnly)
+    {
+        await app.DisposeAsync();
+        return;
+    }
 }
 
 app.MapJournalEndpoints();
 
 app.Run();
+
+static HealthCheckOptions HealthOptions(string tag) => new()
+{
+    Predicate = check => check.Tags.Contains(tag),
+    ResponseWriter = static (_, _) => Task.CompletedTask
+};
 
 public partial class Program { }

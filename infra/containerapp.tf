@@ -37,12 +37,30 @@ module "container_app" {
         image  = var.container_image
         cpu    = 0.25
         memory = "0.5Gi"
+        env = [
+          {
+            name  = "ConnectionStrings__journal"
+            value = local.runtime_sql_connection_string
+          },
+          {
+            name  = "Auth__TenantId"
+            value = data.azurerm_client_config.current.tenant_id
+          },
+          {
+            name  = "Auth__Audience"
+            value = azuread_application.api.client_id
+          },
+          {
+            name  = "Auth__AllowedPrincipals"
+            value = local.auth_allowed_principals
+          }
+        ]
       }
     ]
   }
   ingress = {
     external_enabled = true
-    target_port      = 80
+    target_port      = 8080
     transport        = "auto"
     traffic_weight = [
       {

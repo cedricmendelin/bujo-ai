@@ -6,6 +6,9 @@ module "sql_server" {
   location            = var.location
   resource_group_name = data.azurerm_resource_group.prod.name
   server_version      = "12.0"
+  managed_identities = {
+    system_assigned = true
+  }
   azuread_administrator = {
     login_username              = var.sql_entra_admin_login
     object_id                   = var.sql_entra_admin_object_id
