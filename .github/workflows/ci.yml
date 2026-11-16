@@ -23,6 +23,9 @@ jobs:
       - name: Test workflow decision scripts
         run: node --test .github/scripts/*.test.*
 
+      - name: Test deployment migration gate
+        run: python3 -m unittest discover -s tests/deployment -p 'test_*.py'
+
       - name: Detect project types
         id: detect
         shell: bash
@@ -37,18 +40,109 @@ jobs:
         if: steps.detect.outputs.dotnet == 'true'
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
+
+      - name: Start SQL Server for persistence tests
+        if: steps.detect.outputs.dotnet == 'true'
+        shell: bash
+        run: |
+          sa_token="$(openssl rand -hex 23)Aa!"
+          echo "::add-mask::$sa_token"
+          printf 'BUJO_SQL_TEST_CONNECTION=Server=localhost,1433;Initial Catalog=master;User ID=sa;Pass%s=%s;Encrypt=False;TrustServerCertificate=True\n' \
+            "word" "$sa_token" >> "$GITHUB_ENV"
+          docker run --detach --name bujo-sql-test \
+            --publish 1433:1433 \
+            --env ACCEPT_EULA=Y \
+            --env MSSQL_SA_PASSWORD="$sa_token" \
+            mcr.microsoft.com/mssql/server@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
+
+          for attempt in {1..60}; do
+            if docker exec bujo-sql-test /opt/mssql-tools18/bin/sqlcmd \
+              -S localhost -U sa -P "$sa_token" -C -Q "SELECT 1" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs bujo-sql-test
+          exit 1
 
       - name: Build and test
         if: steps.detect.outputs.dotnet == 'true'
         run: |
           dotnet restore
           dotnet build --no-restore --configuration Release
-          dotnet test --no-build --configuration Release --verbosity normal
+          mkdir -p "$RUNNER_TEMP/test-results"
+          for project in tests/Bujo.*.Tests/*.csproj; do
+            test_name="$(basename "$project" .csproj)"
+            dotnet test "$project" --no-build --configuration Release --verbosity normal \
+              --logger "trx;LogFileName=${test_name}.trx" \
+              --results-directory "$RUNNER_TEMP/test-results"
+          done
+          python3 - "$RUNNER_TEMP/test-results" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          reports = sorted(Path(sys.argv[1]).glob("*.trx"))
+          if not reports:
+              raise SystemExit("No test result files were produced.")
+
+          skipped = 0
+          for report in reports:
+              root = ET.parse(report).getroot()
+              counters = next((node for node in root.iter() if node.tag.endswith("Counters")), None)
+              if counters is None:
+                  raise SystemExit(f"No test counters were found in {report.name}.")
+              skipped += int(counters.attrib.get("skipped", "0"))
+
+          if skipped:
+              raise SystemExit(f"CI must not skip tests; found {skipped} skipped tests.")
+          PY
+
+      - name: Verify production publish boundary
+        if: steps.detect.outputs.dotnet == 'true'
+        run: |
+          dotnet publish src/Bujo.Host/Bujo.Host.csproj --no-restore --configuration Release \
+            --output "$RUNNER_TEMP/host-publish"
+          for assembly in Bujo.AppHost.dll Bujo.ServiceDefaults.dll; do
+            if [[ -e "$RUNNER_TEMP/host-publish/$assembly" ]]; then
+              echo "Unexpected production publish artifact: $assembly" >&2
+              exit 1
+            fi
+          done
+          test -f "$RUNNER_TEMP/host-publish/Bujo.Host.dll"
+
+      - name: Smoke-test production image
+        if: steps.detect.outputs.dotnet == 'true'
+        run: |
+          docker build --tag bujo-host-test .
+          docker run --rm --entrypoint sh bujo-host-test -c \
+            'test -f /app/Bujo.Host.dll && test ! -e /app/Bujo.AppHost.dll && test ! -e /app/Bujo.ServiceDefaults.dll'
+          trap 'docker rm --force bujo-host-test >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name bujo-host-test --publish 127.0.0.1::8080 \
+            --env 'ConnectionStrings__journal=Server=localhost;Database=journal;Integrated Security=true;TrustServerCertificate=true' \
+            bujo-host-test
+          port="$(docker port bujo-host-test 8080/tcp | sed 's/.*://')"
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://127.0.0.1:${port}/health/live" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs bujo-host-test
+          exit 1
+
+      - name: Stop SQL Server test container
+        if: always() && steps.detect.outputs.dotnet == 'true'
+        run: docker rm --force bujo-sql-test || true
 
       - name: Set up Terraform
         if: steps.detect.outputs.terraform == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.0
+          terraform_wrapper: false
 
       - name: Terraform fmt and validate
         if: steps.detect.outputs.terraform == 'true'
@@ -57,6 +151,10 @@ jobs:
           terraform fmt -check -recursive
           terraform init -backend=false -input=false
           terraform validate
+
+      - name: Test bootstrap plan safety
+        if: steps.detect.outputs.terraform == 'true'
+        run: python3 -m unittest discover -s tests/infrastructure -p 'test_*.py'
 
       - name: Nothing to build yet
         if: steps.detect.outputs.dotnet != 'true' && steps.detect.outputs.terraform != 'true'

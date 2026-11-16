@@ -63,6 +63,13 @@ public sealed class JournalSnapshot
             .ToArray();
     }
 
+    public static JournalSnapshot Restore(
+        IReadOnlyList<ItemSnapshot> items,
+        IReadOnlyList<JournalListSnapshot> lists,
+        IReadOnlyList<OccurrenceSnapshot> occurrences,
+        IReadOnlyList<JournalEvent> history) =>
+        new(items, lists, occurrences, history);
+
     public IReadOnlyList<ItemSnapshot> Items { get; }
 
     public IReadOnlyList<JournalListSnapshot> Lists { get; }

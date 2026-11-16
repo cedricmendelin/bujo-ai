@@ -1,4 +1,5 @@
 using Bujo.Domain;
+using Bujo.Infrastructure.Persistence;
 
 namespace Bujo.Domain.Tests;
 
@@ -54,7 +55,7 @@ public sealed class CalendarTimeZoneTests
     [Fact]
     public void Invalid_time_zone_is_a_typed_domain_error()
     {
-        var repository = new InMemory.InMemoryJournalRepository();
+        var repository = new InMemoryJournalRepository();
 
         var error = Assert.Throws<DomainException>(() => new JournalService(repository, ianaTimeZoneId: "Not/AZone"));
 

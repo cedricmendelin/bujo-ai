@@ -47,6 +47,16 @@ public sealed class Item
             plannedPeriod);
     }
 
+    internal static Item FromSnapshot(ItemSnapshot snapshot)
+    {
+        var item = new Item(snapshot.Id, snapshot.Name, snapshot.Description, snapshot.Tags, snapshot.PlannedPeriod)
+        {
+            CurrentOccurrenceId = snapshot.CurrentOccurrenceId,
+            Version = snapshot.Version
+        };
+        return item;
+    }
+
     public void Edit(string name, string? description, IEnumerable<string>? tags)
     {
         var normalizedName = DomainLimits.RequiredText(name, DomainLimits.ItemName, "Item name");

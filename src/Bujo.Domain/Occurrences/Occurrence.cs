@@ -57,6 +57,24 @@ public sealed class Occurrence
         DateTimeOffset createdAt) =>
         new(id, itemId, listId, sequence, previousOccurrenceId, createdAt);
 
+    internal static Occurrence FromSnapshot(OccurrenceSnapshot snapshot)
+    {
+        var occurrence = new Occurrence(
+            snapshot.Id,
+            snapshot.ItemId,
+            snapshot.ListId,
+            snapshot.Sequence,
+            snapshot.PreviousOccurrenceId,
+            snapshot.CreatedAt)
+        {
+            State = snapshot.State,
+            UpdatedAt = snapshot.UpdatedAt,
+            NextOccurrenceId = snapshot.NextOccurrenceId,
+            Version = snapshot.Version
+        };
+        return occurrence;
+    }
+
     public void Complete(DateTimeOffset occurredAt) => TransitionFromOpen(OccurrenceState.Done, occurredAt);
 
     public void Abandon(DateTimeOffset occurredAt) => TransitionFromOpen(OccurrenceState.Abandoned, occurredAt);

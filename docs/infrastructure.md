@@ -2,32 +2,44 @@
 
 The `infra/` Terraform root provisions one production environment in Switzerland
 North. It uses pinned Azure Verified Modules, an owner-created resource group,
-Azure Blob remote state, and one GitHub Actions OIDC deployment identity. Pull
-request workflows do not authenticate to Azure; the owner runs plans locally.
+Azure Blob remote state, and one GitHub Actions OIDC deployment identity. The
+same identity manages the Entra API registration using a separately consented,
+least-privilege Microsoft Graph application permission. Pull request workflows
+do not authenticate to Azure; the owner runs plans locally.
 
 Terraform creates a consumption Container Apps environment and app, a
-user-assigned runtime identity, a capped Log Analytics workspace, a standard
-RBAC-enabled Key Vault, an Entra-only Azure SQL server and free-offer database,
-and a monthly resource-group budget. There are no VNets, private endpoints,
-NAT, ACR, SQL passwords, or Terraform-managed Key Vault values.
+user-assigned runtime identity, a separate migration identity and manually
+triggered Container Apps Job, an Entra API registration and service principal,
+a capped Log Analytics workspace, a standard RBAC-enabled Key Vault, an
+Entra-only Azure SQL server and free-offer database, and a monthly
+resource-group budget. The SQL logical server has a system-assigned identity
+for directory lookups. There are no VNets, private endpoints, NAT, ACR, SQL
+passwords, or Terraform-managed Key Vault values.
 
 The app resource group `bujo-ai-rg` must be created by the owner before the
 first deployment. Terraform looks it up as data rather than managing it. The
-app starts with `mcr.microsoft.com/k8se/quickstart:latest`, external ingress on
-port 80, 0.25 vCPU/0.5 GiB, and zero to one replica. Once a root `Dockerfile`
-exists, deployment publishes its image to GHCR and updates the app to the
-commit-SHA tag.
+deployment first provisions the migration job and its dependencies without
+changing the running app revision. It starts one migration execution and waits
+for that exact execution to succeed before applying the new app image and
+probing `/health/live`. A missing or failed migration prevents app promotion.
+The app's external ingress forwards to container port 8080, with 0.25 vCPU/0.5 GiB and zero to one
+replica. Deployment publishes the root `Dockerfile` image to GHCR with the
+commit-SHA tag; the public quickstart image is only the fallback when no
+Dockerfile exists.
 
 ## Resources and modules
 
 | Resource | Implementation |
 | --- | --- |
 | User-assigned managed identity | `Azure/avm-res-managedidentity-userassignedidentity` |
+| Migration identity | `Azure/avm-res-managedidentity-userassignedidentity`, separate from runtime identity |
 | Log Analytics workspace | `Azure/avm-res-operationalinsights-workspace`, PerGB2018, 0.1 GB/day cap, 30-day retention |
 | Container Apps environment | `Azure/avm-res-app-managedenvironment`, default Consumption profile |
 | Container app | `Azure/avm-res-app-containerapp`, public ingress, scale to zero, UAMI attached |
+| API registration | AzureAD provider, single-tenant delegated `journal.access` scope, assignment-required service principal |
+| Migration job | AzureRM Container Apps Job, manual trigger, migration identity, no retries |
 | Key Vault | `Azure/avm-res-keyvault-vault`, Standard, RBAC, 7-day soft delete, purge protection, public endpoint |
-| SQL server | `Azure/avm-res-sql-server`, TLS 1.2, Entra-only group admin, Azure-services firewall rule |
+| SQL server | `Azure/avm-res-sql-server`, TLS 1.2, Entra-only group admin, server identity, Azure-services firewall rule |
 | SQL database | AzureRM plus AzAPI free-offer property update |
 | Monthly budget | AzureRM resource-group budget, $50 with forecast/actual alerts |
 | Terraform state | Owner-bootstrapped Azure Storage container, remote backend with Entra RBAC |
@@ -41,6 +53,7 @@ versions are recorded in `infra/.terraform.lock.hcl`.
 | Resource or operation | Reason |
 | --- | --- |
 | Resource group lookup | The owner pre-creates the app resource group so deployment needs no subscription-scope Contributor. A Terraform data source references it without managing it. |
+| `azurerm_container_app_job` | The workload needs a separately triggered one-shot job with its own identity and execution lifecycle; it is separate from the Container App module's app resource. |
 | `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = AutoPause` in one request. |
 | `azurerm_consumption_budget_resource_group` | No `avm-res-consumption-budget` module is published in the Terraform Registry. |
 | State storage | The storage account and private state container are owner-bootstrapped (#24), avoiding a bootstrap dependency on Terraform state itself. |
@@ -111,8 +124,21 @@ guide.
 Contributor does not include Azure RBAC role-assignment write actions or
 Key Vault data actions. Do not grant the deployment identity Owner, User Access
 Administrator, Role Based Access Control Administrator, or any Key Vault
-data-plane role. Terraform contains no role assignments. The owner performs
-the one runtime Key Vault role grant after the first apply (see below).
+data-plane role. Terraform contains no Azure RBAC role assignments. The owner
+performs the runtime Key Vault role grant after the first apply (see below).
+
+### Microsoft Graph permission for API registration
+
+The AzureAD Terraform provider creates the API application and service
+principal. Grant the deployment service principal the Microsoft Graph
+**Application.ReadWrite.OwnedBy** application permission and admin consent it
+in the target tenant. The Terraform-created application and service principal
+list that deployment principal as an owner. The pinned AzureAD 3.10.0 provider
+documents this permission for both resources when the Terraform principal owns
+them; `infra/api.tf` sets it as owner on each. This verifies the provider's
+documented permission contract, not a live tenant apply. Do not grant
+`Application.ReadWrite.All`; the deployment identity otherwise retains only
+its resource-group and state-container roles described above.
 
 ### GitHub Actions variables
 
@@ -131,6 +157,7 @@ GitHub settings and are never committed:
 | `TFSTATE_KEY` | State blob name, normally `prod.tfstate` |
 | `SQL_ENTRA_ADMIN_OBJECT_ID` | Object ID of the Entra SQL administrator security group |
 | `SQL_ENTRA_ADMIN_LOGIN` | Display name of that Entra security group |
+| `API_ALLOWED_PRINCIPAL_OBJECT_IDS` | Comma-separated object IDs of users allowed by the API authorization policy |
 | `BUDGET_ALERT_EMAIL` | Address to receive Azure budget alerts |
 
 Create an Entra security group for the SQL administrator, add the owner account
@@ -142,6 +169,19 @@ belongs in source control.
 In `infra/prod.tfvars`, change `key_vault_name` to a globally unique name if the
 example name is already in use. The name must be 3–24 letters, numbers, or
 hyphens, start with a letter, and contain no consecutive hyphens.
+
+The API registration exposes the delegated `journal.access` scope and a
+`JournalUser` app role. Its service principal requires users to be assigned
+before Entra issues tokens. After the first successful deployment, assign each
+approved user or group to the API enterprise application with the `Journal
+user` role. The API also checks the configured tenant/object-ID allowlist and
+the `journal.access` scope. A client application must request that delegated
+scope and receive delegated-permission consent; use tenant admin consent if
+user consent is disabled. User assignment to this API and scope consent are
+independent requirements. The API registration does not create or configure a
+client application. If a separate client application's service principal also
+requires assignment, users must be assigned to that client independently; this
+Terraform configuration does not set that client-side requirement.
 
 ## Owner-run local plans
 
@@ -162,10 +202,11 @@ approving an infrastructure PR, the owner runs a plan locally:
      -backend-config="container_name=tfstate" \
      -backend-config="key=prod.tfstate"
    ```
-3. Supply the SQL group object ID/display name and budget alert email as
-   `TF_VAR_sql_entra_admin_object_id`, `TF_VAR_sql_entra_admin_login`,
-   `TF_VAR_budget_alert_email`, and the resource group as
-   `TF_VAR_resource_group_name` in the local shell, then run:
+3. Supply the SQL group object ID/display name, API allowlist, and budget alert
+   email as `TF_VAR_sql_entra_admin_object_id`, `TF_VAR_sql_entra_admin_login`,
+   `TF_VAR_auth_allowed_principal_object_ids`, `TF_VAR_budget_alert_email`, and
+   the resource group as `TF_VAR_resource_group_name` in the local shell, then
+   run:
 
    ```sh
    terraform -chdir=infra plan -lock=false -var-file=prod.tfvars
@@ -174,13 +215,90 @@ approving an infrastructure PR, the owner runs a plan locally:
 Do not post plan files or state blobs in pull requests. The approved PR may be
 merged after the owner has reviewed its local plan.
 
-## First deployment and runtime Key Vault access
+## First deployment and identity configuration
 
-Merge to `main` to run `deploy.yml`. It builds and pushes a GHCR image only
+The owner manually dispatches `deploy.yml` from `main`. It builds and pushes a GHCR image only
 when a root `Dockerfile` exists, authenticates to Azure through the single
-immutable-subject OIDC identity, locks remote state, applies Terraform, and
-updates the container app revision. Without a `Dockerfile`, it deploys the
-public placeholder image.
+immutable-subject OIDC identity, and locks remote state. Terraform first
+applies only the migration job and its dependencies, leaving the current app
+revision untouched. The workflow triggers the manual job and requires its
+start response to identify the exact execution. It polls that execution; only success permits the full
+Terraform apply that promotes the image, followed by a public `/health/live`
+probe. Failed, ambiguous, or timed-out migration executions stop deployment
+before promotion. A start response without an execution ID, including an HTTP
+202 response, also stops promotion; safe correlation for that response remains
+to be implemented. Without a `Dockerfile`, the public quickstart image is used.
+The configured resource-group Contributor role includes the resource-management
+scope; live OIDC authorization remains untested until the owner runs deployment.
+
+Before the first migration can succeed, grant the SQL logical server identity
+directory lookup access. Terraform enables a system-assigned identity on the
+server, but does not manage Microsoft Entra role assignments. A Privileged
+Role Administrator must assign that identity the **Directory Readers** role,
+or the least-privilege Graph permissions documented by Microsoft, before
+`CREATE USER ... FROM EXTERNAL PROVIDER` can resolve managed identities.
+This permission is not granted to the runtime, migration, or deployment
+identity. Get the server principal ID from
+`terraform -chdir=infra output -raw sql_server_identity_principal_id`.
+
+Approved plan v6 requires an owner-controlled staged bootstrap before these
+grants. Follow the [stage-one plan and review procedure](deployment.md#stage-one-bootstrap);
+do not run production deployment until the reviewed bootstrap plan is applied
+by the owner and all grants and other prerequisites are complete. Also grant
+the deployment application the Microsoft Graph permission described above.
+
+For the owner's local grant session, Azure SQL must be reachable from the
+workstation. If needed, the owner temporarily permits their public IP in the SQL
+server firewall and removes that rule immediately after the grants. No firewall
+change or grant is automated. With the `SqlServer` PowerShell module installed,
+the owner can connect using an Entra token (never a SQL password):
+
+```powershell
+az account set --subscription "<subscription-id>"
+if ($LASTEXITCODE -ne 0) { throw "Subscription selection failed" }
+$token = az account get-access-token --resource "https://database.windows.net/" --query accessToken --output tsv
+if ($LASTEXITCODE -ne 0 -or -not $token) { throw "SQL token acquisition failed" }
+Invoke-Sqlcmd -ServerInstance "<sql-server-fqdn>" -Database "<database>" `
+  -AccessToken $token -Query "SELECT ORIGINAL_LOGIN() AS login_name"
+```
+
+Use the same token authentication to run the following statements, inspect the
+membership results, and run `Remove-Variable token` afterward. The owner
+must be the configured SQL administrator.
+
+Connect to Azure SQL as a member of the configured Entra admin group and create
+the database principals and roles:
+
+```sql
+CREATE USER [<runtime-identity-name>] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [<runtime-identity-name>];
+ALTER ROLE db_datawriter ADD MEMBER [<runtime-identity-name>];
+
+CREATE USER [<migration-identity-name>] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [<migration-identity-name>];
+ALTER ROLE db_datawriter ADD MEMBER [<migration-identity-name>];
+ALTER ROLE db_ddladmin ADD MEMBER [<migration-identity-name>];
+
+SELECT role_principal.name AS role_name, member_principal.name AS member_name
+FROM sys.database_role_members AS membership
+JOIN sys.database_principals AS role_principal
+  ON role_principal.principal_id = membership.role_principal_id
+JOIN sys.database_principals AS member_principal
+  ON member_principal.principal_id = membership.member_principal_id
+WHERE member_principal.name IN (N'<runtime-identity-name>', N'<migration-identity-name>')
+ORDER BY member_principal.name, role_principal.name;
+```
+
+Get the names with `terraform -chdir=infra output runtime_identity_name` and
+`terraform -chdir=infra output migration_identity_name`. Runtime identity
+permissions are limited to data access; only the one-shot migration job uses
+the schema-change identity. Repeat this setup if the database or either
+identity is replaced. Before rerunning the statements, inspect existing users
+and memberships; `CREATE USER` is not idempotent. Verify two rows for the
+runtime identity (`db_datareader`, `db_datawriter`) and three for the
+migration identity (the same two plus `db_ddladmin`). Until these steps are
+complete, the workflow stops at the migration gate and leaves the application
+revision unchanged.
 
 After the first successful apply, grant the runtime identity access to the
 workload vault. Terraform intentionally does not create this role assignment:
@@ -207,11 +325,6 @@ issue #5 introduces Key Vault secret references. Destroying and recreating the
 vault requires repeating the assignment. The deployment identity receives no
 Key Vault data-plane access.
 
-After deployment, the owner connects to Azure SQL as a member of the configured
-Entra admin group and creates a database principal for the runtime UAMI with
-`CREATE USER [<runtime-identity-name>] FROM EXTERNAL PROVIDER;`. Grant only the
-database roles the application requires; this remains manual until #5.
-
 ## Teardown and recovery
 
 Run `terraform destroy -var-file=prod.tfvars` locally using the same backend
@@ -220,10 +333,10 @@ group and state. Review the destroy plan first. Terraform does not delete the
 owner-created app resource group or state storage. Key Vault soft delete is
 seven days and purge protection is enabled; a deleted vault name remains
 reserved during recovery. Use a new vault name if recreating before purge.
-Repeat the runtime role assignment after recreating the vault. Remove state
-storage and its bootstrap resource group only after production resources are
-gone and restore/audit needs have been met. Restore a prior state version from
-Blob versioning if state is corrupted.
+Repeat the runtime role assignment and SQL principal setup after recreating
+resources. Remove state storage and its bootstrap resource group only after
+production resources are gone and restore/audit needs have been met. Restore a
+prior state version from Blob versioning if state is corrupted.
 
 ## Operations and accepted trade-offs
 
@@ -233,5 +346,8 @@ Blob versioning if state is corrupted.
 - A repository rename or transfer requires updating the immutable federated
   subject. A failed manual role grant does not block the first deployment
   because the app has no vault secret references yet.
+- Schema changes run through the production migration job before an app
+  revision is promoted. The app process never applies migrations at startup;
+  local `--migrate` remains Development-only.
 - GHCR is expected to be public. Do not add a registry password to Terraform;
   revisit managed-identity image pulls before making the image private.

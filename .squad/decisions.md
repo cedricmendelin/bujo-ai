@@ -225,8 +225,9 @@
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.
-- One `prod` environment in Switzerland North; merge to `main` deploys through
-  exactly one GitHub OIDC deployment identity with an immutable subject. PR
+- One `prod` environment in Switzerland North; the original merge-to-deploy
+  decision is superseded by the issue #5 staged-bootstrap decision below.
+  Deployment uses exactly one GitHub OIDC identity with an immutable subject. PR
   workflows never authenticate to Azure; the owner runs plans locally.
 - No private networking. Cheapest reasonable SKUs, target under 50 USD/month:
   Container Apps consumption (scale to zero), Azure SQL free offer
@@ -253,8 +254,33 @@
   week in a weekly list is flagged without rewriting either value.
 - The Future Log is ongoing; closure of other lists requires disposition of
   every open occurrence. Moves are atomic, idempotent and concurrency-checked.
-- The full specification is in `docs/domain.md`; code implementation awaits
-  approval of issue #2's technology baseline ADR.
+- The full specification is in `docs/domain.md`; the issue #5 technology
+  baseline is recorded below.
+
+### 2026-11-15: Issue #5 technology baseline
+
+- The owner-approved issue #5 plan v4 selects .NET 11, EF Core SQL Server, and a
+  single modular ASP.NET Core host with shared domain/application services.
+- Podman and Aspire are selected for local development only. Production remains
+  a single host deployment; the AppHost is not deployed.
+- This issue-specific approval does not finalize the Blazor render mode, Azure
+  SQL free-tier behavior, or MCP client compatibility. Those remain separate
+  decisions and proofs.
+- Production migrations use a separate manually triggered Container Apps job
+  with a dedicated identity; the web runtime identity retains data access only.
+  Infrastructure, permissions, and rollout feasibility must be verified before
+  production changes, and no Azure setup is authorized by this decision.
+
+### 2026-11-16: Issue #5 staged bootstrap
+
+- Approved plan v5 separates an owner-reviewed, owner-applied bootstrap from
+  SQL grants and the later migration and application deployment.
+- Bootstrap must not run a migration or change an app revision. Production
+  deployment is manually dispatched by the owner from `main`; merge alone does
+  not deploy. The owner reviews the exact stage-one plan before applying it.
+- Approved plan v6 also permits the owner to plan and apply stage one locally
+  with an interactive Azure CLI user login. The owner checks the subscription,
+  safety constraints and exact saved plan; GitHub deployments remain OIDC-only.
 
 ## Governance
 

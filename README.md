@@ -9,8 +9,8 @@ assistant.
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
 The application workload is not yet provisioned; its manually bootstrapped Azure
-prerequisites and deployment workflow are documented in
-[the infrastructure guide](docs/infrastructure.md).
+prerequisites are documented in [the infrastructure guide](docs/infrastructure.md)
+and the [deployment guide](docs/deployment.md).
 
 ## Product and design
 
@@ -32,6 +32,9 @@ document decisions, create a GitHub issues backlog, then set up workflows.
 
 The [initial backlog](docs/backlog.md) separates the first usable release,
 AI-assisted planning, and the longer-term vision, with explicit prerequisites.
+
+See [local development](docs/development.md) for the .NET 11, Podman, and Aspire
+setup.
 
 ## Working with Squad
 
@@ -194,8 +197,8 @@ before implementation starts.
 Issues are implemented through the [governed delivery workflow](docs/workflow.md):
 `/plan` → owner approves with `plan:approved` → Copilot cloud agent (or a local
 GitHub Copilot app session) with the owning Squad custom agent → Squad Review
-(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → deploy from
-`main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
+(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → owner-dispatched
+deployment from `main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
 North. PR checks do not access Azure; the owner runs infrastructure plans locally.
 The `main` deployment uses GitHub OIDC, budgeted under 50 USD/month.
 

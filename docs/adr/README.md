@@ -2,4 +2,4 @@
 
 | ADR | Status |
 | --- | --- |
-| [0001: Technology baseline](0001-technology-baseline.md) | Proposed; awaiting owner approval |
+| [0001: Technology baseline](0001-technology-baseline.md) | Partially approved for issue #5; remaining choices are proposed |

@@ -1,0 +1,14 @@
+.git
+.github
+.squad
+.terraform
+**/.terraform
+**/bin
+**/obj
+**/TestResults
+**/.vs
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.env
+**/secrets.json

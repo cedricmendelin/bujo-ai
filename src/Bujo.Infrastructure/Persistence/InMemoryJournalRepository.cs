@@ -1,6 +1,6 @@
 using Bujo.Domain;
 
-namespace Bujo.Domain.Tests.InMemory;
+namespace Bujo.Infrastructure.Persistence;
 
 public sealed class InMemoryJournalRepository : IJournalRepository
 {
@@ -11,6 +11,42 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     private readonly List<JournalEvent> _history = [];
     private readonly Dictionary<Guid, (MoveFingerprint Fingerprint, DomainResult<MoveResult> Result)> _moveResults = [];
     private long _nextHistorySequence;
+
+    public InMemoryJournalRepository()
+    {
+    }
+
+    public static InMemoryJournalRepository CreateWithFutureLog(Guid listId)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(listId, Guid.Empty);
+        var repository = new InMemoryJournalRepository();
+        repository._lists.Add(
+            listId,
+            JournalList.Create(listId, "Future Log", JournalListKind.FutureLog, null, null));
+        return repository;
+    }
+
+    public InMemoryJournalRepository(JournalSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        foreach (var item in snapshot.Items)
+        {
+            _items.Add(item.Id, Item.FromSnapshot(item));
+        }
+
+        foreach (var list in snapshot.Lists)
+        {
+            _lists.Add(list.Id, JournalList.FromSnapshot(list));
+        }
+
+        foreach (var occurrence in snapshot.Occurrences)
+        {
+            _occurrences.Add(occurrence.Id, Occurrence.FromSnapshot(occurrence));
+        }
+
+        _history.AddRange(snapshot.History);
+        _nextHistorySequence = snapshot.History.Count == 0 ? 0 : snapshot.History.Max(item => item.Sequence);
+    }
 
     public JournalSnapshot GetSnapshot()
     {

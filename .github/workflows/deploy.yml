@@ -1,8 +1,7 @@
 name: Deploy production
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,7 +11,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an owner dispatch from main
+        shell: bash
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" || "${GITHUB_ACTOR,,}" != "${GITHUB_REPOSITORY_OWNER,,}" || "${TRIGGERING_ACTOR,,}" != "${GITHUB_REPOSITORY_OWNER,,}" ]]; then
+            echo "Production deployment requires an owner dispatch from main." >&2
+            exit 1
+          fi
+
   image:
+    needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -50,7 +63,7 @@ jobs:
   apply:
     needs: image
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: prod
     permissions:
       contents: read
@@ -61,11 +74,13 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
+      ARM_USE_CLI: "false"
       TF_VAR_container_image: ${{ needs.image.outputs.container_image }}
       TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
       TF_VAR_sql_entra_admin_object_id: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
       TF_VAR_sql_entra_admin_login: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
       TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+      TF_VAR_auth_allowed_principal_object_ids: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -84,12 +99,13 @@ jobs:
           SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
           SQL_ENTRA_ADMIN_LOGIN: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
           BUDGET_ALERT_EMAIL: ${{ vars.BUDGET_ALERT_EMAIL }}
+          API_ALLOWED_PRINCIPAL_OBJECT_IDS: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
         run: |
           for name in \
             ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP \
             TFSTATE_RESOURCE_GROUP TFSTATE_STORAGE_ACCOUNT TFSTATE_CONTAINER \
             TFSTATE_KEY SQL_ENTRA_ADMIN_OBJECT_ID SQL_ENTRA_ADMIN_LOGIN \
-            BUDGET_ALERT_EMAIL; do
+            BUDGET_ALERT_EMAIL API_ALLOWED_PRINCIPAL_OBJECT_IDS; do
             if [[ -z "${!name}" ]]; then
               echo "Required GitHub Actions variable is missing: $name" >&2
               exit 1
@@ -117,40 +133,8 @@ jobs:
             -backend-config="key=$TFSTATE_KEY" \
             -backend-config="use_oidc=true"
 
-      - name: Plan and apply
-        run: |
-          log_file="$RUNNER_TEMP/terraform-deploy.log"
-          redacted_log="$RUNNER_TEMP/terraform-deploy-redacted.log"
-          redact_log() {
-            python - "$log_file" "$redacted_log" <<'PY'
-          import os
-          import sys
-          from pathlib import Path
+      - name: Provision migration job
+        run: python3 infra/deploy_gate.py provision-migration-job
 
-          text = Path(sys.argv[1]).read_text()
-          for key in (
-              "ARM_SUBSCRIPTION_ID",
-              "ARM_TENANT_ID",
-              "ARM_CLIENT_ID",
-              "TF_VAR_sql_entra_admin_object_id",
-              "TF_VAR_budget_alert_email",
-          ):
-              value = os.environ.get(key)
-              if value:
-                  text = text.replace(value, "[REDACTED]")
-          Path(sys.argv[2]).write_text(text)
-          PY
-          }
-          if ! terraform -chdir=infra plan -input=false -no-color \
-            -var-file=prod.tfvars -out="$RUNNER_TEMP/prod.tfplan" > "$log_file" 2>&1; then
-            redact_log
-            tail -n 40 "$redacted_log"
-            exit 1
-          fi
-          if ! terraform -chdir=infra apply -input=false -auto-approve \
-            "$RUNNER_TEMP/prod.tfplan" >> "$log_file" 2>&1; then
-            redact_log
-            tail -n 40 "$redacted_log"
-            exit 1
-          fi
-          echo "Terraform plan and apply succeeded."
+      - name: Run migration, promote application, and probe liveness
+        run: python3 infra/deploy_gate.py

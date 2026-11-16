@@ -1,10 +1,13 @@
 # ADR 0001: Technology baseline
 
-**Status:** Proposed — awaiting owner approval of the choices below.
-Approval of [implementation plan v1](https://github.com/cedricmendelin/bujo-ai/issues/2#issuecomment-6883086218)
-authorizes this investigation, not the technology decisions. Evidence retrieved
-2026-11-14; links below are primary Microsoft sources. Prices, availability and
-product behavior must be rechecked before provisioning.
+**Status:** Partially approved for issue #5; UI rendering and SQL free-tier
+choices remain proposed. The owner-approved
+[implementation plan v4](https://github.com/cedricmendelin/bujo-ai/issues/5#issuecomment-6901233646)
+selects .NET 11, EF Core SQL Server, and one modular host for that issue only.
+This does not approve a Blazor render mode, Azure SQL free-tier operating
+behavior, or MCP client compatibility. Evidence retrieved 2026-11-14; links
+below are primary Microsoft sources. Prices, availability and product behavior
+must be rechecked before provisioning.
 
 ## Context and proposed decisions
 
@@ -18,15 +21,15 @@ guarantee. See [concept](../concept.md) and
 
 | Choice | Recommendation for owner review | Status |
 | --- | --- | --- |
-| Runtime | .NET 10 LTS, current servicing patch | Proposed |
+| Runtime | .NET 11, current supported servicing patch | Approved for issue #5 |
 | UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Proposed |
-| Database | Azure SQL Database General Purpose serverless free tier, subject to the operational checks below | Proposed; exhaustion behavior not chosen |
-| Persistence | EF Core SQL Server provider and reviewed migrations | Proposed |
-| Structure | One host with small in-process modules; no microservices | Proposed |
+| Database | Azure SQL Database; General Purpose serverless free tier remains subject to the operational checks below | Provider approved; tier and exhaustion behavior remain proposed |
+| Persistence | EF Core SQL Server provider and reviewed migrations | Approved for issue #5 |
+| Structure | One modular ASP.NET Core host with small in-process modules; no microservices | Approved for issue #5 |
 
-No choice in this ADR is final until the owner approves it. A failure of a
-specific Azure SQL configuration triggers review of another Azure SQL
-configuration; changing database provider requires evidence of a blocker and
+The issue #5 approval does not make the remaining proposed choices final. A
+failure of a specific Azure SQL configuration triggers review of another Azure
+SQL configuration; changing database provider requires evidence of a blocker and
 separate approval.
 
 ## Runtime
@@ -42,11 +45,10 @@ Its supported releases on 2026-11-14 are:
 
 .NET 8 LTS and .NET 9 STS ended support on 2026-11-10. LTS normally receives
 three years of support and STS two; here both supported versions have the same
-end date. Recommend .NET 10 for the LTS cadence, not because it has a longer
-remaining support window than .NET 11. .NET 11 is a supported alternative if its
-newer features justify adoption. Patch the SDK and container runtime regularly
-and plan an upgrade before November 2028; a container image is not patched
-automatically by updating the host.
+end date. The issue #5 implementation uses .NET 11 as selected in plan v4,
+despite the earlier .NET 10 LTS proposal. Patch the SDK and container runtime
+regularly and plan an upgrade before November 2028; a container image is not
+patched automatically by updating the host.
 
 ## Blazor rendering and installability
 
@@ -94,27 +96,29 @@ approved here.
 
 ### Local development and migrations
 
-Use local SQL Server with the full-text component for persistence integration
-tests; a developer container is disposable infrastructure, not the production
-database. SQL Server containers and Windows LocalDB are developer alternatives
+Use local SQL Server for persistence integration tests; a developer container
+is disposable infrastructure, not the production database. SQL Server
+containers and Windows LocalDB are developer alternatives
 ([containers](https://learn.microsoft.com/en-us/sql/linux/quickstart-install-connect-docker?view=sql-server-ver17),
 [LocalDB](https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/sql-server-express-localdb)).
 LocalDB alone does not establish full-text parity. SQL Server and Azure SQL
 are not identical: test SQL dialect, collation, full-text language and migration
 behavior against the actual Azure SQL configuration before release.
 
-Use the [EF Core SQL Server provider](https://learn.microsoft.com/en-us/ef/core/providers/sql-server/)
+Issue #5 implements the [EF Core SQL Server provider](https://learn.microsoft.com/en-us/ef/core/providers/sql-server/)
 and versioned [migrations](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/).
-Generate and review deployment scripts or a migration bundle, test upgrades
-against real SQL Server and the target Azure SQL tier, and run migrations with a
-separate appropriately authorized identity rather than granting the runtime
-schema-owner privileges. Include full-text DDL and its transaction constraints in
-the migration test; avoid relying on automatic application-start migrations.
+The production migration job uses a separate identity rather than granting the
+runtime schema-owner privileges. Avoid automatic application-start migrations.
+Azure SQL-specific parity, full-text behavior and restore procedures remain
+separate verification work.
 
 ### Deployment, identity and availability
 
-Provisioning is a later issue. Candidate: one General Purpose serverless database
-with the [free tier explicitly enabled](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier?view=azuresql);
+Issue #5 prepares a single Container Apps host and a separately triggered
+migration job, but does not authorize or perform Azure provisioning. The app
+image is promoted only after the migration execution succeeds; see the
+[deployment guide](../deployment.md). The database remains a candidate General
+Purpose serverless database with the [free tier explicitly enabled](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier?view=azuresql);
 ordinary serverless without the free-limit setting is billable. Verify eligible
 subscription and regional availability. Use the Container App managed identity,
 an Entra administrator and a least-privilege database principal; automated
@@ -215,7 +219,7 @@ deployments.
 | --- | --- |
 | Domain unit | Identity, moves, one active destination, planned periods and list closure. |
 | Application | Shared use cases, authorization and explicit approval rules. |
-| Persistence integration | Real SQL Server with full-text; migration upgrade, constraints and queries; targeted Azure SQL parity and recovery checks. |
+| Persistence integration | SQL Server integration tests cover empty-database migration, normalized journal rows, multi-hop persistence across restarts, idempotency, transactional rollback, concurrent moves and close/move races. Azure SQL parity, full-text behavior and restore/recovery checks remain unverified. |
 | API / MCP contract | Authentication, approved-account restriction, error and shared behavior contracts; actual MCP clients under the separate auth issue. |
 | PWA / E2E smoke, later | Target-browser installation, login, server-confirmed saves, offline indicator, disconnect/reconnect and resume behavior. |
 
@@ -227,13 +231,14 @@ deployments.
   lack of an SLA, resume latency, restore charges and backup limits need owner
   acceptance. Full-text/tier and region compatibility remain to be tested.
 - Verify local versus Azure SQL parity, language behavior, backup restore,
-  permissions, and actual monthly spend during implementation. Do not copy
-  personal journal data into test fixtures.
+  permissions, and actual monthly spend before production. Do not copy personal
+  journal data into test fixtures.
 - Release-two AI search/RAG ([#16](https://github.com/cedricmendelin/bujo-ai/issues/16))
   and auth compatibility are separate decisions. Original SQL data remains
   authoritative.
 
-**Owner review requested:** approve or revise the proposed baseline and select the
-free-limit availability/cost trade-off before treating these choices as final.
-Record an accepted decision separately only after approval. No resources are
-provisioned by this ADR.
+**Approval boundary:** issue #5 approves .NET 11, EF Core SQL Server, and one
+modular host with a separate production migration job. Blazor rendering,
+Azure SQL free-tier behavior, MCP client compatibility, actual Azure
+permissions, and provisioning remain unapproved or unverified. No resources
+are provisioned by this ADR.
