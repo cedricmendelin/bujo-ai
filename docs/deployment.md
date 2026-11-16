@@ -85,6 +85,14 @@ private container's null access setting can return empty output instead of JSON.
 Only an explicit null `publicAccess` field is accepted; public access, malformed
 responses and failed inspections still block provisioning.
 
+Pipeline initialization uses `-lockfile=readonly` to preserve the committed
+provider selections and checksums. The clean-checkout review guard still rejects
+any tracked modification or untracked source file. When intentionally updating
+providers, use the pinned Terraform version to initialize modules and run
+`terraform -chdir=infra providers lock -platform=linux_amd64 -platform=windows_amd64`,
+then review and commit the resulting lockfile. Do not ignore or restore a changed
+lockfile during a provisioning run.
+
 Only Azure/Graph/state access and private infrastructure inputs are needed now.
 The deployment principal must already be able to create/manage Entra
 applications; the workflow cannot grant its own Graph permission. Configure
@@ -291,7 +299,7 @@ $env:TF_VAR_resource_group_name = "<resource-group>"
 $env:TF_VAR_sql_entra_admin_object_id = "<sql-admin-group-object-id>"
 $env:TF_VAR_sql_entra_admin_login = "<sql-admin-group-name>"
 $env:TF_VAR_budget_alert_email = "<budget-alert-email>"
-terraform -chdir=infra init -input=false -reconfigure `
+terraform -chdir=infra init -input=false -lockfile=readonly -reconfigure `
   -backend-config="resource_group_name=<state-resource-group>" `
   -backend-config="storage_account_name=<state-storage-account>" `
   -backend-config="container_name=<state-container>" `

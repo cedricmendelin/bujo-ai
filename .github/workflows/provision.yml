@@ -84,7 +84,7 @@ jobs:
       - name: Initialize the existing private state backend
         run: |
           python3 .github/scripts/deployment_preflight.py --mode infrastructure --private-storage
-          if ! terraform -chdir=infra init -input=false \
+          if ! terraform -chdir=infra init -input=false -lockfile=readonly \
             -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
             -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" \
             -backend-config="container_name=$TFSTATE_CONTAINER" \
