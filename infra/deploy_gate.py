@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,41 @@ REDACT_ENVIRONMENT_KEYS = (
 
 RestCall = Callable[[str, str, dict | None], dict]
 Promotion = Callable[[], None]
+
+
+def ensure_no_active_executions(job_id: str, *, rest: RestCall) -> None:
+    path = f"{job_id}/executions"
+    uri = f"https://management.azure.com{path}?api-version={API_VERSION}"
+    seen = set()
+    while uri:
+        parsed = urllib.parse.urlsplit(uri)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "management.azure.com"
+            or parsed.path.casefold() != path.casefold()
+            or uri in seen
+            or len(seen) >= 100
+        ):
+            raise RuntimeError("Migration execution pagination is invalid; deployment is blocked.")
+        seen.add(uri)
+        page = rest("get", uri, None)
+        if not isinstance(page, dict):
+            raise RuntimeError("Migration executions could not be verified; deployment is blocked.")
+        executions = page.get("value")
+        if not isinstance(executions, list):
+            raise RuntimeError("Migration executions could not be verified; deployment is blocked.")
+        for execution in executions:
+            properties = execution.get("properties") if isinstance(execution, dict) else None
+            status = properties.get("status") if isinstance(properties, dict) else None
+            if not isinstance(status, str) or status not in {"Succeeded", "Failed", "Stopped"}:
+                raise RuntimeError(
+                    "A migration execution is active or has an indeterminate status; "
+                    "deployment is blocked."
+                )
+        next_link = page.get("nextLink")
+        if next_link is not None and (not isinstance(next_link, str) or not next_link):
+            raise RuntimeError("Migration execution pagination is invalid; deployment is blocked.")
+        uri = next_link
 
 
 def az_rest(method: str, uri: str, body: dict | None = None) -> dict:
@@ -47,6 +83,7 @@ def wait_for_migration(
     status_attempts: int = 360,
     poll_interval: int = 5,
 ) -> str:
+    ensure_no_active_executions(job_id, rest=rest)
     job_uri = f"https://management.azure.com{job_id}"
     started = rest("post", f"{job_uri}/start?api-version={API_VERSION}", {})
     execution_name = started.get("name")

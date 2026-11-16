@@ -217,7 +217,7 @@ merged after the owner has reviewed its local plan.
 
 ## First deployment and identity configuration
 
-Merge to `main` to run `deploy.yml`. It builds and pushes a GHCR image only
+The owner manually dispatches `deploy.yml` from `main`. It builds and pushes a GHCR image only
 when a root `Dockerfile` exists, authenticates to Azure through the single
 immutable-subject OIDC identity, and locks remote state. Terraform first
 applies only the migration job and its dependencies, leaving the current app
@@ -241,12 +241,11 @@ This permission is not granted to the runtime, migration, or deployment
 identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
-The approved plan requires prerequisites before deployment. On a new
-environment, the SQL server, database, and identities must exist before the
-following grants can be made. If they do not already exist, an owner-approved
-plan revision is needed to authorize a staged bootstrap before merging or
-running production deployment. Also grant the deployment application the
-Microsoft Graph permission described above.
+Approved plan v5 requires an owner-controlled staged bootstrap before these
+grants. The separate bootstrap plan path is not yet implemented; do not run
+production deployment until it is implemented, reviewed, and applied by the
+owner and all grants and other prerequisites are complete. Also grant the
+deployment application the Microsoft Graph permission described above.
 
 Connect to Azure SQL as a member of the configured Entra admin group and create
 the database principals and roles:

@@ -19,6 +19,8 @@ def fake_rest(status: str) -> tuple[Callable[[str, str, dict | None], dict], lis
         calls.append(f"{method} {uri}")
         if method == "post":
             return {"name": "new-execution", "id": f"{JOB_ID}/executions/new-execution"}
+        if uri.endswith("/executions?api-version=2024-03-01"):
+            return {"value": []}
         if uri.endswith("/executions/new-execution?api-version=2024-03-01"):
             return {"properties": {"status": status}}
         raise AssertionError(f"Unexpected REST call: {method} {uri}")
@@ -119,6 +121,8 @@ class DeployGateTests(unittest.TestCase):
                     calls.append(method)
                     if method == "post":
                         return response
+                    if uri.endswith("/executions?api-version=2024-03-01"):
+                        return {"value": []}
                     raise AssertionError("An unverifiable execution must not be polled.")
 
                 with self.assertRaisesRegex(RuntimeError, "verifiable execution ID"):
@@ -129,8 +133,100 @@ class DeployGateTests(unittest.TestCase):
                         sleep=lambda _: None,
                     )
 
-                self.assertEqual(["post"], calls)
+                self.assertEqual(["get", "post"], calls)
                 self.assertEqual([], promoted)
+
+    def test_existing_or_indeterminate_executions_block_start_and_promotion(self) -> None:
+        for status in ("Running", "Processing", "Unknown", "Degraded", None):
+            with self.subTest(status=status):
+                calls = []
+                promoted = []
+
+                def rest(method: str, uri: str, body: dict | None) -> dict:
+                    calls.append(method)
+                    return {"value": [{"properties": {"status": status}}]}
+
+                with self.assertRaisesRegex(RuntimeError, "active or has an indeterminate"):
+                    deploy_after_migration(JOB_ID, rest=rest, promote=lambda: promoted.append(True))
+                self.assertEqual(["get"], calls)
+                self.assertEqual([], promoted)
+
+    def test_checks_every_page_and_rejects_untrusted_pagination(self) -> None:
+        next_page = f"https://management.azure.com{JOB_ID}/executions?api-version=2024-03-01&skip=1"
+        for link in (next_page, "https://example.invalid/executions"):
+            with self.subTest(link=link):
+                calls = []
+                promoted = []
+
+                def rest(method: str, uri: str, body: dict | None) -> dict:
+                    calls.append(uri)
+                    if len(calls) == 1:
+                        return {"value": [{"properties": {"status": "Succeeded"}}], "nextLink": link}
+                    return {"value": [{"properties": {"status": "Running"}}]}
+
+                with self.assertRaises(RuntimeError):
+                    deploy_after_migration(JOB_ID, rest=rest, promote=lambda: promoted.append(True))
+                self.assertEqual(2 if link == next_page else 1, len(calls))
+                self.assertEqual([], promoted)
+
+    def test_completed_executions_on_multiple_pages_allow_start(self) -> None:
+        next_page = f"https://management.azure.com{JOB_ID}/executions?api-version=2024-03-01&skip=1"
+        calls = []
+        promoted = []
+
+        def rest(method: str, uri: str, body: dict | None) -> dict:
+            calls.append((method, uri))
+            if method == "post":
+                return {"name": "new", "id": f"{JOB_ID}/executions/new"}
+            if uri == next_page:
+                return {"value": [{"properties": {"status": "Failed"}}]}
+            if uri.endswith("/executions?api-version=2024-03-01"):
+                return {"value": [{"properties": {"status": "Succeeded"}}], "nextLink": next_page}
+            return {"properties": {"status": "Succeeded"}}
+
+        self.assertEqual("new", deploy_after_migration(
+            JOB_ID, rest=rest, promote=lambda: promoted.append(True), sleep=lambda _: None
+        ))
+        self.assertEqual(["get", "get", "post", "get"], [method for method, _ in calls])
+        self.assertEqual([True], promoted)
+
+    def test_execution_list_failure_blocks_start_and_promotion(self) -> None:
+        for response in (None, {}, {"value": None}, {"value": [], "nextLink": ""}):
+            with self.subTest(response=response):
+                calls = []
+                promoted = []
+
+                def rest(method: str, uri: str, body: dict | None) -> dict:
+                    calls.append(method)
+                    return response
+
+                with self.assertRaises(RuntimeError):
+                    deploy_after_migration(JOB_ID, rest=rest, promote=lambda: promoted.append(True))
+                self.assertEqual(["get"], calls)
+                self.assertEqual([], promoted)
+
+    def test_execution_list_request_error_blocks_start_and_promotion(self) -> None:
+        calls = []
+        promoted = []
+
+        def rest(method: str, uri: str, body: dict | None) -> dict:
+            calls.append(method)
+            raise RuntimeError("execution list unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "execution list unavailable"):
+            deploy_after_migration(JOB_ID, rest=rest, promote=lambda: promoted.append(True))
+        self.assertEqual(["get"], calls)
+        self.assertEqual([], promoted)
+
+    def test_deployment_workflow_requires_owner_dispatch_from_main(self) -> None:
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/deploy.yml").read_text()
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  push:")
+        self.assertIn('refs/heads/main', workflow)
+        self.assertIn('${GITHUB_REPOSITORY_OWNER,,}', workflow)
+        self.assertIn('${TRIGGERING_ACTOR,,}', workflow)
+        self.assertIn('${{ github.triggering_actor }}', workflow)
+        self.assertIn("    needs: authorize", workflow)
 
     def test_workflow_calls_provisioning_before_the_migration_gate(self) -> None:
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/deploy.yml").read_text()

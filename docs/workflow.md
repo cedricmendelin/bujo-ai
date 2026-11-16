@@ -20,7 +20,7 @@ issue ──/plan──▶ Architect plan comment (v1, owner: builder|ai|devops|
           CI + Squad Review / Architect · Security · Verifier · DevOps
                                          │
                       Squad Review Gate (workflow_run aggregator)
-           all success ──▶ squash auto-merge ──▶ main ──▶ deploy
+           all success ──▶ squash auto-merge ──▶ main ──▶ owner-dispatched deploy
            any failure ──▶ findings to @copilot (cloud) or Agent merge (local)
                            max 3 rounds ──▶ needs:human + @cedricmendelin
 ```
@@ -520,4 +520,4 @@ environment (that environment is only for the cloud agent's runtime).
   enabled auto-merge waits for fresh checks.
 - The Copilot app's Agent merge works only for local sessions; cloud PRs rely
   on the shepherd and gate instead.
-- Infrastructure deploys from `main`; see [infrastructure operations](infrastructure.md).
+- Infrastructure deployment is owner-dispatched from `main`; see [infrastructure operations](infrastructure.md).

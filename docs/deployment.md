@@ -1,8 +1,10 @@
 # Production deployment
 
-Production deployment is driven by `.github/workflows/deploy.yml` after a push
-to `main`. The workflow builds an image tagged with the commit SHA, uses GitHub
-OIDC for Azure access, and serializes Terraform deployments. See
+Production deployment is manually dispatched by the repository owner from
+`main` using `.github/workflows/deploy.yml`. The workflow builds an image tagged
+with the commit SHA, uses GitHub OIDC for Azure access, and serializes Terraform
+deployments. The separate stage-one bootstrap path required by plan v5 is not
+implemented yet: do not run this workflow to bootstrap a new environment. See
 [production infrastructure](infrastructure.md) for the owner-managed bootstrap
 and identity prerequisites.
 
@@ -10,8 +12,10 @@ and identity prerequisites.
 
 The workflow first plans and applies only the Container Apps migration job and
 its dependencies. This stage does not update the web app. The workflow then
-starts the manual job and requires the start response to identify the execution
-and its job. It polls that exact execution for up to 30 minutes and promotes the
+checks all existing execution pages and refuses to start if an execution is
+active or its status is indeterminate. It then starts the manual job and
+requires the start response to identify the execution and its job. It polls
+that exact execution for up to 30 minutes and promotes the
 app only after that execution reports
 `Succeeded`. Failed, stopped, unknown, ambiguous, missing, or timed-out
 executions stop the workflow before the full Terraform apply.
@@ -20,6 +24,8 @@ The Container Apps start API can return HTTP 202 without an execution ID. This
 gate cannot yet correlate that response to a specific execution and therefore
 stops without promotion; do not infer the execution from the job's execution
 list, since another actor could start a different execution concurrently.
+The pre-start check cannot prevent an external actor starting an execution
+after the check; exact response-based execution identification remains required.
 
 The implementation is in `infra/deploy_gate.py`; CI simulates success, failure,
 timeout, an indeterminate status, and a first-deployment SQL-grant failure.

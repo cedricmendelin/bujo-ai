@@ -176,8 +176,8 @@ before implementation starts.
 Issues are implemented through the [governed delivery workflow](docs/workflow.md):
 `/plan` → owner approves with `plan:approved` → Copilot cloud agent (or a local
 GitHub Copilot app session) with the owning Squad custom agent → Squad Review
-(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → deploy from
-`main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
+(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → owner-dispatched
+deployment from `main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
 North. PR checks do not access Azure; the owner runs infrastructure plans locally.
 The `main` deployment uses GitHub OIDC, budgeted under 50 USD/month.
 

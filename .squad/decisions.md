@@ -225,8 +225,9 @@
 ### 2026-11-14: Infrastructure and deployment
 
 - Terraform with Azure Verified Modules wherever available; versions pinned.
-- One `prod` environment in Switzerland North; merge to `main` deploys through
-  exactly one GitHub OIDC deployment identity with an immutable subject. PR
+- One `prod` environment in Switzerland North; the original merge-to-deploy
+  decision is superseded by the issue #5 staged-bootstrap decision below.
+  Deployment uses exactly one GitHub OIDC identity with an immutable subject. PR
   workflows never authenticate to Azure; the owner runs plans locally.
 - No private networking. Cheapest reasonable SKUs, target under 50 USD/month:
   Container Apps consumption (scale to zero), Azure SQL free offer
@@ -269,6 +270,14 @@
   with a dedicated identity; the web runtime identity retains data access only.
   Infrastructure, permissions, and rollout feasibility must be verified before
   production changes, and no Azure setup is authorized by this decision.
+
+### 2026-11-16: Issue #5 staged bootstrap
+
+- Approved plan v5 separates an owner-reviewed, owner-applied bootstrap from
+  SQL grants and the later migration and application deployment.
+- Bootstrap must not run a migration or change an app revision. Production
+  deployment is manually dispatched by the owner from `main`; merge alone does
+  not deploy. The stage-one plan path remains to be implemented.
 
 ## Governance
 
