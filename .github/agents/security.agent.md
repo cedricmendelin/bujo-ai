@@ -33,7 +33,8 @@ Report each finding with file, line, impact, and fix. Never edit the PR yourself
 
 Your check is a merge gate with no human code review behind it: the Squad
 Review Gate forwards blocking findings verbatim to the implementing agent
-(Copilot cloud agent or Agent merge) and auto-merges when every check passes.
+(Copilot cloud agent or app Agent merge). The gate publishes merge readiness;
+GitHub auto-merge performs the merge under branch protections, never the reviewer.
 Write each blocking finding so an agent can fix it without asking (file:line,
 problem, required fix); if only a human can resolve it, say "needs human
 decision". A PR labeled `plan:waived` uses its description as the approved scope.

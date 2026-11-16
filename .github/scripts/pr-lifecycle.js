@@ -28,7 +28,7 @@ function latestComment(comments) {
 
 function fixRequests(comments, owner) {
   return comments.filter(c => workflowComment(c, owner)).flatMap(comment => {
-    const match = (comment.body || '').match(/^<!-- squad-gate:fix:([a-f0-9]{40})(?::([a-f0-9]{12}))? -->$/m);
+    const match = (comment.body || '').match(/^<!-- squad-(?:gate|feedback):fix:([a-f0-9]{40})(?::([a-f0-9]{12}))? -->$/m);
     return match ? [{ ...comment, headSha: match[1], bodyHash: match[2] || null }] : [];
   });
 }
@@ -91,20 +91,30 @@ function validateProposal(comment, pr, scope) {
     return reject('Metadata proposal JSON is malformed.');
   }
   if (!proposal || Array.isArray(proposal) || typeof proposal !== 'object'
-    || Object.keys(proposal).sort().join(',') !== 'baseBodySha256,body,headSha'
+    || !['baseBodySha256,body,headSha', 'baseBodySha256,baseTitleSha256,body,headSha,title']
+      .includes(Object.keys(proposal).sort().join(','))
     || typeof proposal.body !== 'string'
     || !/^[a-f0-9]{40}$/.test(proposal.headSha)
     || !/^[a-f0-9]{64}$/.test(proposal.baseBodySha256)) {
-    return reject('Only headSha, baseBodySha256 and a text body are allowed.');
+    return reject('Use headSha, baseBodySha256 and body; title changes also require title and baseTitleSha256.');
+  }
+  const changesTitle = Object.hasOwn(proposal, 'title');
+  if (changesTitle && (typeof proposal.title !== 'string' || !proposal.title.trim()
+    || proposal.title.length > 256 || /[\r\n\x00-\x1f\x7f]/.test(proposal.title)
+    || !/^[a-f0-9]{64}$/.test(proposal.baseTitleSha256))) {
+    return reject('A title must be a nonempty single line of at most 256 characters with a baseTitleSha256 snapshot.');
   }
   if (pr.state !== 'open' || proposal.headSha !== pr.head.sha
-    || proposal.baseBodySha256 !== bodyHash(pr.body)) {
-    return reject('The PR head, description or open state changed; read the PR again and publish a fresh proposal.');
+    || proposal.baseBodySha256 !== bodyHash(pr.body)
+    || changesTitle && proposal.baseTitleSha256 !== bodyHash(pr.title)) {
+    return reject('The PR head, title, description or open state changed; read the PR again and publish a fresh proposal.');
   }
   if (!proposal.body.trim() || Buffer.byteLength(proposal.body, 'utf8') > MAX_BODY_BYTES) {
     return reject(`Replacement description must be nonempty and at most ${MAX_BODY_BYTES} UTF-8 bytes.`);
   }
-  if (proposal.body === pr.body) return reject('The proposal does not change the description.');
+  if (proposal.body === pr.body && (!changesTitle || proposal.title === pr.title)) {
+    return reject('The proposal does not change the title or description.');
+  }
   if (!/^Completion: (?:full|partial)(?:\r?\n|$)/.test(proposal.body.trimStart())) {
     return reject('Begin the replacement with a whole-line Completion: full or Completion: partial declaration.');
   }
@@ -118,7 +128,78 @@ function validateProposal(comment, pr, scope) {
     || !new RegExp(`\\bplan\\s+v${scope.planVersion}\\b`, 'i').test(proposal.body))) {
     return reject('Preserve the approved issue reference and implementation plan version.');
   }
-  return { ok: true, body: proposal.body };
+  return { ok: true, body: proposal.body, ...(changesTitle ? { title: proposal.title } : {}) };
+}
+
+async function reviewFeedback(github, { owner, repo, number }) {
+  const trusted = item => item.author?.login === owner
+    || ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(item.authorAssociation)
+    || item.author?.__typename === 'Bot'
+      && ['copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'].includes(item.author.login);
+  const feedback = [];
+  let after = null;
+  do {
+    const { repository } = await github.graphql(
+      `query($owner:String!,$repo:String!,$number:Int!,$after:String){
+        repository(owner:$owner,name:$repo){pullRequest(number:$number){
+          reviewThreads(first:100,after:$after){pageInfo{hasNextPage,endCursor}
+            nodes{id isResolved isOutdated comments(first:1){nodes{
+              body url updatedAt authorAssociation author{login __typename}
+              pullRequestReview{state}
+            }}}
+          }
+        }}
+      }`, { owner, repo, number, after });
+    const connection = repository.pullRequest.reviewThreads;
+    for (const thread of connection.nodes) {
+      const root = thread.comments.nodes[0];
+      if (thread.isResolved || thread.isOutdated || !root || !trusted(root)
+        || !root.pullRequestReview || root.pullRequestReview.state === 'PENDING') continue;
+      feedback.push({ key: `thread:${thread.id}:${root.updatedAt}`, body: root.body, url: root.url });
+    }
+    if (connection.pageInfo.hasNextPage && (!connection.pageInfo.endCursor || connection.pageInfo.endCursor === after)) {
+      throw new Error('Review-thread pagination did not advance.');
+    }
+    after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (after);
+  const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: number, per_page: 100 });
+  const latest = new Map();
+  for (const review of reviews.sort((a, b) => a.id - b.id)) {
+    if (review.state === 'PENDING' || review.state === 'COMMENTED') continue;
+    latest.set(review.user?.login, review);
+  }
+  for (const review of latest.values()) {
+    const item = { author: { login: review.user?.login, __typename: review.user?.type },
+      authorAssociation: review.author_association };
+    if (review.state === 'CHANGES_REQUESTED' && trusted(item)) {
+      feedback.push({ key: `review:${review.id}:${bodyHash(review.body)}`, body: review.body || 'Changes requested.',
+        url: review.html_url });
+    }
+  }
+  return feedback.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function feedbackMarker(item) {
+  return `<!-- squad-feedback:${bodyHash(item.key).slice(0, 12)} -->`;
+}
+
+async function startReadiness(github, { owner, repo, sha, summary }) {
+  const name = 'Squad Merge Readiness';
+  const checks = await github.paginate(github.rest.checks.listForRef, {
+    owner, repo, ref: sha, check_name: name, per_page: 100,
+  });
+  const existing = checks.filter(check => check.name === name).sort((a, b) => b.id - a.id)[0];
+  const output = { title: 'Waiting for governed merge readiness', summary };
+  const result = existing
+    ? await github.rest.checks.update({ owner, repo, check_run_id: existing.id, status: 'in_progress', output })
+    : await github.rest.checks.create({ owner, repo, name, head_sha: sha, status: 'in_progress', output });
+  return result.data;
+}
+
+function hasRequiredMergeChecks(rules, names) {
+  const required = new Set(rules.filter(rule => rule.type === 'required_status_checks')
+    .flatMap(rule => rule.parameters?.required_status_checks || []).map(check => check.context));
+  return names.every(name => required.has(name));
 }
 
 function reviewsFinishedAfter(latest, names, review) {
@@ -131,4 +212,6 @@ module.exports = {
   METADATA_MARKER, MAX_BODY_BYTES, bodyHash, trustedComment, workflowComment,
   fixRequests, latestFix, reviewMarker, currentReview, latestSession, stalledSession,
   metadataProposal, referencesIssue, validateProposal, reviewsFinishedAfter,
+  reviewFeedback, feedbackMarker, hasRequiredMergeChecks,
+  startReadiness,
 };

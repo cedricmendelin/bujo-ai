@@ -17,6 +17,8 @@ test('binding caller uses trusted default-branch checkout, plan core, GITHUB_TOK
   assert.match(workflow, /ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}/);
   assert.match(workflow, /require\('\.\/\.github\/scripts\/plan-binding'\)/);
   assert.match(workflow, /checks:\s*write/);
+  assert.match(workflow, /pull-requests:\s*write/,
+    'GITHUB_TOKEN needs PR write permission for bot comments on linked PRs, even through the issues/comments endpoint');
   assert.match(workflow, /getOctokit\(process\.env\.AGENT_TOKEN\)/);
   assert.match(workflow, /pullRequests\(first:100,after:\$after,states:\[OPEN,MERGED\]\)/);
   assert.match(workflow, /cross-referenced/);
@@ -467,7 +469,8 @@ test('waiver publication rechecks owner event, exact body and head before dispat
 });
 
 function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOwnCheck = false,
-  waived = false, staleWaiverBinding = false, missingBinding = false } = {}) {
+  waived = false, staleWaiverBinding = false, missingBinding = false, missingReadinessRule = false,
+  failedCi = false, feedback = [] } = {}) {
   const attestation = require('./review-attestation');
   const sha = 'b'.repeat(40);
   const body = 'Completion: partial\nRelates to #41\nPlan v1\n## Remaining work\nLive rollout.';
@@ -480,7 +483,8 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
   const state = {
     calls: [], comments: [], scopeReads: 0,
     pr: { number: 8, state: 'open', body, head: { sha, ref: 'feature', repo: { full_name: 'owner/repo' } },
-      labels: waived ? [{ name: 'plan:waived' }] : [], node_id: 'PR8', created_at: '2026-01-01T10:00:00Z', auto_merge: {}, draft: false },
+      base: { ref: 'main' }, labels: waived ? [{ name: 'plan:waived' }] : [], node_id: 'PR8',
+      created_at: '2026-01-01T10:00:00Z', auto_merge: null, draft: false },
   };
   const artifacts = roles.map((role, i) => JSON.stringify({
     attestation: attestation.makeAttestation({ ...scope, prNumber: 8, body, headSha: sha,
@@ -488,7 +492,7 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
     scopeText: scope.scopeText,
   }));
   const checks = [
-    { id: 1, name: 'ci', status: 'completed', conclusion: 'success' },
+    { id: 1, name: 'ci', status: 'completed', conclusion: failedCi ? 'failure' : 'success' },
     { id: 2, name: 'Squad Plan Binding', status: 'completed', conclusion: 'success', output: {
       summary: waived || staleWaiverBinding === 'removed'
         ? require('./plan-binding').waiverBindingSummary({
@@ -519,6 +523,7 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
       pulls: {
         get: async () => ({ data: structuredClone(state.pr) }),
         list: async () => ({ data: [state.pr] }),
+        listReviews: async () => ({ data: [] }),
         merge: async args => { state.calls.push(['merge', args]); state.pr.merged_at = '2026-01-01T11:00:00Z'; },
       },
       issues: {
@@ -530,6 +535,11 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
         addAssignees: async () => {},
       },
       checks: {
+        create: async args => {
+          state.calls.push(['readiness', args]);
+          return { data: { id: 900 } };
+        },
+        update: async args => { state.calls.push(['readiness-result', args]); },
         listForRef: async () => ({ data: checks }),
         get: async ({ check_run_id }) => ({ data: checks.find(c => c.id === check_run_id) }),
       },
@@ -537,6 +547,11 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
     paginate: async (method, args) => typeof method === 'string'
       ? [] : (await method(args)).data,
     request: async (route, args) => {
+      if (route.includes('/rules/branches/')) return { data: [{
+        type: 'required_status_checks', parameters: { required_status_checks:
+          [...checks.map(check => check.name), ...(missingReadinessRule ? [] : ['Squad Merge Readiness'])]
+            .map(context => ({ context })) },
+      }] };
       if (route.endsWith('/jobs')) return { data: { jobs: [{
         id: 300 + args.run_id - 100, steps: [{ name: 'Process Safe Outputs' }],
       }] } };
@@ -545,6 +560,9 @@ function gateHarness({ driftAt, directMerge = false, wrongRun = false, missingOw
     },
     graphql: async (query, args) => {
       state.calls.push(['graphql', query, args]);
+      if (query.includes('reviewThreads')) return { repository: { pullRequest: {
+        reviewThreads: { nodes: feedback, pageInfo: { hasNextPage: false } },
+      } } };
       if (directMerge && query.includes('enablePullRequestAutoMerge')) throw new Error('Pull request is in clean status');
       return {};
     },
@@ -614,6 +632,7 @@ test('real gate cannot bypass the required binding check for missing/stale/remov
     { staleWaiverBinding: 'removed' },
   ]) {
     const state = gateHarness(options);
+    state.pr.auto_merge = {};
     t.mock.method(global, 'fetch', state.fetch);
     assert.deepEqual(await state.run(), []);
     assert.equal(state.calls.some(c => c[0] === 'graphql' && c[1].includes('enablePullRequestAutoMerge')), false);
@@ -631,15 +650,66 @@ test('real gate rejects wrong-run artifacts and re-dispatches at most once for t
   assert.equal(state.calls.some(c => c[0] === 'graphql' && c[1].includes('enablePullRequestAutoMerge')), false);
 });
 
-test('real gate protects auto-merge and direct squash paths against live plan changes', async t => {
-  for (const [directMerge, driftAt] of [[false, 3], [false, 4], [true, 4], [true, 5]]) {
-    const state = gateHarness({ directMerge, driftAt });
+test('real gate protects native auto-merge against live plan changes without direct merging', async t => {
+  for (const driftAt of [3, 4]) {
+    const state = gateHarness({ driftAt });
+    state.pr.auto_merge = {};
     t.mock.method(global, 'fetch', state.fetch);
     assert.equal((await state.run()).length, 1, 'merge-time drift must be reported explicitly');
-    assert.equal(state.calls.filter(c => c[0] === 'merge').length, directMerge && driftAt === 5 ? 1 : 0);
-    assert.ok(state.calls.some(c => c[0] === 'graphql' && c[1].includes('disablePullRequestAutoMerge'))
-      || (directMerge && driftAt === 5 && state.calls.some(c => c[0] === 'label')));
+    assert.equal(state.calls.filter(c => c[0] === 'merge').length, 0);
+    assert.ok(state.calls.some(c => c[0] === 'graphql' && c[1].includes('disablePullRequestAutoMerge')));
+    assert.equal(state.calls.some(c => c[0] === 'readiness-result'), false);
   }
+});
+
+test('native auto-merge is armed only while the required readiness check is pending', async t => {
+  const state = gateHarness();
+  t.mock.method(global, 'fetch', state.fetch);
+  assert.deepEqual(await state.run(), []);
+  const pending = state.calls.findIndex(c => c[0] === 'readiness');
+  const armed = state.calls.findIndex(c => c[0] === 'graphql' && c[1].includes('enablePullRequestAutoMerge'));
+  const passed = state.calls.findIndex(c => c[0] === 'readiness-result');
+  assert.ok(pending >= 0 && armed > pending && passed > armed);
+  assert.equal(state.calls[passed][1].conclusion, 'success');
+  assert.equal(state.calls.some(c => c[0] === 'merge'), false);
+});
+
+test('gate fails closed for missing rules and clean-status API failures instead of merging directly', async t => {
+  for (const options of [{ missingReadinessRule: true }, { directMerge: true }]) {
+    const state = gateHarness(options);
+    t.mock.method(global, 'fetch', state.fetch);
+    assert.equal((await state.run()).length, 1);
+    assert.equal(state.calls.some(c => c[0] === 'merge' || c[0] === 'readiness-result'), false);
+  }
+});
+
+test('CI-only failure belongs to Watch and fix and consumes no review repair round', async t => {
+  const state = gateHarness({ failedCi: true });
+  t.mock.method(global, 'fetch', state.fetch);
+  assert.deepEqual(await state.run(), []);
+  assert.equal(state.calls.some(c => c[0] === 'comment' || c[0] === 'readiness-result'), false);
+});
+
+test('needs:human is a stop, never automatically cleared by green checks', async () => {
+  const state = gateHarness();
+  state.pr.labels.push({ name: 'needs:human' });
+  state.pr.auto_merge = {};
+  assert.deepEqual(await state.run(), []);
+  assert.equal(state.calls.some(c => c[0] === 'readiness-result'), false);
+  assert.ok(state.calls.some(c => c[0] === 'graphql' && c[1].includes('disablePullRequestAutoMerge')));
+});
+
+test('unresolved trusted reviewer feedback blocks merge readiness even with all checks green', async t => {
+  const state = gateHarness({ feedback: [{
+    id: 'THREAD1', isResolved: false, isOutdated: false,
+    comments: { nodes: [{ body: 'Fix this edge case.', url: 'https://github.test/thread/1',
+      updatedAt: '2026-01-01T10:00:00Z', author: { login: 'owner', __typename: 'User' },
+      authorAssociation: 'OWNER', pullRequestReview: { state: 'COMMENTED' } }] },
+  }] });
+  t.mock.method(global, 'fetch', state.fetch);
+  assert.deepEqual(await state.run(), []);
+  assert.equal(state.calls.some(c => c[0] === 'readiness-result'), false);
+  assert.equal(state.calls.some(c => c[0] === 'graphql' && c[1].includes('enablePullRequestAutoMerge')), false);
 });
 
 test('failed dispatched reviewer with no PR head association escalates once before pending-check handling', async t => {
@@ -656,6 +726,7 @@ test('failed dispatched reviewer with no PR head association escalates once befo
 
 test('completed dispatch missing its own result does not silently wait for an unassociated check', async () => {
   const state = gateHarness({ missingOwnCheck: true });
+  state.pr.auto_merge = {};
   assert.deepEqual(await state.run(), []);
   assert.deepEqual(await state.run(), []);
   assert.equal(state.calls.filter(c => c[0] === 'label').length, 1);

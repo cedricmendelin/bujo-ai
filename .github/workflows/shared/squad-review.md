@@ -59,7 +59,9 @@ ${{ github.repository }}. Follow your custom agent's review rules above.
 
 The Squad Review Gate forwards your check summary verbatim to the implementing
 agent (Copilot cloud agent or Agent merge in the GitHub Copilot app) for up to 3
-fix rounds and squash auto-merges when every check passes. Nobody reads your
+fix rounds. The gate publishes required merge readiness and arms GitHub
+auto-merge; GitHub alone executes the merge. Native Watch and fix owns only
+CI/conflict repairs, not review feedback. Nobody reads your
 review before merge, so never pass a PR with an open blocking concern. If a
 finding needs a human decision rather than a code change, say so explicitly in
 the blocking finding.

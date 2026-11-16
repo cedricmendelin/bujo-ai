@@ -101,7 +101,7 @@ attestations, race limits, migration and rollout.
 plan:approved ─▶ Copilot cloud agent (custom agent = plan owner) works on a draft PR
               ─▶ latest session succeeds ─▶ Shepherd marks ready, starts CI + Squad Review
               ─▶ Gate requires session success + shepherd approval for this PR head
-                   all green   ─▶ squash auto-merge ─▶ main ─▶ deploy
+                   all green   ─▶ GitHub squash auto-merge ─▶ main ─▶ deploy
                    blocking    ─▶ "@copilot fix …" ─▶ Copilot fixes ─▶ shepherd re-reviews
               ─▶ interrupted ─▶ at most 2 bounded recoveries; recovery failure/stall
                                 ─▶ needs:human + @cedricmendelin (no ready/merge)
@@ -113,8 +113,24 @@ session is not reported as finished; duplicate events do not repeat its recovery
 request, and the gate cannot bypass the shepherd. If you intend to stop a session
 yourself, add `needs:human` or `handoff:local` before cancelling it.
 
-Copilot also resolves merge conflicts with `main` when asked by the shepherd,
-and you can steer it at any time with an `@copilot …` comment on the PR.
+Enable **Watch and fix** in the PR's GitHub.com merge box, selecting **Fix failed
+Actions workflows** and **Resolve merge conflicts**. Native cloud Agent Merge
+then owns those repairs; the shepherd/gate never issue duplicate CI/conflict
+fix requests. GitHub **auto-merge** executes the merge after the gate verifies
+scope, completion, current reviews and CI. There is no direct-merge fallback.
+
+Cloud Watch and fix does **not** address review comments. Our bounded bridge
+forwards Squad blocking findings and submitted human/Copilot review feedback to
+`@copilot`. It ignores resolved/outdated threads and deduplicates requests;
+arbitrary top-level comments do not automatically start work. Review feedback is
+polled after Plan Binding runs (normally every ten minutes), with an hourly
+fallback. You can still steer Copilot explicitly with an `@copilot …` comment.
+
+**Rollout prerequisite:** the owner must enable Copilot automations/Watch and fix
+and require `Squad Plan Binding` plus `Squad Merge Readiness` alongside the five
+existing checks on `main`. The gate refuses to arm auto-merge without all seven.
+Account-default Watch and fix applies to PRs that account creates; do not assume
+it covers Copilot-created PRs. See [setup and migration](docs/workflow.md#native-agent-merge-rollout).
 
 ### 2b. Local path (GitHub Copilot app)
 
@@ -132,15 +148,16 @@ issue plan.
    Use `Closes #N` only when every acceptance criterion is delivered with
    evidence, including code and relevant tests. A partial PR uses `Relates to #N`
    (or another non-closing reference) and keeps the issue open.
-4. Turn on **Agent merge** for the session with *Address reviews*, *Fix CI*, and
-   *Resolve conflicts*. Leave *Merge* off: the gate enables squash auto-merge
-   once every check passes.
+4. Optionally turn on desktop-app **Agent merge** with *Address reviews*,
+   *Fix CI*, and *Resolve conflicts*. This is an alternative repair controller:
+   disable cloud **Watch and fix** on that PR first. Leave *Merge* off:
+   GitHub auto-merge remains the single merge executor after gate approval.
 5. Every push re-runs CI and Squad Review; the gate posts blocking findings for
    Agent merge to fix (max 3 rounds).
 
 **Taking over a cloud PR locally:** add `handoff:local` to the PR, open it in
-the GitHub Copilot app, and turn on Agent merge. The shepherd and `@copilot`
-fix requests then stop for that PR.
+the GitHub Copilot app, disable cloud Watch and fix, and turn on app Agent merge.
+The shepherd and cloud `@copilot` fix requests then stop for that PR.
 
 ### 3. Human in the loop
 
@@ -150,6 +167,10 @@ fix requests then stop for that PR.
 | `## 🙋 Needs human` in a PR description | The implementer needs a secret, setting, or product decision | Provide it, then comment `@copilot continue` (cloud) or tell the session (local). |
 | Issue `Squad automation failing: …` (`needs:human`) | A workflow itself failed (for example an expired token) | Fix the cause from the linked run, then close the issue. |
 | Issue labeled `needs:human` for setup | Something must be configured once in GitHub or Azure | Follow the checklist in the issue. |
+
+`needs:human` stops our readiness/review bridge and blocks merge authorization;
+it is never automatically cleared by green checks. It does not control native
+Watch and fix: disable that separately when pausing a PR.
 
 ### Partial deliveries and reopened issues
 

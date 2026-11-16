@@ -1,8 +1,8 @@
 name: Squad Review Gate
 
 # Aggregates CI and the four Squad Review checks for each open PR head commit.
-# All green  -> enable squash auto-merge (clears needs:human).
-# Any failed -> send blocking findings back to the implementer (max 3 rounds),
+# All green  -> publish merge readiness and let GitHub squash auto-merge.
+# Review failed -> send findings back to the implementer (max 3 rounds),
 #               then needs:human with the human in the loop mentioned.
 # Copilot cloud agent PRs get an @copilot fix request; locally handed-over PRs
 # (other branches or `handoff:local`) get the findings for Agent merge in the
@@ -24,16 +24,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: squad-review-gate-${{ github.event.workflow_run.head_sha }}
+  group: squad-pr-lifecycle
   cancel-in-progress: false
 
 jobs:
   gate:
-    if: github.event.workflow_run.event != 'schedule' && !(github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == github.event.repository.default_branch)
+    if: (github.event.workflow_run.event != 'schedule' || github.event.workflow_run.name == 'Squad Plan Binding') && !(github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: read
+      checks: write
       pull-requests: read
       statuses: read
       issues: write
@@ -61,7 +61,8 @@ jobs:
             const { resolve } = require('node:path');
             const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
             const { classifySession, gateEligibility } = await import(pathToFileURL(resolve('.github/scripts/session-state.mjs')).href);
-            const { workflowComment, fixRequests, currentReview, latestSession } = require('./.github/scripts/pr-lifecycle');
+            const { workflowComment, fixRequests, currentReview, latestSession,
+              reviewFeedback, hasRequiredMergeChecks, startReadiness } = require('./.github/scripts/pr-lifecycle');
             const { hash, parseAttestationArtifact, publishedCheckIdFromJobLog, resolveScopeFromGitHub, verifyPublishedResult } = require('./.github/scripts/review-attestation');
             const { execFileSync } = require('node:child_process');
             const fs = require('node:fs');
@@ -124,11 +125,9 @@ jobs:
             }
             if (errors.length) core.setFailed(errors.join('\n'));
 
-            // GitHub refuses to enable auto-merge when the PR is already mergeable
-            // ("clean"/"unstable" status), so merge directly in that case.
             async function liveScopeFor(number) {
               const { data: current } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-              if (current.state !== 'open' && !current.merged_at) return { pr: current, scope: { ok: false, reason: 'PR is no longer open.' } };
+              if (current.state !== 'open') return { pr: current, scope: { ok: false, reason: 'PR is no longer open.' } };
               const events = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number: number, per_page: 100 });
               return {
                 pr: current,
@@ -145,40 +144,41 @@ jobs:
                 if (before.pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: before.pr.node_id });
                 throw new Error('PR head/body or approved plan changed immediately before merge eligibility.');
               }
-              try {
-                await agent.graphql('mutation($id:ID!,$head:GitObjectID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH,expectedHeadOid:$head}){clientMutationId}}', { id: pr.node_id, head: pr.head.sha });
-                const after = await liveScopeFor(pr.number);
-                if (!after.scope.ok || scopeKey(after.scope) !== scopeKey(expectedScope)
-                    || after.pr.head.sha !== pr.head.sha || after.pr.body !== pr.body) {
-                  await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
-                  throw new Error('Approved plan or PR changed immediately after enabling auto-merge; auto-merge was disabled.');
-                }
-                return 'Squash auto-merge is enabled';
-              } catch (e) {
-                if (!/clean status|unstable status|has_hooks status/i.test(e.message)) throw e;
-                const lastCheck = await liveScopeFor(pr.number);
-                if (!lastCheck.scope.ok || scopeKey(lastCheck.scope) !== scopeKey(expectedScope)
-                    || lastCheck.pr.head.sha !== pr.head.sha || lastCheck.pr.body !== pr.body) {
-                  if (lastCheck.pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: lastCheck.pr.node_id });
-                  throw new Error('Approved plan or PR changed before direct squash merge.');
-                }
-                await agent.rest.pulls.merge({ owner, repo, pull_number: pr.number, sha: pr.head.sha, merge_method: 'squash' });
-                const postMerge = await liveScopeFor(pr.number);
-                if (!postMerge.scope.ok || scopeKey(postMerge.scope) !== scopeKey(expectedScope)
-                    || postMerge.pr.head.sha !== pr.head.sha || postMerge.pr.body !== pr.body) {
-                  await agent.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: ['needs:human'] }).catch(() => {});
-                  await agent.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: `🙋 @${process.env.HUMAN} Plan binding changed during direct merge of PR #${pr.number}. Review the merge and revert if necessary.` });
-                  throw new Error('Plan drift was detected immediately after a direct merge; human review is required.');
-                }
-                return 'Squash-merged';
+              const { data: rules } = await github.request('GET /repos/{owner}/{repo}/rules/branches/{branch}', {
+                owner, repo, branch: pr.base.ref,
+              });
+              if (!hasRequiredMergeChecks(rules, [...baseRequired, 'Squad Merge Readiness'])) {
+                if (before.pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                throw new Error('Require ci, Squad Plan Binding, all four Squad Review checks and Squad Merge Readiness in the target branch ruleset. No direct merge fallback is permitted.');
               }
+              // Readiness remains pending until validation finishes.
+              if (!before.pr.auto_merge) {
+                await agent.graphql('mutation($id:ID!,$head:GitObjectID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH,expectedHeadOid:$head}){clientMutationId}}', { id: pr.node_id, head: pr.head.sha });
+              }
+              const after = await liveScopeFor(pr.number);
+              if (!after.scope.ok || scopeKey(after.scope) !== scopeKey(expectedScope)
+                  || after.pr.head.sha !== pr.head.sha || after.pr.body !== pr.body
+                  || after.pr.labels.some(label => label.name === 'needs:human')
+                  || (await reviewFeedback(github, { owner, repo, number: pr.number })).length) {
+                await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                throw new Error('Scope, PR or review feedback changed while enabling auto-merge; auto-merge was disabled.');
+              }
+              return 'GitHub squash auto-merge is enabled';
             }
 
             async function evaluate(number) {
               const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
               if (pr.state !== 'open') return core.info(`#${number}: not open.`);
+              if (pr.head.repo?.full_name !== `${owner}/${repo}`) return core.info(`#${number}: fork PR; native Watch and fix is unsupported.`);
+              const readiness = await startReadiness(github, {
+                owner, repo, sha: pr.head.sha, summary: 'Scope, completion, session, reviews and CI must all pass for this revision.',
+              });
               const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
               const labels = pr.labels.map(l => l.name);
+              if (labels.includes('needs:human')) {
+                if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                return core.info(`#${number}: stopped by needs:human; no fixes or merge authorization.`);
+              }
               const isWaived = labels.includes('plan:waived');
               const required = baseRequired;
               const prTimeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number: number, per_page: 100 });
@@ -386,8 +386,11 @@ jobs:
               const failed = required.filter(n => latest[n].conclusion !== 'success');
               if (!completion.ok) failed.push('Completion declaration');
               if (!failed.length) {
+                if ((await reviewFeedback(github, { owner, repo, number })).length) {
+                  if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
+                  return core.info(`#${number}: unresolved reviewer feedback; the shepherd review bridge will forward it.`);
+                }
                 const marker = `<!-- squad-gate:ok:${sha} -->`;
-                if (hasMarker(marker) && pr.auto_merge) return core.info(`#${number}: already approved for ${short}.`);
                 const { data: live } = await github.rest.pulls.get({ owner, repo, pull_number: number });
                 if (live.state !== 'open' || live.head.sha !== sha || live.body !== pr.body) {
                   return core.info(`#${number}: PR changed before merge eligibility was applied; wait for re-evaluation.`);
@@ -398,27 +401,36 @@ jobs:
                   if (live.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: live.node_id });
                   return core.info(`#${number}: approved scope changed before merge eligibility; auto-merge was not enabled.`);
                 }
-                if (labels.includes('needs:human')) {
-                  await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' }).catch(() => {});
-                }
                 const how = await merge(pr, liveScope);
-                const status = hasMarker(marker) ? 'Auto-merge resumed after the latest Copilot session succeeded.' : `**Squad Review passed** for ${short}.`;
-                await comment(`${marker}\n✅ ${status} ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
+                await github.rest.checks.update({
+                  owner, repo, check_run_id: readiness.id, status: 'completed', conclusion: 'success',
+                  output: { title: 'Governed merge readiness verified', summary: `Verified head ${sha}, description ${bodyHash}, current approved scope and run-attested reviews. GitHub enforces the merge.` },
+                });
+                if (!hasMarker(marker) || !pr.auto_merge) {
+                  const status = hasMarker(marker) ? 'Auto-merge resumed after the latest Copilot session succeeded.' : `**Squad Review passed** for ${short}.`;
+                  await comment(`${marker}\n✅ ${status} ${how}; merging to \`main\` deploys.\n\n| Check | Result |\n|---|---|\n${table}`);
+                }
                 return;
               }
 
+              // Native Watch and fix owns failed Actions workflows.
+              const reviewFailures = failed.filter(name => name !== 'ci');
+              if (!reviewFailures.length) return core.info(`#${number}: CI failure belongs to native Watch and fix; no @copilot request.`);
               const fixMarker = `<!-- squad-gate:fix:${sha}:${bodyHash} -->`;
               if (hasMarker(fixMarker)) return core.info(`#${number}: findings already sent for ${short}.`);
+              if (isAgentPr && fixRequests(comments, human).some(fix => fix.headSha === sha
+                  && Date.parse(fix.created_at) >= Date.parse(session.run.created_at))) {
+                return core.info(`#${number}: a review fix request is already awaiting a session.`);
+              }
               const rounds = fixRequests(comments, human).length;
 
-              const details = failed.map(n => {
+              const details = reviewFailures.map(n => {
                 if (n === 'Completion declaration') {
                   return `### ${n}\n${completion.findings.map(f => `- ${f}`).join('\n')}`;
                 }
                 const o = latest[n].output || {};
-                const body = n === 'ci'
-                  ? `CI failed: ${latest[n].details_url || latest[n].html_url}`
-                  : `${o.title || ''}\n\n${(o.summary || '').slice(0, 6000)}`;
+                const body = `${o.title || ''}\n\n${(o.summary || '').slice(0, 6000)}`
+                  .split(/\r?\n/).map(line => `> ${line}`).join('\n');
                 return `### ${n}\n${body}`;
               }).join('\n\n');
 

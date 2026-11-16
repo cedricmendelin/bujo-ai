@@ -121,7 +121,8 @@ test('review gate workflow requires the shared shepherd/session decision and can
   assert.ok(gate.indexOf('eligibility !== \'eligible\'') < gate.indexOf('if (!failed.length)'));
   assert.ok(gate.indexOf('eligibility !== \'eligible\'') < gate.indexOf('await merge(pr, liveScope)'));
   assert.match(gate, /- Copilot cloud agent/);
-  assert.match(gate, /hasMarker\(marker\) && pr\.auto_merge/);
+  assert.match(gate, /check_run_id: readiness\.id/);
+  assert.doesNotMatch(gate, /rest\.pulls\.merge\(/);
   assert.match(gate, /sessionState: session\.state/);
   assert.match(gate, /REQUIRED_CHECKS: "ci,Squad Plan Binding,Squad Review \/ Architect,Squad Review \/ Security,Squad Review \/ Verifier,Squad Review \/ DevOps"/);
   assert.match(gate, /disablePullRequestAutoMerge/);
