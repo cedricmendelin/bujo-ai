@@ -119,8 +119,9 @@ never private values or arbitrary map keys.
 For an existing app, AVM can retain the exact previous template in the main
 resource while scheduling the desired environment through its separate PATCH.
 Baseline review validates those effective settings only when the old template
-is unchanged and a PATCH is scheduled against that same app. The SQL, audience,
-deny-all authorization, image and inert-job checks still apply.
+is unchanged and a PATCH is scheduled against that same app, or the refreshed
+live output proves the no-op PATCH's exact environment is already applied.
+The SQL, audience, deny-all authorization, image and inert-job checks still apply.
 
 ### Owner-dispatched OIDC plan and apply
 
