@@ -101,6 +101,11 @@ caller consent/assignment, `API_ALLOWED_PRINCIPAL_OBJECT_IDS`, a published Bujo
 image, application health and the release activation flags are **not**
 provisioning prerequisites. An initially empty allowlist denies everyone.
 
+For a newly created migration identity, AzureRM can mark the job's entire
+`identity_ids` set unknown rather than an individual element. Baseline validation
+accepts either form only with the approved migration identity ID dependency.
+Unknown identity types, execution settings and unrelated inputs remain blocked.
+
 ### Owner-dispatched OIDC plan and apply
 
 1. Start a private plan; this performs no Terraform apply or migration start:
