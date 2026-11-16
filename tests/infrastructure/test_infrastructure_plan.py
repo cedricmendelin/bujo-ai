@@ -324,6 +324,33 @@ class InfrastructurePlanTests(unittest.TestCase):
         ]
         self.assert_rejected(plan, "computed-value dependency")
 
+    def test_live_migration_identity_set_unknown_requires_the_approved_dependency(self):
+        plan = self.plan("baseline_full_plan")
+        job = resource(plan, "azurerm_container_app_job.migration")
+        job["change"]["after_unknown"]["identity"][0]["identity_ids"] = True
+        job["change"]["after"]["identity"][0].pop("identity_ids", None)
+        self.assertIn(("azurerm_container_app_job.migration", "create"), self.validate(plan))
+
+        plan["relevant_attributes"] = [
+            item for item in plan["relevant_attributes"]
+            if not (item.get("resource") == "module.migration_identity.azurerm_user_assigned_identity.this"
+                    and item.get("attribute") == ["id"])
+        ]
+        self.assert_rejected(plan, "computed-value dependency")
+
+    def test_live_migration_unknown_shape_does_not_allow_unknown_identity_type_or_execution(self):
+        for field in ("type", "image", "command", "env"):
+            with self.subTest(field=field):
+                plan = self.plan("baseline_full_plan")
+                job = resource(plan, "azurerm_container_app_job.migration")
+                unknown = job["change"]["after_unknown"]
+                unknown["identity"][0]["identity_ids"] = True
+                if field == "type":
+                    unknown["identity"][0]["type"] = True
+                else:
+                    unknown["template"][0]["container"][0][field] = True
+                self.assert_rejected(plan, "unknown input values")
+
 
 if __name__ == "__main__":
     unittest.main()

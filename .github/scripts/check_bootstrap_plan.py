@@ -53,7 +53,7 @@ BASELINE_AZAPI_TYPES = {
     "module.key_vault.azapi_resource.this": "Microsoft.KeyVault/vaults@2026-02-01",
 }
 
-# Terraform 1.17.0's actual AVM mock plan reports these provider-computed paths.
+# Terraform 1.17.0's AVM mock and observed live plans report these computed paths.
 # Input paths are intentionally not wildcarded: a newly unknown image, SQL limit,
 # owner, ingress property, or application setting must be reviewed as a code change.
 BASELINE_UNKNOWN_PATHS = {
@@ -79,7 +79,7 @@ BASELINE_UNKNOWN_PATHS = {
     },
     "azurerm_container_app_job.migration": {
         "container_app_environment_id", "event_stream_endpoint", "id",
-        "identity[0].identity_ids[0]", "identity[0].principal_id",
+        "identity[0].identity_ids", "identity[0].identity_ids[0]", "identity[0].principal_id",
         "identity[0].tenant_id", "outbound_ip_addresses",
         "template[0].container[0].ephemeral_storage",
     },
@@ -308,7 +308,7 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     job_unknown = set(_unknown_paths((resources[job_address].get("change") or {}).get("after_unknown")))
     if "container_app_environment_id" in job_unknown:
         _require_dependency(relevant, "module.container_app_environment.azapi_resource.this", ("id",))
-    if "identity[0].identity_ids[0]" in job_unknown:
+    if {"identity[0].identity_ids", "identity[0].identity_ids[0]"} & job_unknown:
         _require_dependency(relevant, "module.migration_identity.azurerm_user_assigned_identity.this", ("id",))
 
     app_address = "module.container_app.azapi_resource.container_app"
@@ -678,7 +678,7 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     if any(_value(resources[address]).get("location") != "switzerlandnorth" for address in region_resources):
         raise ValueError("Baseline resources must remain in Switzerland North.")
 
-    if "identity[0].identity_ids[0]" in job_unknown:
+    if {"identity[0].identity_ids", "identity[0].identity_ids[0]"} & job_unknown:
         _require_dependency(relevant, "module.migration_identity.azurerm_user_assigned_identity.this", ("id",))
 
     for output_name, identity_address in (
