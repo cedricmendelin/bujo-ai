@@ -2,6 +2,7 @@ import importlib.util
 import hashlib
 import io
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,11 +19,39 @@ spec.loader.exec_module(preflight)
 class PreflightTests(unittest.TestCase):
     def test_plans_and_diagnostics_require_an_actually_private_storage_container(self):
         env = {"TFSTATE_STORAGE_ACCOUNT": "private", "TFSTATE_CONTAINER": "private"}
-        with patch.object(preflight, "run_json", return_value=None):
+        def private_container(args, **_):
+            query = args[args.index("--query") + 1]
+            output = "" if query == "properties.publicAccess" else '{"publicAccess":null}'
+            return subprocess.CompletedProcess(args, 0, stdout=output)
+
+        with patch.object(preflight.shutil, "which", return_value="az"), \
+             patch.object(preflight.subprocess, "run", side_effect=private_container) as run:
             preflight.require_private_storage(env)
-        for value in ("blob", "container", {}):
-            with self.subTest(value=value), patch.object(preflight, "run_json", return_value=value):
+        args = run.call_args.args[0]
+        self.assertEqual("{publicAccess:properties.publicAccess}", args[args.index("--query") + 1])
+        self.assertEqual("login", args[args.index("--auth-mode") + 1])
+        self.assertEqual("json", args[args.index("--output") + 1])
+
+    def test_private_storage_rejects_public_or_unverified_access(self):
+        env = {"TFSTATE_STORAGE_ACCOUNT": "private", "TFSTATE_CONTAINER": "private"}
+        for value in ({"publicAccess": "blob"}, {"publicAccess": "container"},
+                      {}, None, [], {"publicAccess": False}):
+            with self.subTest(value=value), patch.object(preflight.shutil, "which", return_value="az"), \
+                 patch.object(preflight.subprocess, "run", return_value=subprocess.CompletedProcess(
+                     ["az"], 0, stdout=json.dumps(value),
+                 )):
                 with self.assertRaisesRegex(ValueError, "must not allow public"):
+                    preflight.require_private_storage(env)
+
+    def test_private_storage_rejects_failed_commands_and_invalid_json(self):
+        env = {"TFSTATE_STORAGE_ACCOUNT": "private", "TFSTATE_CONTAINER": "private"}
+        for code, output in ((1, '{"publicAccess":null}'), (0, ""), (0, "not-json")):
+            with self.subTest(code=code, output=output), \
+                 patch.object(preflight.shutil, "which", return_value="az"), \
+                 patch.object(preflight.subprocess, "run", return_value=subprocess.CompletedProcess(
+                     ["az"], code, stdout=output,
+                 )):
+                with self.assertRaises(ValueError):
                     preflight.require_private_storage(env)
 
     def test_infrastructure_configuration_does_not_depend_on_application_setup(self):

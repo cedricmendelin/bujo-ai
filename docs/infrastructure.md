@@ -180,6 +180,11 @@ GitHub settings and are never committed:
 | `BUJO_OWNER_SETUP_CONFIRMED` | `true` only after the owner completes the #55 checklist; an explicit attestation, not automatic permission proof |
 | `BUJO_DEPLOYMENT_ENABLED` | `true` only once setup is verified; enables automatic releases (unset to stop) |
 
+`API_ALLOWED_PRINCIPAL_OBJECT_IDS` contains approved users' object IDs from this
+tenant, not group IDs or application/client IDs. The API checks the delegated
+token's `oid` claim, not its group membership. No new Entra group is needed for
+this setting; the SQL administrator group below has a separate purpose.
+
 Create an Entra security group for the SQL administrator, add the owner account
 as a member, and use the group's object ID and display name for the two SQL
 variables. The SQL module accepts the group object ID and display name; Azure

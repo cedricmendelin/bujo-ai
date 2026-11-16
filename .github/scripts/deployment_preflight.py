@@ -121,9 +121,9 @@ def require_private_storage(env):
     access = run_json([
         "az", "storage", "container", "show", "--auth-mode", "login",
         "--account-name", env["TFSTATE_STORAGE_ACCOUNT"], "--name", env["TFSTATE_CONTAINER"],
-        "--query", "properties.publicAccess", "--output", "json",
+        "--query", "{publicAccess:properties.publicAccess}", "--output", "json",
     ])
-    if access is not None:
+    if not isinstance(access, dict) or "publicAccess" not in access or access["publicAccess"] is not None:
         raise ValueError("The state container must not allow public access to plans or diagnostics.")
 
 

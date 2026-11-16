@@ -79,6 +79,12 @@ substituting a placeholder. Active/unknown executions of any job in that group
 also block provisioning. The state container's actual private access is checked
 before saving plans or diagnostics; configuration presence alone is insufficient.
 
+The privacy check queries `{publicAccess:properties.publicAccess}` so Azure CLI
+returns a JSON object even when the container is private. A scalar query for the
+private container's null access setting can return empty output instead of JSON.
+Only an explicit null `publicAccess` field is accepted; public access, malformed
+responses and failed inspections still block provisioning.
+
 Only Azure/Graph/state access and private infrastructure inputs are needed now.
 The deployment principal must already be able to create/manage Entra
 applications; the workflow cannot grant its own Graph permission. Configure
