@@ -30,15 +30,37 @@ Every implementation issue follows `docs/workflow.md` and README → *How we wor
    runs the same custom agent in a GitHub Copilot app session.
 3. The implementer implements only the approved plan (or, for owner-waived work
    with `plan:waived`, the PR description's scope) and opens a PR.
-4. Squad PR Shepherd marks finished Copilot PRs ready and starts CI and Squad
-   Review (Architect, Security, Verifier, DevOps); local PRs are reviewed on
-   every push. Blocking findings go back to `@copilot` or to Agent merge in the
-   app (max 3 rounds).
-5. When every check passes, the gate enables squash auto-merge; merge to `main`
-   deploys.
-6. Human in the loop: @cedricmendelin. Stuck loops get `needs:human` plus a
+4. For cloud PRs, the shepherd requires successful-session readiness, marks
+   finished Copilot PRs ready, and dispatches initial CI and Squad Review
+   (Architect, Security, Verifier, DevOps). The owner enables GitHub.com Copilot
+   automations and Watch and fix per applicable PR, or configures its account
+   default; the default covers PRs the user creates, not assumed
+   Copilot-created PRs. Native Watch and fix owns failed Actions and base-branch
+   conflicts, not review comments. The shepherd forwards eligible check
+   findings and submitted review feedback to `@copilot` in bounded requests,
+   handles explicit metadata proposals and bounded interrupted-session
+   recovery, and escalates. Review feedback is limited to unresolved,
+   non-outdated trusted review threads and change requests, polled at
+   `Squad Plan Binding` completion (about every ten minutes) and hourly; do not
+   act on arbitrary top-level comments. Local PRs receive fresh reviews on
+   every push.
+5. The trusted gate validates the live plan and review results and publishes
+   aggregate `Squad Merge Readiness`; it only arms GitHub squash auto-merge and
+   never directly merges. `main` protections must require `ci`, all four
+   `Squad Review / <Role>` checks, `Squad Plan Binding`, and
+   `Squad Merge Readiness`. GitHub auto-merge executes the squash merge under
+   those protections; owner ruleset setup is separate.
+6. `needs:human` stops automation and is never silently cleared just because
+   checks are green. When pausing, the owner must also stop native Watch and fix;
+   the label does not control GitHub's feature. For an optional local takeover,
+   use `handoff:local`, keep Agent merge's Merge action off, and have the owner
+   disable native Watch and fix to prevent concurrent fixes.
+7. Human in the loop: @cedricmendelin. Stuck loops get `needs:human` plus a
    mention on the PR; workflow failures and one-time setup become `needs:human`
    issues assigned to him; implementers write `## 🙋 Needs human` in the PR.
+   The metadata bridge retains body/head/hash guards; optional title updates
+   require `title` and `baseTitleSha256` together. Owner-waived description
+   scope changes remain owner-only.
 
 ## Dispatch and approval rules
 
@@ -46,10 +68,12 @@ Every implementation issue follows `docs/workflow.md` and README → *How we wor
   bounded work that benefits from their context; no speculative fan-out.
 - Labels describe ownership; only `plan:approved` applied by the repository
   owner authorizes implementation of the plan it follows.
-- No watchers, polling loops, scheduled retrospectives, or implementation
-  without an approved plan. Exceptions are the GitHub delivery automation in
-  `docs/workflow.md`: Squad PR Shepherd (event-driven with an hourly fallback)
-  and `needs:human` escalation issues.
+- No local watchers, polling loops, scheduled retrospectives, or implementation
+  without an approved plan. GitHub delivery automation is governed by
+  `docs/workflow.md` and the approved PR-finalization decision: native Watch and
+  fix is owner-enabled; the cloud shepherd uses event-driven triggers and an
+  hourly fallback for its bounded responsibilities; `needs:human` stops
+  automation.
 - Capture unresolved choices as questions, not decisions. User approval resolves
   product scope and significant architectural trade-offs.
 - Keep independent review separate from implementation: a reviewer never fixes

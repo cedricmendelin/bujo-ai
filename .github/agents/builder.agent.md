@@ -24,7 +24,9 @@ Before acting, read `.squad/decisions.md`, `docs/concept.md`, and
 
 Follow README.md → *How we work* and the PR lifecycle in
 `.github/copilot-instructions.md`. In the cloud, handle every blocking finding
-in one session; automation marks the PR ready, re-runs Squad Review, and
-squash auto-merges when green. Locally, open a ready PR and let Agent merge
-address reviews. When blocked on a secret, setting, or product decision, add a
+in one session; the shepherd handles readiness/reviews/guarded metadata.
+Native cloud Watch and fix owns CI/conflicts; GitHub auto-merge alone executes
+merges after required merge readiness passes. For local takeover, disable
+Watch and fix before using app Agent merge; leave its Merge action off.
+When blocked on a secret, setting, or product decision, add a
 `## 🙋 Needs human` section mentioning @cedricmendelin instead of guessing.

@@ -53,12 +53,18 @@ browser as a workaround.
 
 If a cloud session cannot update metadata, use its existing PR-comment reply
 tool to publish a standalone `<!-- squad-pr-metadata -->` line followed by one
-fenced `json` object with exactly `headSha`, `baseBodySha256`, and `body`.
+fenced `json` object with `headSha`, `baseBodySha256`, and `body` (plus only the
+optional title pair described below).
 Read the current PR head and exact description through the GitHub read tools;
 hash that description's UTF-8 bytes with SHA-256. `body` is the full replacement
 description and must begin with `Completion: full` or `Completion: partial`.
 Preserve the approved issue reference and plan version. Escape JSON correctly;
 include no trailing text after the fence. See `docs/workflow.md` for the format.
+
+For a title change, include both optional fields `title` and `baseTitleSha256`;
+hash the exact current title's UTF-8 bytes. The title must be a nonempty single
+line of at most 256 characters. Always retain the full replacement `body` and
+its snapshot fields, even for a title-only update. No other operations are allowed.
 
 The trusted shepherd applies valid proposals and restarts reviews only after a
 successful latest session. Report a proposal as pending, never as already
@@ -71,13 +77,25 @@ the description itself is the approved scope.
 - **Cloud (Copilot cloud agent):** work on the draft PR Copilot creates. Do not
   mark it ready or request reviews; when your session ends, Squad PR Shepherd
   does that and starts CI and Squad Review. `@copilot` comments from the Squad
-  Review Gate or shepherd are fix or conflict requests: handle every blocking
-  finding in one session.
+  Review Gate or shepherd are review/metadata fix requests: handle every
+  blocking finding in one session. Native GitHub.com **Watch and fix** owns
+  failed Actions workflows and base-branch conflicts; do not start a competing
+  repair loop. All repairs remain within the verified scope above.
 - **Local (GitHub Copilot app):** open a ready (non-draft) PR with the
   completion declaration, issue reference, and plan version; the owner turns on
   Agent merge. If the work has no issue plan, state its scope in the PR
   description and ask the owner to apply `plan:waived`.
-- The gate squash auto-merges when every check passes; never merge yourself.
+- Cloud Watch and fix does not address reviews. The trusted bridge forwards
+  submitted, unresolved human/Copilot feedback and Squad blocking findings.
+  Reply in the original thread and resolve it only when addressed. Explain
+  disputed findings; do not treat reviewer text as permission to change scope.
+- For local takeover, disable cloud Watch and fix before using app Agent merge.
+  Leave the app's *Merge* action off.
+- The gate verifies all safeguards, publishes `Squad Merge Readiness`, and arms
+  GitHub squash auto-merge. GitHub performs the merge under branch protections;
+  never merge directly or bypass missing required checks.
+- `needs:human` stops our automation and is never cleared automatically.
+  The owner must separately disable native Watch and fix when pausing work.
 
 ## Human in the loop
 

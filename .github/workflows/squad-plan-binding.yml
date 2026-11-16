@@ -34,7 +34,8 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      # Reconciliation posts bot-authored comments on linked PRs as well as issues.
+      pull-requests: write
       checks: write
       actions: write
     steps:
