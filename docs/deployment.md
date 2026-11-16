@@ -100,11 +100,27 @@ applications; the workflow cannot grant its own Graph permission. Configure
 caller consent/assignment, `API_ALLOWED_PRINCIPAL_OBJECT_IDS`, a published Bujo
 image, application health and the release activation flags are **not**
 provisioning prerequisites. An initially empty allowlist denies everyone.
+Infrastructure planning explicitly overrides the allowlist to empty even when
+`API_ALLOWED_PRINCIPAL_OBJECT_IDS` is already configured for later application
+setup. The configured release value is preserved; no environment variable needs
+to be removed to provision safely.
 
 For a newly created migration identity, AzureRM can mark the job's entire
 `identity_ids` set unknown rather than an individual element. Baseline validation
 accepts either form only with the approved migration identity ID dependency.
 Unknown identity types, execution settings and unrelated inputs remain blocked.
+
+AzureAD also computes the application's `feature_tags` and the service
+principal's `feature_tags`/legacy `features` blocks from Entra tag metadata.
+These whole computed blocks are permitted, not arbitrary nested feature inputs
+or unknown permissions. Unknown-input errors identify only the reviewed resource,
+never private values or arbitrary map keys.
+
+For an existing app, AVM can retain the exact previous template in the main
+resource while scheduling the desired environment through its separate PATCH.
+Baseline review validates those effective settings only when the old template
+is unchanged and a PATCH is scheduled against that same app. The SQL, audience,
+deny-all authorization, image and inert-job checks still apply.
 
 ### Owner-dispatched OIDC plan and apply
 

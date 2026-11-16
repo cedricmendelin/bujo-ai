@@ -63,13 +63,13 @@ BASELINE_UNKNOWN_PATHS = {
     },
     "azuread_application.api": {
         "api[0].oauth2_permission_scope[0].id", "app_role[0].id", "app_role_ids",
-        "client_id", "disabled_by_microsoft", "id", "logo_url",
+        "client_id", "disabled_by_microsoft", "feature_tags", "id", "logo_url",
         "oauth2_permission_scope_ids", "object_id", "publisher_domain", "tags",
         "template_id",
     },
     "azuread_service_principal.api": {
         "app_role_ids", "app_roles", "application_tenant_id", "client_id",
-        "display_name", "homepage_url", "id", "logout_url",
+        "display_name", "feature_tags", "features", "homepage_url", "id", "logout_url",
         "oauth2_permission_scope_ids", "oauth2_permission_scopes", "object_id",
         "redirect_uris", "saml_metadata_url", "service_principal_names",
         "sign_in_audience", "tags", "type",
@@ -169,7 +169,10 @@ def _assert_unknowns_are_bounded(resource):
     actual = set(_unknown_paths((resource.get("change") or {}).get("after_unknown")))
     allowed = BASELINE_UNKNOWN_PATHS.get(address, set())
     if actual - allowed:
-        raise ValueError("Baseline has unknown input values outside approved computed dependencies.")
+        raise ValueError(
+            "Baseline has unknown input values outside approved computed dependencies "
+            f"for reviewed resource {address}."
+        )
 
 
 def _require_exactly_one(items, label):
@@ -475,7 +478,22 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     ):
         raise ValueError("Baseline must retain the exact existing image in one unchanged application container.")
 
+    patch_resource = resources["module.container_app.azapi_resource_action.post_creation_update"]
+    patch = _value(patch_resource)
+    patch_containers = (((patch.get("body") or {}).get("properties") or {}).get("template") or {}).get("containers") or []
+    patch_container = _require_exactly_one(patch_containers, "Container App PATCH container")
+    patch_environment = patch_container.get("env") or []
     environment = container.get("env") or []
+    environment_source = app_resource
+    if environment != patch_environment:
+        before_template = ((app_before.get("body") or {}).get("properties") or {}).get("template")
+        if template != before_template or patch_resource["change"]["actions"] not in (
+            ["create"], ["update"], ["delete", "create"],
+        ):
+            raise ValueError("Baseline retained application environment requires an unchanged template and a scheduled PATCH.")
+        # AVM ignores the existing template here and applies desired settings by PATCH.
+        environment = patch_environment
+        environment_source = patch_resource
     expected_env_names = [
         "ConnectionStrings__journal",
         "Deployment__VerifyDatabaseOnStart",
@@ -519,8 +537,8 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     if tenant_id and admin.get("tenant_id") and tenant_id.lower() != admin["tenant_id"].lower():
         raise ValueError("Baseline SQL administrator must remain in the application tenant.")
     audience_value = environment[3].get("value") if isinstance(environment[3], dict) else None
-    app_unknown_paths = set(_unknown_paths((app_resource.get("change") or {}).get("after_unknown")))
-    audience_unknown = "body.properties.template.containers[0].env[3]" in app_unknown_paths
+    environment_unknown_paths = set(_unknown_paths((environment_source.get("change") or {}).get("after_unknown")))
+    audience_unknown = "body.properties.template.containers[0].env[3]" in environment_unknown_paths
     if audience_value is None and (
         not audience_unknown
         or ("azuread_application.api", ("client_id",)) not in relevant
@@ -590,18 +608,20 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     ):
         raise ValueError("Baseline AVM update keeper has unexpected authentication or secret settings.")
 
-    patch = _value(resources["module.container_app.azapi_resource_action.post_creation_update"])
-    patch_before = _value(resources["module.container_app.azapi_resource_action.post_creation_update"], "before")
+    patch_before = _value(patch_resource, "before")
+    patch_unknown = set(_unknown_paths((patch_resource.get("change") or {}).get("after_unknown")))
+    patch_target = patch.get("resource_id")
     if (
         patch.get("method") != "PATCH"
         or patch.get("type") != BASELINE_AZAPI_TYPES[app_address]
         or (patch_before.get("resource_id") and patch_before.get("resource_id").rstrip("/").lower() != expected_target.lower())
+        or (patch_target is not None and (
+            not isinstance(patch_target, str) or patch_target.rstrip("/").lower() != expected_target.lower()
+        ))
+        or (patch_target is None and "resource_id" not in patch_unknown)
     ):
         raise ValueError("Baseline AVM app update must be a PATCH to the exact existing app.")
-    patch_containers = (((patch.get("body") or {}).get("properties") or {}).get("template") or {}).get("containers") or []
-    patch_container = _require_exactly_one(patch_containers, "Container App PATCH container")
     patch_resources = patch_container.get("resources") or {}
-    patch_environment = patch_container.get("env") or []
     patch_names = [
         expected_env_names[index] if item is None and index == 3 else (
             item.get("name") if isinstance(item, dict) else None
@@ -627,7 +647,6 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         or patch.get("sensitive_body") not in (None, {})
     ):
         raise ValueError("Baseline AVM PATCH must preserve the exact safe application settings.")
-    patch_unknown = set(_unknown_paths((resources["module.container_app.azapi_resource_action.post_creation_update"].get("change") or {}).get("after_unknown")))
     if "resource_id" in patch_unknown:
         _require_dependency(relevant, app_address, ("id",))
     if "body.properties.template.containers[0].env[0].value" in patch_unknown:
