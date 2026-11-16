@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -314,6 +315,16 @@ class ProvisioningTests(unittest.TestCase):
         self.assertNotIn("BUJO_DEPLOYMENT_ENABLED", workflow)
         self.assertNotIn("BUJO_OWNER_SETUP_CONFIRMED", workflow)
         self.assertNotIn("runner.temp", workflow.split("    steps:", 1)[0])
+
+    def test_pipeline_initialization_cannot_rewrite_the_reviewed_provider_lockfile(self):
+        for name in ("provision.yml", "deploy.yml", "ci.yml"):
+            workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+            commands = re.findall(r"^\s*(?:if ! )?terraform(?: -chdir=infra)? init ([^\n]*)",
+                                  workflow, re.MULTILINE)
+            with self.subTest(workflow=name):
+                self.assertTrue(commands, "Expected Terraform initialization to be exercised")
+                for command in commands:
+                    self.assertIn("-lockfile=readonly", command)
 
 
 if __name__ == "__main__":

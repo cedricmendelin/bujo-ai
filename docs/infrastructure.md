@@ -221,7 +221,7 @@ approving an infrastructure PR, the owner runs a plan locally:
    values:
 
    ```sh
-   terraform -chdir=infra init \
+   terraform -chdir=infra init -lockfile=readonly \
      -backend-config="resource_group_name=<state-resource-group>" \
      -backend-config="storage_account_name=<state-account>" \
      -backend-config="container_name=tfstate" \
