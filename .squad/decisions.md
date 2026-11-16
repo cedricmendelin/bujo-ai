@@ -278,6 +278,9 @@
 - Bootstrap must not run a migration or change an app revision. Production
   deployment is manually dispatched by the owner from `main`; merge alone does
   not deploy. The owner reviews the exact stage-one plan before applying it.
+- Approved plan v6 also permits the owner to plan and apply stage one locally
+  with an interactive Azure CLI user login. The owner checks the subscription,
+  safety constraints and exact saved plan; GitHub deployments remain OIDC-only.
 
 ## Governance
 

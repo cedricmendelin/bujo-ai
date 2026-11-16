@@ -241,11 +241,30 @@ This permission is not granted to the runtime, migration, or deployment
 identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
-Approved plan v5 requires an owner-controlled staged bootstrap before these
+Approved plan v6 requires an owner-controlled staged bootstrap before these
 grants. Follow the [stage-one plan and review procedure](deployment.md#stage-one-bootstrap);
 do not run production deployment until the reviewed bootstrap plan is applied
 by the owner and all grants and other prerequisites are complete. Also grant
 the deployment application the Microsoft Graph permission described above.
+
+For the owner's local grant session, Azure SQL must be reachable from the
+workstation. If needed, the owner temporarily permits their public IP in the SQL
+server firewall and removes that rule immediately after the grants. No firewall
+change or grant is automated. With the `SqlServer` PowerShell module installed,
+the owner can connect using an Entra token (never a SQL password):
+
+```powershell
+az account set --subscription "<subscription-id>"
+if ($LASTEXITCODE -ne 0) { throw "Subscription selection failed" }
+$token = az account get-access-token --resource "https://database.windows.net/" --query accessToken --output tsv
+if ($LASTEXITCODE -ne 0 -or -not $token) { throw "SQL token acquisition failed" }
+Invoke-Sqlcmd -ServerInstance "<sql-server-fqdn>" -Database "<database>" `
+  -AccessToken $token -Query "SELECT ORIGINAL_LOGIN() AS login_name"
+```
+
+Use the same token authentication to run the following statements, inspect the
+membership results, and run `Remove-Variable token` afterward. The owner
+must be the configured SQL administrator.
 
 Connect to Azure SQL as a member of the configured Entra admin group and create
 the database principals and roles:

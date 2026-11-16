@@ -54,6 +54,16 @@ def validate_plan(plan: dict) -> list[tuple[str, str]]:
             raise ValueError(f"Unsafe resource action in bootstrap plan: {address}")
         if address in AZAPI_TYPES and (change.get("after") or {}).get("type") != AZAPI_TYPES[address]:
             raise ValueError(f"Unexpected Azure resource type in bootstrap plan: {address}")
+        if address == 'module.sql_server.azurerm_mssql_firewall_rule.this["azure_services"]':
+            firewall = change.get("after") or {}
+            unknown = change.get("after_unknown") or {}
+            if (
+                firewall.get("start_ip_address") != "0.0.0.0"
+                or firewall.get("end_ip_address") != "0.0.0.0"
+                or has_unknown(unknown.get("start_ip_address"))
+                or has_unknown(unknown.get("end_ip_address"))
+            ):
+                raise ValueError("Bootstrap SQL firewall must remain restricted to Azure services.")
         if address == "azurerm_container_app_job.migration":
             job = change.get("after")
             unknown = change.get("after_unknown") or {}
