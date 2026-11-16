@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -16,7 +17,8 @@ class BootstrapPlanTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         result = subprocess.run(
-            ["terraform", "-chdir=infra", "test", "-json", "-verbose"],
+            ["terraform", "-chdir=infra", "test", "-json", "-verbose",
+             "-filter=" + os.path.join("tests", "bootstrap.tftest.hcl")],
             cwd=ROOT, check=True, capture_output=True, text=True,
         )
         events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -157,6 +159,37 @@ class BootstrapPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "resource IDs"):
             bootstrap_review.check_plan_subscription({"resource_changes": []}, subscription)
 
+    def test_oidc_review_uses_the_same_checker_without_accepting_persistent_credentials(self):
+        account = {
+            "id": "sub", "tenantId": "tenant", "user": {"type": "servicePrincipal", "name": "client"},
+        }
+        env = {
+            "ARM_SUBSCRIPTION_ID": "sub", "ARM_TENANT_ID": "tenant", "ARM_CLIENT_ID": "client",
+            "ARM_USE_OIDC": "true", "ARM_USE_AZUREAD": "true", "ARM_USE_CLI": "false",
+        }
+        bootstrap_review.check_oidc_auth(account, "sub", env)
+        for key, value in (
+            ("ARM_CLIENT_SECRET", "private"), ("ARM_ACCESS_KEY", "private"),
+            ("ARM_CLIENT_ID", "other"), ("ARM_USE_OIDC", "false"),
+            ("ARM_SUBSCRIPTION_ID", "other"), ("ARM_TENANT_ID", "other"),
+            ("ARM_USE_MSI", "true"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                bootstrap_review.check_oidc_auth(account, "sub", env | {key: value})
+        with self.assertRaises(ValueError):
+            bootstrap_review.check_oidc_auth(account | {"user": {"type": "user"}}, "sub", env)
+
+    def test_bootstrap_provenance_requires_clean_matching_commit(self):
+        commit = "a" * 40
+        with patch.object(bootstrap_review, "run_text", side_effect=["", commit]):
+            self.assertEqual(commit, bootstrap_review.check_checkout(commit))
+        with patch.object(bootstrap_review, "run_text", return_value=" M infra/main.tf"):
+            with self.assertRaisesRegex(ValueError, "clean"):
+                bootstrap_review.check_checkout()
+        with patch.object(bootstrap_review, "run_text", side_effect=["", "b" * 40]):
+            with self.assertRaisesRegex(ValueError, "commit"):
+                bootstrap_review.check_checkout(commit)
+
     def test_workflows_do_not_use_interactive_azure_login(self):
         workflows = ROOT / ".github" / "workflows"
         for path in workflows.glob("*.yml"):
@@ -203,6 +236,7 @@ class BootstrapPlanTests(unittest.TestCase):
             output = io.StringIO()
             with patch.object(sys, "argv", args), patch.dict("os.environ", env, clear=True), \
                     patch.object(bootstrap_review, "run_json", side_effect=[account, version, plan]), \
+                    patch.object(bootstrap_review, "check_checkout", return_value="a" * 40), \
                     patch.object(bootstrap_review, "run_text", return_value=(
                         '# azapi_resource.sql_database will be created\n'
                         '  + name = "private.example.com"\n'
@@ -210,6 +244,7 @@ class BootstrapPlanTests(unittest.TestCase):
                 self.assertEqual(bootstrap_review.main(), 0)
             package = json.loads(output.getvalue())
             self.assertEqual(package["plan_sha256"], digest)
+            self.assertEqual(package["source_commit"], "a" * 40)
             self.assertIn("  + name = <redacted>", package["redacted_terraform_show"])
             self.assertNotIn("private.example.com", output.getvalue())
 

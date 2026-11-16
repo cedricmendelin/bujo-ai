@@ -13,7 +13,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System.Text.Encodings.Web;
 
 namespace Bujo.Integration.Tests;
@@ -473,6 +475,105 @@ public sealed class JournalSqlPersistenceTests
         });
     }
 
+    [Fact]
+    public async Task ReadinessRejectsUnrelatedMigrationHistory()
+    {
+        await WithFreshDatabaseAsync(async contextFactory =>
+        {
+            await using var context = await contextFactory.CreateDbContextAsync();
+            await context.Database.MigrateAsync();
+            await context.Database.ExecuteSqlRawAsync(
+                "UPDATE [__EFMigrationsHistory] SET [MigrationId] = N'00000000000000_Unrelated'");
+
+            var check = new JournalDatabaseHealthCheck(
+                contextFactory, NullLogger<JournalDatabaseHealthCheck>.Instance);
+            var result = await check.CheckHealthAsync(new HealthCheckContext());
+
+            Assert.Equal(HealthStatus.Unhealthy, result.Status);
+            Assert.Equal("Required journal migrations are missing.", result.Description);
+        });
+    }
+
+    [Fact]
+    public async Task ReadinessVerifiesRuntimeDataPermissionsWithoutDdlOrWrites()
+    {
+        await WithFreshDatabaseAsync(async contextFactory =>
+        {
+            await using var adminContext = await contextFactory.CreateDbContextAsync();
+            await adminContext.Database.MigrateAsync();
+            await adminContext.Database.OpenConnectionAsync();
+            await adminContext.Database.ExecuteSqlRawAsync("""
+                CREATE USER [ReadinessRuntime] WITHOUT LOGIN;
+                ALTER ROLE db_datareader ADD MEMBER [ReadinessRuntime];
+                ALTER ROLE db_datawriter ADD MEMBER [ReadinessRuntime];
+                EXECUTE AS USER = N'ReadinessRuntime';
+                """);
+            try
+            {
+                var options = new DbContextOptionsBuilder<JournalDbContext>()
+                    .UseSqlServer(adminContext.Database.GetDbConnection())
+                    .Options;
+                var runtimeFactory = new TestContextFactory(options, contextFactory.ConnectionString);
+                var check = new JournalDatabaseHealthCheck(
+                    runtimeFactory, NullLogger<JournalDatabaseHealthCheck>.Instance);
+
+                var healthy = await check.CheckHealthAsync(new HealthCheckContext());
+                Assert.Equal(HealthStatus.Healthy, healthy.Status);
+                Assert.Equal(0, await adminContext.Database.SqlQuery<int>(
+                    $"SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'CREATE TABLE') AS [Value]").SingleAsync());
+                Assert.Empty(await adminContext.Items.ToArrayAsync());
+
+                await adminContext.Database.ExecuteSqlRawAsync("""
+                    REVERT;
+                    DENY UPDATE ON OBJECT::dbo.Items TO [ReadinessRuntime];
+                    EXECUTE AS USER = N'ReadinessRuntime';
+                    """);
+                var denied = await check.CheckHealthAsync(new HealthCheckContext());
+
+                Assert.Equal(HealthStatus.Unhealthy, denied.Status);
+                Assert.Equal("Required journal data permissions are missing.", denied.Description);
+                Assert.Empty(await adminContext.Items.ToArrayAsync());
+            }
+            finally
+            {
+                await adminContext.Database.ExecuteSqlRawAsync("REVERT;");
+            }
+        });
+    }
+
+    [Fact]
+    public async Task StartupVerificationRejectsAnUnmigratedDatabase()
+    {
+        await WithFreshDatabaseAsync(contextFactory =>
+        {
+            using var factory = new JournalSqlApiFactory(contextFactory.ConnectionString, verifyOnStart: true);
+
+            var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+
+            Assert.Contains("Journal database verification failed.", exception.Message);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task StartupVerificationPreservesJournalAuthorization()
+    {
+        await WithFreshDatabaseAsync(async contextFactory =>
+        {
+            await using var context = await contextFactory.CreateDbContextAsync();
+            await context.Database.MigrateAsync();
+            using var factory = new JournalSqlApiFactory(contextFactory.ConnectionString, verifyOnStart: true);
+            using var client = factory.CreateClient();
+
+            using var anonymous = await client.GetAsync("/api/journal");
+            using var live = await client.GetAsync("/health/live");
+            using var authenticated = await SendJsonAsync(client, HttpMethod.Get, "/api/journal");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        });
+    }
+
     private static async Task WithFreshDatabaseAsync(Func<TestContextFactory, Task> test)
     {
         var connectionString = Environment.GetEnvironmentVariable("BUJO_SQL_TEST_CONNECTION");
@@ -555,12 +656,14 @@ public sealed class JournalSqlPersistenceTests
             : (TEnum)Enum.ToObject(typeof(TEnum), value.GetInt32());
 }
 
-internal sealed class JournalSqlApiFactory(string connectionString) : WebApplicationFactory<JournalDatabaseHealthCheck>
+internal sealed class JournalSqlApiFactory(string connectionString, bool verifyOnStart = false)
+    : WebApplicationFactory<JournalDatabaseHealthCheck>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:journal", connectionString);
+        builder.UseSetting("Deployment:VerifyDatabaseOnStart", verifyOnStart.ToString());
         builder.UseSetting("Auth:TenantId", "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7");
         builder.UseSetting("Auth:Audience", "journal-api");
         builder.UseSetting(

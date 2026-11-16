@@ -1,7 +1,16 @@
 name: Deploy production
 
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful main-push CI run to resume
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,105 +21,89 @@ concurrency:
 
 jobs:
   authorize:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    steps:
-      - name: Require an owner dispatch from main
-        shell: bash
-        env:
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        run: |
-          if [[ "$GITHUB_REF" != "refs/heads/main" || "${GITHUB_ACTOR,,}" != "${GITHUB_REPOSITORY_OWNER,,}" || "${TRIGGERING_ACTOR,,}" != "${GITHUB_REPOSITORY_OWNER,,}" ]]; then
-            echo "Production deployment requires an owner dispatch from main." >&2
-            exit 1
-          fi
-
-  image:
-    needs: authorize
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     permissions:
       contents: read
-      packages: write
+      actions: read
     outputs:
-      container_image: ${{ steps.image.outputs.container_image }}
+      admitted: ${{ steps.release.outputs.admitted }}
+      sha: ${{ steps.release.outputs.sha }}
+      image: ${{ steps.release.outputs.image }}
+      run_id: ${{ steps.release.outputs.run_id }}
+      run_attempt: ${{ steps.release.outputs.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
 
-      - name: Authenticate to GHCR
-        if: hashFiles('Dockerfile') != ''
+      - name: Admit exact successful main CI release before Azure access
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Build and push image
-        if: hashFiles('Dockerfile') != ''
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/cedricmendelin/bujo-ai:${{ github.sha }}
-
-      - name: Set deployment image
-        id: image
-        run: |
-          if [[ -f Dockerfile ]]; then
-            echo "container_image=ghcr.io/cedricmendelin/bujo-ai:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            echo "container_image=mcr.microsoft.com/k8se/quickstart:latest" >> "$GITHUB_OUTPUT"
-          fi
+        run: python3 .github/scripts/release_admission.py admit --manifest "$RUNNER_TEMP/release.json"
 
   apply:
-    needs: image
+    needs: authorize
+    if: needs.authorize.outputs.admitted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: prod
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_USE_CLI: "false"
-      TF_VAR_container_image: ${{ needs.image.outputs.container_image }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+      TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
+      TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
+      SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
+      SQL_ENTRA_ADMIN_LOGIN: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
+      BUDGET_ALERT_EMAIL: ${{ vars.BUDGET_ALERT_EMAIL }}
+      API_ALLOWED_PRINCIPAL_OBJECT_IDS: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
+      BUJO_DEPLOYMENT_ENABLED: ${{ vars.BUJO_DEPLOYMENT_ENABLED }}
+      BUJO_OWNER_SETUP_CONFIRMED: ${{ vars.BUJO_OWNER_SETUP_CONFIRMED }}
+      TF_VAR_container_image: ${{ needs.authorize.outputs.image }}
       TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
       TF_VAR_sql_entra_admin_object_id: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
       TF_VAR_sql_entra_admin_login: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
       TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
       TF_VAR_auth_allowed_principal_object_ids: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
+      BUJO_RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+      BUJO_RELEASE_RUN_ID: ${{ needs.authorize.outputs.run_id }}
+      BUJO_RELEASE_RUN_ATTEMPT: ${{ needs.authorize.outputs.run_attempt }}
+      BUJO_RELEASE_MANIFEST: ${{ runner.temp }}/release.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+
+      - name: Revalidate release after queueing
+        run: |
+          python3 .github/scripts/release_admission.py admit --manifest "$RUNNER_TEMP/release.json"
+          python3 .github/scripts/release_admission.py recheck --manifest "$RUNNER_TEMP/release.json"
+
+      - name: Require explicit owner activation and completed setup
+        run: python3 .github/scripts/deployment_preflight.py
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.17.0
           terraform_wrapper: false
-
-      - name: Validate deployment variables
-        env:
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
-          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
-          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
-          SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
-          SQL_ENTRA_ADMIN_LOGIN: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
-          BUDGET_ALERT_EMAIL: ${{ vars.BUDGET_ALERT_EMAIL }}
-          API_ALLOWED_PRINCIPAL_OBJECT_IDS: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
-        run: |
-          for name in \
-            ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP \
-            TFSTATE_RESOURCE_GROUP TFSTATE_STORAGE_ACCOUNT TFSTATE_CONTAINER \
-            TFSTATE_KEY SQL_ENTRA_ADMIN_OBJECT_ID SQL_ENTRA_ADMIN_LOGIN \
-            BUDGET_ALERT_EMAIL API_ALLOWED_PRINCIPAL_OBJECT_IDS; do
-            if [[ -z "${!name}" ]]; then
-              echo "Required GitHub Actions variable is missing: $name" >&2
-              exit 1
-            fi
-          done
 
       - name: Sign in to Azure with OIDC
         uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
@@ -119,12 +112,7 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Initialize Terraform
-        env:
-          TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
-          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
-          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
+      - name: Initialize Terraform using Entra state access
         run: |
           terraform -chdir=infra init -input=false \
             -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
@@ -133,8 +121,10 @@ jobs:
             -backend-config="key=$TFSTATE_KEY" \
             -backend-config="use_oidc=true"
 
-      - name: Provision migration job
-        run: python3 infra/deploy_gate.py provision-migration-job
+      - name: Verify live bootstrap and anonymous release-image access
+        run: python3 .github/scripts/deployment_preflight.py --live --manifest "$RUNNER_TEMP/release.json"
 
-      - name: Run migration, promote application, and probe liveness
+      - name: Migrate exact release, promote, and verify runtime
+        env:
+          BUJO_RELEASE_VALIDATED: "true"
         run: python3 infra/deploy_gate.py

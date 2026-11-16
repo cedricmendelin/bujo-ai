@@ -58,6 +58,33 @@ def check_auth(account, expected_subscription, env):
         raise ValueError("ARM_TENANT_ID does not match the Azure CLI account.")
 
 
+def check_oidc_auth(account, expected_subscription, env):
+    forbidden = (
+        "ARM_CLIENT_SECRET", "AZURE_CLIENT_SECRET", "ARM_CLIENT_CERTIFICATE_PATH",
+        "ARM_CLIENT_CERTIFICATE_PASSWORD", "AZURE_CLIENT_CERTIFICATE_PATH",
+        "ARM_ACCESS_KEY", "ARM_SAS_TOKEN",
+    )
+    if any(env.get(name) for name in forbidden):
+        raise ValueError("OIDC review must not use persistent credentials or storage keys.")
+    if (
+        env.get("ARM_USE_OIDC") != "true" or env.get("ARM_USE_AZUREAD") != "true"
+        or env.get("ARM_USE_CLI") != "false"
+        or any(env.get(name, "false").lower() != "false" for name in (
+            "ARM_USE_MSI", "ARM_USE_AKS_WORKLOAD_IDENTITY",
+        ))
+        or not env.get("ARM_CLIENT_ID")
+        or not isinstance(account, dict)
+        or account.get("user", {}).get("type") != "servicePrincipal"
+        or account.get("user", {}).get("name", "").casefold() != env["ARM_CLIENT_ID"].casefold()
+        or not expected_subscription
+        or account.get("id", "").casefold() != expected_subscription.casefold()
+        or env.get("ARM_SUBSCRIPTION_ID", "").casefold() != expected_subscription.casefold()
+        or not account.get("tenantId")
+        or env.get("ARM_TENANT_ID", "").casefold() != account["tenantId"].casefold()
+    ):
+        raise ValueError("OIDC review requires the exact configured principal, subscription and tenant.")
+
+
 def safe_fields(value):
     if isinstance(value, dict):
         return {
@@ -167,30 +194,47 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def check_checkout(expected_commit=None):
+    if run_text(["git", "status", "--porcelain", "--untracked-files=all"]).strip():
+        raise ValueError("Bootstrap review requires a clean committed checkout.")
+    commit = run_text(["git", "rev-parse", "HEAD"]).strip()
+    if not re.fullmatch(r"[a-f0-9]{40}", commit) or (
+        expected_commit is not None and commit != expected_commit
+    ):
+        raise ValueError("Bootstrap source commit changed or does not match the reviewed commit.")
+    return commit
+
+
 def main():
     parser = argparse.ArgumentParser(description="Review a saved stage-one Terraform plan privately.")
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--subscription", required=True, help="Expected Azure subscription ID; never share the command output without review.")
     parser.add_argument("--expected-sha256", help="Previously reviewed plan hash; required before apply.")
+    parser.add_argument("--expected-commit", help="Previously reviewed clean source commit; required before apply.")
+    parser.add_argument("--auth-mode", choices=("local-user", "oidc"), default="local-user")
     args = parser.parse_args()
     try:
         plan_path = args.plan.resolve(strict=True)
         if plan_path.is_relative_to(ROOT):
             raise ValueError("The plan must be stored outside the repository.")
         account = run_json(["az", "account", "show", "--output", "json"])
-        check_auth(account, args.subscription, os.environ)
+        auth_check = check_oidc_auth if args.auth_mode == "oidc" else check_auth
+        auth_check(account, args.subscription, os.environ)
         digest = sha256(plan_path)
         if args.expected_sha256 and not re.fullmatch(r"[a-fA-F0-9]{64}", args.expected_sha256):
             raise ValueError("The expected plan hash is invalid.")
         if args.expected_sha256 and digest.lower() != args.expected_sha256.lower():
             raise ValueError("The saved plan has changed since review.")
+        source_commit = check_checkout(args.expected_commit)
         version = run_json(["terraform", "-chdir=infra", "version", "-json"])
         plan = run_json(["terraform", "-chdir=infra", "show", "-json", str(plan_path)])
         check_plan_subscription(plan, args.subscription)
         show_text = run_text(["terraform", "-chdir=infra", "show", "-no-color", str(plan_path)])
         if sha256(plan_path) != digest:
             raise ValueError("The saved plan changed while it was being reviewed.")
+        check_checkout(source_commit)
         package = review_package(plan, digest, version.get("terraform_version"), version.get("provider_selections"), account.get("name"), show_text)
+        package["source_commit"] = source_commit
         print(json.dumps(package, indent=2))
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Bootstrap review failed: {error}", file=sys.stderr)

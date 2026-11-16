@@ -159,3 +159,54 @@ jobs:
       - name: Nothing to build yet
         if: steps.detect.outputs.dotnet != 'true' && steps.detect.outputs.terraform != 'true'
         run: echo "No .NET or Terraform sources yet; CI passes."
+
+      - name: Save tested release image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save bujo-host-test --output "$RUNNER_TEMP/tested-host.tar"
+
+      - name: Upload tested release image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-host-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tested-host.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tested-host-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tested-image
+
+      - name: Publish the tested image without rebuilding
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker load --input "$RUNNER_TEMP/tested-image/tested-host.tar"
+          tag="ghcr.io/cedricmendelin/bujo-ai:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker tag bujo-host-test "$tag"
+          docker push "$tag"
+          python3 .github/scripts/release_admission.py publish --manifest "$RUNNER_TEMP/release/release.json"
+
+      - name: Publish release provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release/release.json
+          retention-days: 30
+          if-no-files-found: error

@@ -31,8 +31,13 @@ variable "name_suffix" {
 
 variable "container_image" {
   type        = string
-  description = "Container image and tag to deploy."
-  default     = "mcr.microsoft.com/k8se/quickstart:latest"
+  description = "Immutable GHCR release image digest; empty only for owner bootstrap."
+  default     = ""
+
+  validation {
+    condition     = var.bootstrap_only || can(regex("^ghcr\\.io/cedricmendelin/bujo-ai@sha256:[0-9a-f]{64}$", var.container_image))
+    error_message = "A production release must use the immutable Bujo-AI GHCR image digest."
+  }
 }
 
 variable "bootstrap_only" {
