@@ -579,6 +579,8 @@ class InfrastructurePlanTests(unittest.TestCase):
         for address, fields in (
             ("azuread_application.api", ("feature_tags",)),
             ("azuread_service_principal.api", ("feature_tags", "features")),
+            ("azuread_application.pwa_client", ("feature_tags",)),
+            ("azuread_service_principal.pwa_client", ("feature_tags", "features")),
         ):
             change = resource(plan, address)["change"]
             for field in fields:

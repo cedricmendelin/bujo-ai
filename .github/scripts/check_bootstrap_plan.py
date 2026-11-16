@@ -71,7 +71,7 @@ BASELINE_UNKNOWN_PATHS = {
         "template_id",
     },
     "azuread_application.pwa_client": {
-        "app_role_ids", "client_id", "disabled_by_microsoft", "id", "logo_url",
+        "app_role_ids", "client_id", "disabled_by_microsoft", "feature_tags", "id", "logo_url",
         "oauth2_permission_scope_ids", "object_id", "publisher_domain", "tags",
         "template_id", "required_resource_access[0].resource_access[0].id",
         "required_resource_access[0].resource_app_id", "web[0].redirect_uris[0]",
