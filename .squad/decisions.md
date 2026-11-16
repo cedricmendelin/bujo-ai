@@ -284,3 +284,43 @@
 - Significant product and architecture decisions require user approval
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+
+### 2026-11-16: PR finalization ownership redesign
+
+- This supersedes only the PR lifecycle ownership and merge-authority portions
+  of the 2026-11-14 governed-delivery and 2026-11-15 hands-off-lifecycle
+  decisions. Owner-approved plans, `plan:approved`, the existing acceptance
+  evidence rules, and the independent review requirements remain in force.
+- Cloud-first PR repair uses GitHub.com Copilot **Watch and fix** for failed
+  Actions workflows and base-branch conflicts; it does not handle review
+  comments. The owner must enable repository Copilot automations and Watch and
+  fix for each applicable PR, or configure the account default. The account
+  default applies to PRs the user creates and must not be assumed to cover
+  Copilot-created PRs.
+- GitHub auto-merge is the only merge executor and performs squash merges under
+  branch protections. The trusted gate validates eligibility, arms auto-merge,
+  and publishes the aggregate `Squad Merge Readiness` check; it must never
+  directly merge as a fallback. The `main` ruleset must require `ci`, all four
+  `Squad Review / <Role>` checks, `Squad Plan Binding`, and
+  `Squad Merge Readiness`. Owner-side ruleset setup is separate from workflow
+  delivery.
+- The cloud shepherd is limited to successful-session readiness, initial CI
+  and review dispatch, bounded interrupted-session recovery, explicit metadata
+  proposal application, reviewer-feedback forwarding, and escalation. It no
+  longer repairs conflicts. It continues bounded `@copilot` requests for
+  eligible Squad check findings and metadata proposals. Submitted human/Copilot
+  review feedback means unresolved, non-outdated trusted review threads or
+  change requests; poll it on `Squad Plan Binding` completion (about every ten
+  minutes) and an hourly fallback. Do not treat arbitrary top-level comments as
+  review feedback.
+- `needs:human` is a stop, not a status cleared by green checks. Automation must
+  not silently remove it. The owner must separately stop native Watch and fix
+  when pausing work; `needs:human` does not control that GitHub feature.
+- The trusted metadata bridge keeps its body/head/hash guards. A title
+  replacement is optional and is valid only when both `title` and
+  `baseTitleSha256` are supplied; they are omitted together otherwise. A
+  description that is the owner-waived scope remains owner-only to change.
+- A local GitHub Copilot app session with `handoff:local` is an optional manual
+  takeover. Agent merge's Merge action stays off so it cannot compete with
+  GitHub auto-merge, and the owner disables native Watch and fix for that PR to
+  prevent concurrent fixes.

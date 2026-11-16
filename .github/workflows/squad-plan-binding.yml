@@ -34,7 +34,8 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      # Reconciliation posts bot-authored comments on linked PRs as well as issues.
+      pull-requests: write
       checks: write
       actions: write
     steps:
@@ -248,9 +249,11 @@ jobs:
                 if (context.payload.issue.pull_request) {
                   return core.info('Ignoring pull request conversation comments; pull_request_target handles PR changes.');
                 }
-                const commentBody = context.payload.comment?.body || '';
-                if (commentBody.includes('<!-- squad-plan-binding-failure -->')
-                    || commentBody.includes('<!-- squad-plan-binding:')) {
+                const comment = context.payload.comment;
+                const commentBody = comment?.body || '';
+                const trustedNoticeAuthor = [repositoryOwner, 'github-actions[bot]'].includes(comment?.user?.login);
+                if (trustedNoticeAuthor && (commentBody.includes('<!-- squad-plan-binding-failure -->')
+                    || commentBody.includes('<!-- squad-plan-binding:'))) {
                   return core.info('Ignoring an internal binding notice.');
                 }
                 await runOne(issueNumber);

@@ -20,12 +20,62 @@ issue ──/plan──▶ Architect plan comment (v1, owner: builder|ai|devops|
           CI + Squad Review / Architect · Security · Verifier · DevOps
                                          │
                       Squad Review Gate (workflow_run aggregator)
-           all success ──▶ squash auto-merge ──▶ main ──▶ owner-dispatched deploy
-           any failure ──▶ findings to @copilot (cloud) or Agent merge (local)
-                           max 3 rounds ──▶ needs:human + @cedricmendelin
+           all success ──▶ merge-readiness check + GitHub auto-merge ──▶ main ──▶ owner-dispatched deploy
+           review finding ──▶ bounded fix via @copilot (cloud) or Agent merge (local)
+           failed workflow/conflict ──▶ native Watch and fix (cloud) or Agent merge (local)
+                                        max 3 review-fix rounds ──▶ needs:human + @cedricmendelin
 ```
 
 See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
+
+## Lifecycle ownership
+
+The cloud-first path has one owner per responsibility:
+
+| Responsibility | Owner |
+|---|---|
+| Approved scope and acceptance evidence | Plan Binding, independent Squad checks and the trusted gate |
+| Failed GitHub Actions workflows and conflicts with the target branch | Native GitHub.com **Watch and fix** (cloud Agent Merge) |
+| Review feedback | Bounded `@copilot` bridge; app Agent merge only for explicit local takeover |
+| Draft readiness, initial CI/review dispatch, interrupted-session recovery, explicit metadata proposals | Squad PR Shepherd |
+| Actual squash merge | GitHub **auto-merge**, never a direct REST merge |
+
+Watch and fix does not fix review comments or enable auto-merge. Native repairs
+use repository instructions and setup steps; they do not authorize a scope
+change. The gate never sends CI failures back to `@copilot`, and the shepherd no
+longer requests conflict repairs. Initial owner-dispatched CI remains necessary
+for Copilot approval-blocked runs; dispatch is not a second repair loop.
+
+The gate publishes a pending `Squad Merge Readiness` check before evaluation.
+It requires the target branch's effective ruleset checks to include that check,
+`Squad Plan Binding`, `ci`, and all four Squad checks before arming auto-merge.
+Readiness becomes successful only after live scope/revision revalidation and
+review-feedback checks. This lets GitHub execute the merge without the old
+privileged direct-merge fallback. Missing protections or API failures fail
+closed and are surfaced as workflow failures.
+
+The shepherd and gate share one lifecycle concurrency group. Submitted,
+unresolved, non-outdated inline feedback from the owner, collaborators/members
+and the Copilot review bot is forwarded, as are current trusted
+`CHANGES_REQUESTED` reviews. Resolved/outdated threads, pending/dismissed change
+requests, untrusted authors, Squad bot inline comments (already covered by its
+check), and arbitrary top-level comments are not repair triggers. Each item is
+marked once per revision of its feedback; at most ten are included in a request.
+The three-request budget includes both Squad and external feedback. New feedback
+waits while a previous request awaits its coding session. Disputed findings need
+an explanation; an unresolved thread or outstanding change request continues to
+block readiness until resolved or superseded by its reviewer.
+
+Polling runs after Plan Binding completion (normally its ten-minute sweep), as
+well as Copilot session completion and the shepherd's hourly fallback. The gate
+also re-evaluates after binding sweeps, including resolution-only changes.
+Polling is not instantaneous, and GitHub schedules may be delayed.
+
+`needs:human` is an explicit stop, not a transient failure that green checks
+clear. It disables our merge authorization and review-fix dispatch. It does not
+disable native Watch and fix; the owner must stop that feature separately.
+For local takeover, apply `handoff:local`, disable native Watch and fix on the
+PR, and optionally use desktop-app Agent merge with its *Merge* action off.
 
 ## Commands and labels
 
@@ -40,7 +90,7 @@ See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
 | Hand over a cloud PR | Add `handoff:local` to a `copilot/*` PR | Shepherd and `@copilot` fix requests stop; reviews run on every push; use Agent merge |
 | Waive the plan | Owner applies `plan:waived` to a PR | For work without an issue plan; reviewers use the PR description as scope; reviews start |
 | Re-review | Automatic after each Copilot session (shepherd) or push (local PRs); manually: Actions → *Squad Review X* → Run with `pr_number` | Reviewer check re-published for the PR head |
-| Escalation | `needs:human` + `@cedricmendelin` comment | 3 failed fix rounds, interrupted recovery, exhausted recovery bound, unapproved recovery scope, unresolved conflicts, reviewer crash/timeout. Remove the label to resume automation |
+| Escalation | `needs:human` + `@cedricmendelin` comment | 3 failed review-fix rounds, interrupted recovery, exhausted recovery bound, unapproved recovery scope, reviewer crash/timeout. Stop native Watch and fix separately when pausing; remove the label to resume our bridge |
 | Automation failure | Issue `Squad automation failing: <workflow>` | Shepherd or gate itself failed (for example an expired token) |
 
 Use `/plan` to draft and `/plan revise <feedback>` to revise; `/squad plan` is
@@ -127,21 +177,27 @@ the result. Otherwise it replies on the PR with an explicit proposal:
 {
   "headSha": "<current 40-character head SHA>",
   "baseBodySha256": "<SHA-256 of the exact current description's UTF-8 bytes>",
-  "body": "Completion: partial\nImplements plan v1 for issue #N.\n\n## Remaining work\nState unfinished scope and its dependency.\n\nRelates to #N"
+  "body": "Completion: partial\nImplements plan v1 for issue #N.\n\n## Remaining work\nState unfinished scope and its dependency.\n\nRelates to #N",
+  "baseTitleSha256": "<SHA-256 of the exact current title's UTF-8 bytes>",
+  "title": "Accurate PR title"
 }
 ```
 ````
 
+Omit **both** title fields for a body-only proposal; existing three-field
+proposals remain supported. To change the title, include both snapshot and
+replacement, with a nonempty single-line title of at most 256 characters. A
+title-only change still supplies the exact current body and body snapshot.
 Replace placeholders using the GitHub read tools. Encode the full replacement as
 a JSON string, with no trailing prose. The replacement begins with a completion
 declaration, retains the current approved issue/plan linkage, and remains subject
 to independent completion review. Publishing a proposal is not applying it.
 
 The shepherd accepts proposals only from the repository owner or the known
-`Copilot`/`copilot-swe-agent[bot]` bot identities. It accepts only a description,
-not titles, labels, draft changes or arbitrary API operations. The maximum
+`Copilot`/`copilot-swe-agent[bot]` bot identities. It accepts a description
+and an optional guarded title, not labels, draft changes or arbitrary API operations. The maximum
 replacement is 60,000 UTF-8 bytes. It rejects stale head/body snapshots,
-malformed JSON and invalid completion declarations. It resolves the current
+stale title snapshots, malformed JSON and invalid completion declarations. It resolves the current
 approved issue plan and re-fetches state and approval immediately before the
 REST write; GitHub does not provide an atomic body-hash compare-and-swap, so an
 external edit in the final read/write window still requires inspection.
@@ -224,9 +280,8 @@ missing/mismatched ID, run, attempt, plan hash, owner event, PR head or body
 fails closed and dispatches the four reviews once for that binding/head/body.
 The source workflow writes the artifact before model invocation; model output
 cannot author or alter that identity. The gate re-reads the live plan immediately
-before enabling auto-merge (with `expectedHeadOid`) or direct squash merge and
-again after enabling auto-merge; drift disables auto-merge, and drift discovered
-after a direct merge is escalated to @cedricmendelin.
+before enabling auto-merge (with `expectedHeadOid`) and again before publishing
+successful merge readiness; drift disables auto-merge. There is no direct merge.
 The compiler-owned run title includes the target PR number, so a failed
 default-branch dispatch with no PR head association still disables auto-merge
 and creates one actionable `needs:human` escalation per run/attempt, even if it
@@ -309,8 +364,8 @@ label-only approvals blindly.
 | `squad-plan-binding.yml` | Actions | Owner issue events, bot `workflow_run` invalidation, PR link reconciliation, migration, ten-minute sweep and binding status |
 | `squad-review-{architect,security,verifier,devops}.md` | gh-aw | Default-branch dispatch-only independent reviews; non-model start attestation, inline comments, required check `Squad Review / <Role>` |
 | `shared/squad-review.md` | gh-aw import | Common review protocol |
-| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent*, guarded description edits, push to `main`, hourly fallback) | Requires a successful session and verified live binding before readiness/review dispatch; bounded recovery, metadata, conflicts and escalation |
-| `squad-review-gate.yml` | Actions (`workflow_run` on Copilot cloud agent, CI, Squad Review and Plan Binding) | Rechecks live scope and run-attested review results; requires `Squad Plan Binding` for issue plans, validates completion, auto-merge or fix loop |
+| `squad-pr-shepherd.yml` | Actions (`workflow_run` on *Copilot cloud agent* and *Squad Plan Binding*, guarded description edits, hourly fallback) | Successful-session readiness, initial CI/reviews, bounded interrupted recovery, guarded title/body metadata, reviewer-feedback bridge and escalation; no CI/conflict repairs |
+| `squad-review-gate.yml` | Actions (`workflow_run` on Copilot cloud agent, CI, Squad Review and Plan Binding, including binding sweeps) | Live scope/run-attested reviews, completion and external-feedback checks; required merge readiness and GitHub auto-merge authorization; review-only fix bridge |
 | `ci.yml` | Actions | Required check `ci`: .NET build/test, Terraform fmt/validate |
 | `copilot-setup-steps.yml` | Actions | .NET 10 and Terraform in the Copilot cloud agent environment |
 
@@ -332,6 +387,12 @@ checks, not a claim that the workflows have executed successfully on GitHub.
 Reviewers never edit, approve, or merge; they publish a check and COMMENT review.
 Blocking findings must be concrete and within the reviewer's scope.
 
+Binding reconciliation uses `GITHUB_TOKEN` with both `issues: write` and
+`pull-requests: write`: its bot-authored records belong on issues, but linked-PR
+comments still need PR write permission even through the issues/comments REST
+endpoint. This fixes the observed 403 on linked PRs without exposing the owner
+token to implementing sessions.
+
 The shepherd and gate read checks and runs with `GITHUB_TOKEN` (fine-grained
 PATs cannot be granted the Checks permission) and write with `GH_AW_AGENT_TOKEN`
 so that `@copilot` comments, workflow dispatches, and auto-merge act as the owner.
@@ -350,9 +411,9 @@ the shepherd is what starts the review loop.
    require a pull request and status checks `ci`,
    `Squad Review / Architect`, `Squad Review / Security`,
    `Squad Review / Verifier`, `Squad Review / DevOps`, and
-   `Squad Plan Binding` (exact case); block force pushes; repository admin
+   `Squad Plan Binding` and `Squad Merge Readiness` (exact case); block force pushes; repository admin
    bypass for emergencies only. This is a separate human settings change; code
-   cannot modify or verify the ruleset.
+   does not change settings; the gate reads effective branch rules before arming auto-merge.
 5. **Copilot cloud agent**: enable it for the repository. Keep **Require approval
    for workflow runs** enabled unless an administrator explicitly accepts the
    security tradeoff described below. The shepherd's owner-token dispatches are
@@ -361,6 +422,38 @@ the shepherd is what starts the review loop.
    `api.nuget.org` as needed.
 6. **Azure (with the IaC issue)**: OIDC federated credentials and the variables
    documented by that issue's plan. No Azure secrets are stored in GitHub.
+
+### Native Agent Merge rollout
+
+Owner-only setup is deliberately separate from repository code:
+
+1. Enable the repository's Copilot **Enable automations** policy. On each
+   eligible same-repository PR, open **Watch and fix** in the merge box and
+   select **Fix failed Actions workflows** and **Resolve merge conflicts**.
+   The account setting **Enable Agent Merge automatically for pull requests I
+   create** is optional; it is not evidence that a Copilot-created PR is covered.
+   No documented activation API is assumed by these workflows.
+2. Deploy/observe `Squad Plan Binding` and `Squad Merge Readiness` on an isolated
+   test PR, then require both on `main` alongside the existing five checks.
+   Disable any pending auto-merge during migration. The existing #42 tracks
+   binding-check rollout. The native rollout checklist is tracked in #50;
+   restore valid plan bindings separately, never invent
+   or waive approval just to unblock a stuck PR.
+3. Use a throwaway PR to prove native CI repair, a conflict after a base-branch
+   change, submitted Copilot/human review forwarding and deduplication,
+   title/body metadata updates, stop-label handling, and GitHub-only merging.
+   No privileged PR checkout is added. Do not use production deployment as a
+   lifecycle test; close test PRs unmerged or use an isolated repository.
+4. If Watch and fix is unavailable, escalate to the owner; do not silently
+   re-enable the old CI/conflict fix loops. On rollback, disable native Watch
+   and fix first, restore compatible workflows and rules together, and verify
+   no two repair controllers remain enabled.
+
+GitHub documents the [cloud Watch and fix capabilities and
+setup](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/watch-and-fix-pull-requests)
+and the [difference from desktop-app Agent
+merge](https://docs.github.com/en/copilot/how-tos/github-copilot-app/managing-issues-and-pull-requests).
+Cloud Agent Merge does not support forks or stacked PRs.
 
 ## Interrupted sessions and workflow approvals
 
@@ -513,11 +606,12 @@ environment (that environment is only for the cloud agent's runtime).
 - Agentic reviews cost Copilot premium requests per PR round; the 3-round cap
   bounds it. Local PRs re-run all four reviews on every push, so push in
   meaningful increments.
-- The shepherd reacts to the *Copilot cloud agent* run completing; its hourly
-  schedule is a fallback (about 720 short Actions runs per month on this private
-  repository) that also catches conflicts after merges and silent reviewers.
+- The shepherd reacts to *Copilot cloud agent* and *Squad Plan Binding*
+  completion; its hourly schedule is a fallback for missed events and silent
+  reviewers. Binding sweeps add review polling roughly every ten minutes.
 - Required checks guarantee review of the merged head; a push after the gate
   enabled auto-merge waits for fresh checks.
-- The Copilot app's Agent merge works only for local sessions; cloud PRs rely
-  on the shepherd and gate instead.
+- Desktop-app Agent merge is optional local takeover. Cloud PRs use native
+  Watch and fix plus the bounded review bridge; activation and native repair
+  success still need live rollout evidence, not just passing unit tests.
 - Infrastructure deployment is owner-dispatched from `main`; see [infrastructure operations](infrastructure.md).
