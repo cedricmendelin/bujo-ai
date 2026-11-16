@@ -130,6 +130,10 @@ revoke approval; re-publish a higher version and re-apply the labels to resume.
 workflow run because their `GITHUB_TOKEN` writes do not fire issue-comment or
 label workflows. Owner-authored edits/deletes reconcile directly. A ten-minute
 sweep and manual `Squad Plan Binding` dispatch are backstops and migration tools.
+Skipped `Squad Plan` runs do not trigger a sweep. Binding updates checks and
+auto-merge only for open PRs; merged PRs remain eligible for drift notices.
+Repeated identical reconciliation failures reuse the existing failure notice;
+a materially different failure updates it with the new run.
 
 ## Full completion and partial delivery
 

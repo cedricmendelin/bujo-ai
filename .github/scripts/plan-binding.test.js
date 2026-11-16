@@ -75,6 +75,17 @@ test('a live matching binding publishes success for the exact linked PR head', a
   assert.match(calls[0][3], /plan v1/);
 });
 
+test('a valid binding never changes merged PR checks or auto-merge, even after plan-version drift', async () => {
+  const data = fixture({ prs: [
+    pr({ number: 12, state: 'merged', body: 'Closes #41\nPlan v2', head: { sha: 'merged-sha' } }),
+    pr(),
+  ] });
+  const result = await reconcileIssue(data.api, { issueNumber, owner });
+  assert.equal(result.state, 'bound');
+  assert.deepEqual(result.prs, [{ number: 9, ok: true }]);
+  assert.deepEqual(data.calls.map(call => call.slice(0, 3)), [['setStatus', 'abc123', 'success']]);
+});
+
 test('edited plan supersedes record, removes both labels, fails binding and disables auto-merge', async () => {
   const data = fixture();
   data.comments[0] = { ...plan, body: `${plan.body}\nEdited` };

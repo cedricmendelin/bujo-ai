@@ -96,7 +96,9 @@ async function reconcileIssue(api, { issueNumber, owner, now = new Date().toISOS
 
   if (checked.ok) {
     const results = [];
-    for (const pr of prs) results.push({ number: pr.number, ok: await setPrSuccess(api, pr, record) });
+    for (const pr of prs.filter(pr => pr.state === 'open')) {
+      results.push({ number: pr.number, ok: await setPrSuccess(api, pr, record) });
+    }
     return { state: 'bound', record, prs: results };
   }
 

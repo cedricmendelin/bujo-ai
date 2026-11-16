@@ -26,9 +26,10 @@ concurrency:
 jobs:
   reconcile:
     if: >-
-      github.event_name != 'pull_request_target' ||
+      (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'Squad Plan' || github.event.workflow_run.conclusion != 'skipped') &&
+      (github.event_name != 'pull_request_target' ||
       (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-      github.event.label.name == 'plan:waived'
+      github.event.label.name == 'plan:waived')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -45,6 +46,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Reconcile live plan bindings
+        id: reconcile
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
@@ -53,6 +55,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
+            const { createHash } = require('node:crypto');
             const { CHECK, reconcileIssue, reconcileWaiver, sweep } = require('./.github/scripts/plan-binding');
             const { resolveScopeFromGitHub } = require('./.github/scripts/review-attestation');
             const agent = getOctokit(process.env.AGENT_TOKEN);
@@ -307,20 +310,25 @@ jobs:
               core.error(error.message);
               errors.push(error.message);
             }
-            if (errors.length) core.setFailed(errors.join('\n'));
+            if (errors.length) {
+              core.setOutput('failure_key', createHash('sha256').update(JSON.stringify([...errors].sort())).digest('hex'));
+              core.setFailed(errors.join('\n'));
+            }
 
       - name: Report reconciliation failure
         if: failure()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           HUMAN: cedricmendelin
+          FAILURE_KEY: ${{ steps.reconcile.outputs.failure_key || 'unknown' }}
         with:
           github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const title = 'Squad Plan Binding reconciliation failed';
             const marker = '<!-- squad-plan-binding-failure -->';
-            const body = `${marker}\n@${process.env.HUMAN} **Squad Plan Binding** failed: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\nCheck the run logs and reconcile affected issues/PRs. The binding status fails closed where a current status could be published.`;
+            const failureKey = `<!-- squad-plan-binding-failure-key:${process.env.FAILURE_KEY} -->`;
+            const body = `${marker}\n${failureKey}\n@${process.env.HUMAN} **Squad Plan Binding** failed: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\nCheck the run logs and reconcile affected issues/PRs. The binding status fails closed where a current status could be published.`;
             const open = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', labels: 'needs:human', per_page: 100 });
             const existing = open.find(issue => issue.title === title);
             if (!existing) {
@@ -329,7 +337,9 @@ jobs:
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: existing.number, per_page: 100 });
               const report = comments.find(comment => comment.body?.includes(marker));
               if (report) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: report.id, body });
+                if (!report.body.includes(failureKey)) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: report.id, body });
+                }
               } else {
                 await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
               }
