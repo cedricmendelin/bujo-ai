@@ -618,6 +618,18 @@ class InfrastructurePlanTests(unittest.TestCase):
         inventory = self.validate(plan)
         self.assertIn(("module.container_app.azapi_resource_action.post_creation_update", "delete"), inventory)
 
+    def test_existing_app_accepts_completed_patch_only_with_matching_live_environment(self):
+        plan = self.retained_template_plan()
+        app = resource(plan, "module.container_app.azapi_resource.container_app")["change"]
+        patch = resource(plan, "module.container_app.azapi_resource_action.post_creation_update")["change"]
+        patch["actions"] = ["no-op"]
+        live_template = copy.deepcopy(patch["after"]["body"]["properties"]["template"])
+        app["before"]["output"] = {"properties": {"template": live_template}}
+        self.validate(plan)
+
+        live_template["containers"][0]["env"] = []
+        self.assert_rejected(plan, "scheduled or verified applied PATCH")
+
     def test_retained_environment_requires_an_unchanged_template_and_an_actual_patch(self):
         for mutation in ("template", "patch", "target", "missing-target", "sql", "allowlist", "secret"):
             with self.subTest(mutation=mutation):

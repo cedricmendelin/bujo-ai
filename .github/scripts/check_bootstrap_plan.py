@@ -653,11 +653,21 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     environment_source = app_resource
     if environment != patch_environment:
         before_template = ((app_before.get("body") or {}).get("properties") or {}).get("template")
-        if template != before_template or patch_resource["change"]["actions"] not in (
-            ["create"], ["update"], ["delete", "create"],
+        live_template = ((app_before.get("output") or {}).get("properties") or {}).get("template") or {}
+        live_containers = live_template.get("containers") or []
+        patch_actions = patch_resource["change"]["actions"]
+        patch_applied = (
+            patch_actions == ["no-op"]
+            and len(live_containers) == 1
+            and isinstance(live_containers[0], dict)
+            and live_containers[0].get("env") == patch_environment
+        )
+        if template != before_template or (
+            patch_actions not in (["create"], ["update"], ["delete", "create"])
+            and not patch_applied
         ):
-            raise ValueError("Baseline retained application environment requires an unchanged template and a scheduled PATCH.")
-        # AVM ignores the existing template here and applies desired settings by PATCH.
+            raise ValueError("Baseline retained application environment requires an unchanged template and a scheduled or verified applied PATCH.")
+        # AVM retains the old body even after its separate PATCH has been applied.
         environment = patch_environment
         environment_source = patch_resource
     expected_env_names = [
