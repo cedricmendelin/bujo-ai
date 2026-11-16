@@ -42,6 +42,27 @@ PROVIDERS = frozenset({
 INFRASTRUCTURE_PLAN_SHA256 = "ba70852c7ab9673a51014e136165e540d01fa6586b3da79506dfee617738542a"
 
 
+class CommandFailure(ValueError):
+    def __init__(self, category, message):
+        super().__init__(message)
+        self.category = category
+
+
+def command_failure_category(stderr):
+    status = re.search(r"\b(?:GitHub API|HTTP) (401|403|404|429|5\d\d)\b", stderr)
+    if status:
+        return f"github-api-http-{status[1]}"
+    return {
+        "The plan approval or binding label is missing.": "approval-labels-missing",
+        "No active trusted approval record.": "approval-record-missing",
+        "The approval record does not match the current owner label event.": "approval-event-mismatch",
+        "The approved plan no longer matches the latest plan.": "approval-plan-mismatch",
+        "The plan was changed at or after the approval event.": "approval-plan-edited",
+        "GH_TOKEN, GITHUB_REPOSITORY, and a valid issue number are required.": "approval-configuration",
+        "fetch failed": "github-api-network",
+    }.get(stderr.strip(), "command-failed")
+
+
 def check_auth(account, expected_subscription, env):
     if any(env.get(name) for name in FORBIDDEN_AUTH):
         raise ValueError("Service-principal, managed-identity or OIDC environment variables must be unset.")
@@ -191,7 +212,7 @@ def review_package(plan, plan_hash, terraform_version, provider_versions, subscr
 def run_text(args, *, input_text=None, private_log=None):
     executable = shutil.which(args[0])
     if not executable:
-        raise ValueError(f"Required executable is unavailable: {args[0]}")
+        raise CommandFailure("command-unavailable", f"Required executable is unavailable: {args[0]}")
     try:
         result = subprocess.run(
             [executable, *args[1:]], cwd=ROOT, capture_output=True, text=True,
@@ -204,11 +225,14 @@ def run_text(args, *, input_text=None, private_log=None):
                 for value in (error.stdout, error.stderr)
             ]
             private_log.write_text("\n".join(parts), encoding="utf-8")
-        raise ValueError(f"{args[0]} timed out; inspect the operation privately before retrying.") from error
+        raise CommandFailure("command-timeout", f"{args[0]} timed out; inspect the operation privately before retrying.") from error
     if private_log:
         private_log.write_text(result.stdout + "\n" + result.stderr, encoding="utf-8")
     if result.returncode:
-        raise ValueError(f"{args[0]} failed; inspect it privately before retrying.")
+        raise CommandFailure(
+            command_failure_category(result.stderr),
+            f"{args[0]} failed; inspect it privately before retrying.",
+        )
     return result.stdout
 
 
@@ -250,8 +274,13 @@ def check_infrastructure_approval():
         raise ValueError("Approval verification must use the trusted default-branch script.")
     try:
         body = run_text(["node", ".github/scripts/plan-approval.js", "verify", "--issue", "5"])
+    except CommandFailure as error:
+        raise ValueError(
+            f"Infrastructure approval verification could not complete [{error.category}]; "
+            "provisioning is blocked. Inspect this category before changing approval or permissions."
+        ) from error
     except ValueError as error:
-        raise ValueError("The owner must restore the verified issue #5 v9 approval/binding before provisioning.") from error
+        raise ValueError("Infrastructure approval verification could not complete [approval-verifier]; provisioning is blocked.") from error
     digest = hashlib.sha256(body.replace("\r\n", "\n").strip().encode("utf-8")).hexdigest()
     if digest != INFRASTRUCTURE_PLAN_SHA256:
         raise ValueError("The live approved scope is not this infrastructure-first plan v9.")

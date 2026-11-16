@@ -14,17 +14,25 @@ WORKFLOW = ".github/workflows/ci.yml"
 PACKAGE = f"ghcr.io/{REPOSITORY}"
 
 
+class AdmissionError(ValueError):
+    def __init__(self, category, message):
+        super().__init__(message)
+        self.category = category
+
+
 def github(path):
     result = subprocess.run(
         ["gh", "api", f"repos/{REPOSITORY}/{path}"],
         capture_output=True, text=True, check=False, timeout=120,
     )
     if result.returncode:
-        raise ValueError("GitHub release evidence could not be read.")
+        status = re.search(r"\bHTTP (401|403|404|429|5\d\d)\b", result.stderr)
+        category = f"github-api-http-{status[1]}" if status else "github-api-command"
+        raise AdmissionError(category, "GitHub release evidence could not be read.")
     try:
         return json.loads(result.stdout)
     except ValueError:
-        raise ValueError("GitHub release evidence was not JSON.") from None
+        raise AdmissionError("github-api-json", "GitHub release evidence was not JSON.") from None
 
 
 def validate_run(run, workflow, current_sha, expected_attempt=None):
@@ -51,7 +59,7 @@ def validate_run(run, workflow, current_sha, expected_attempt=None):
         or run["id"] < 1
         or (expected_attempt is not None and run["run_attempt"] != expected_attempt)
     ):
-        raise ValueError("Release requires a successful same-repository main-push CI run.")
+        raise AdmissionError("ci-run-trust", "Release requires a successful same-repository main-push CI run.")
     return run["head_sha"] == current_sha
 
 
@@ -72,13 +80,13 @@ def validate_manifest(manifest, run):
         or not re.fullmatch(re.escape(PACKAGE) + r"@sha256:[0-9a-f]{64}", manifest.get("image", ""))
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest.get("config_digest", ""))
     ):
-        raise ValueError("Release manifest is not bound to the exact trusted CI run and image.")
+        raise AdmissionError("manifest-binding", "Release manifest is not bound to the exact trusted CI run and image.")
     return manifest
 
 
 def validate_event(event_name, event, env):
     if env.get("GITHUB_REPOSITORY") != REPOSITORY:
-        raise ValueError("Unexpected deployment repository.")
+        raise AdmissionError("event-repository", "Unexpected deployment repository.")
     if event_name == "workflow_run":
         run = event.get("workflow_run", {})
         if (
@@ -90,7 +98,7 @@ def validate_event(event_name, event, env):
             or type(run.get("id")) is not int
             or type(run.get("run_attempt")) is not int
         ):
-            raise ValueError("Untrusted CI completion event.")
+            raise AdmissionError("event-workflow-run", "Untrusted CI completion event.")
         return run["id"], run["run_attempt"]
     owner = REPOSITORY.split("/")[0]
     if (
@@ -100,14 +108,14 @@ def validate_event(event_name, event, env):
         or env.get("GITHUB_TRIGGERING_ACTOR", "").casefold() != owner
         or not re.fullmatch(r"[1-9][0-9]*", str(event.get("inputs", {}).get("ci_run_id", "")))
     ):
-        raise ValueError("Manual recovery requires an owner dispatch from main with a CI run ID.")
+        raise AdmissionError("event-manual-recovery", "Manual recovery requires an owner dispatch from main with a CI run ID.")
     return int(event["inputs"]["ci_run_id"]), None
 
 
 def admit(run_id, expected_attempt=None):
     run = github(f"actions/runs/{run_id}")
     if run.get("id") != run_id:
-        raise ValueError("CI run identity does not match the requested release.")
+        raise AdmissionError("ci-run-identity", "CI run identity does not match the requested release.")
     workflow = github("actions/workflows/ci.yml")
     current_sha = github("git/ref/heads/main").get("object", {}).get("sha")
     if not validate_run(run, workflow, current_sha, expected_attempt):
@@ -123,20 +131,22 @@ def admit(run_id, expected_attempt=None):
         or candidates[0].get("workflow_run", {}).get("id") != run_id
         or candidates[0].get("workflow_run", {}).get("head_sha") != run["head_sha"]
     ):
-        raise ValueError("The exact CI-attempt release artifact is missing or ambiguous.")
+        raise AdmissionError("artifact-metadata", "The exact CI-attempt release artifact is missing or ambiguous.")
     with tempfile.TemporaryDirectory(prefix="bujo-release-") as directory:
         result = subprocess.run(
             ["gh", "run", "download", str(run_id), "--repo", REPOSITORY,
              "--name", name, "--dir", directory],
             capture_output=True, text=True, check=False, timeout=120,
         )
+        if result.returncode:
+            raise AdmissionError("artifact-download", "The exact release artifact could not be downloaded.")
         files = list(Path(directory).iterdir())
         manifest_path = Path(directory) / "release.json"
         if (
-            result.returncode or files != [manifest_path] or manifest_path.is_symlink()
+            files != [manifest_path] or manifest_path.is_symlink()
             or not manifest_path.is_file() or manifest_path.stat().st_size > 4096
         ):
-            raise ValueError("Release artifact must contain only the bounded release manifest.")
+            raise AdmissionError("artifact-layout", "Release artifact must contain only the bounded release manifest.")
         return validate_manifest(json.loads(manifest_path.read_text(encoding="utf-8")), run)
 
 
@@ -144,17 +154,17 @@ def publish_manifest(path):
     run_id = os.environ["GITHUB_RUN_ID"]
     attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
     if not re.fullmatch(r"[1-9][0-9]*", run_id) or attempt < 1:
-        raise ValueError("Invalid CI publication identity.")
+        raise AdmissionError("publication-identity", "Invalid CI publication identity.")
     tag = f"{PACKAGE}:ci-{run_id}-{attempt}"
     result = subprocess.run(
         ["docker", "image", "inspect", tag], capture_output=True, text=True, check=False, timeout=30,
     )
     if result.returncode:
-        raise ValueError("Published image inspection failed.")
+        raise AdmissionError("publication-inspection", "Published image inspection failed.")
     image = json.loads(result.stdout)[0]
     digests = [digest for digest in image.get("RepoDigests", []) if digest.startswith(PACKAGE + "@")]
     if len(digests) != 1:
-        raise ValueError("Published image digest is missing or ambiguous.")
+        raise AdmissionError("publication-digest", "Published image digest is missing or ambiguous.")
     manifest = {
         "schema": 1, "repository": REPOSITORY, "sha": os.environ["GITHUB_SHA"],
         "run_id": run_id, "run_attempt": attempt, "image": digests[0],
@@ -181,7 +191,7 @@ def main():
         manifest = admit(run_id, attempt)
         if args.mode == "recheck":
             if manifest is None or manifest != json.loads(args.manifest.read_text(encoding="utf-8")):
-                raise ValueError("Release was superseded or its provenance changed; deployment stopped.")
+                raise AdmissionError("release-drift", "Release was superseded or its provenance changed; deployment stopped.")
             return 0
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             output.write(f"admitted={'true' if manifest else 'false'}\n")
@@ -194,8 +204,22 @@ def main():
         else:
             print("Superseded CI release skipped without Azure access.")
         return 0
-    except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.TimeoutExpired):
-        print("Release admission failed: verify trusted main CI and its exact release artifact.", file=sys.stderr)
+    except AdmissionError as error:
+        print(f"Release admission failed [{error.category}]: {error}", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.TimeoutExpired) as error:
+        if isinstance(error, subprocess.TimeoutExpired):
+            category = "inspection-timeout"
+        elif isinstance(error, OSError):
+            category = "inspection-io"
+        elif isinstance(error, json.JSONDecodeError):
+            category = "response-json"
+        elif isinstance(error, (KeyError, TypeError, IndexError)):
+            category = "response-shape"
+        else:
+            category = "invalid-input"
+        print(f"Release admission failed [{category}]: verify trusted main CI and its exact release artifact.",
+              file=sys.stderr)
         return 1
 
 

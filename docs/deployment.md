@@ -202,6 +202,30 @@ then remove the specific files and temporary token/configuration environment
 variables after review. Local and OIDC paths share the same validator and
 redaction; neither makes app setup a provisioning prerequisite.
 
+### Diagnosing admission and approval failures
+
+Release admission and infrastructure approval verification report bracketed,
+value-redacted failure categories. They remain blocking; a category is not
+permission to bypass a check.
+
+| Category | Next investigation |
+| --- | --- |
+| `github-api-http-401` / `github-api-http-403` | Inspect the failing workflow token's authentication and endpoint permissions, not just local owner access. |
+| `github-api-http-404` | Check the requested evidence and token visibility; a 404 alone does not distinguish absence from denied access. |
+| `github-api-http-429` / `github-api-http-5xx` / `github-api-network` | Check rate limits or service/network availability before a controlled retry. |
+| `event-*` / `ci-run-*` | Verify the actual event, main-push run, source and attempt against the release trust requirements. |
+| `artifact-*` / `manifest-binding` / `response-*` | Inspect the exact CI-attempt artifact's availability, download, layout or data binding privately. |
+| `approval-labels-missing` / `approval-record-missing` / `approval-*-mismatch` / `approval-plan-edited` | Verify live issue scope with the trusted default-branch approval script before requesting any owner approval action. |
+| `approval-configuration` / `command-unavailable` / `command-timeout` / `command-failed` / `approval-verifier` / `inspection-*` / `invalid-input` | Check verifier configuration, tooling or execution. These do not establish that approval is missing. |
+
+The shared bootstrap helper distinguishes command failure from invalid approval.
+In particular, failure to execute the verifier or read GitHub evidence must not
+be treated as proof that the owner needs to reapply approval. Local verification
+with owner credentials does not prove that the Actions token can read the same
+evidence. Raw command output, API responses, URLs, credentials and private paths
+are not included in these diagnostics; existing private Terraform logs remain
+the place to inspect detailed infrastructure failures.
+
 ## Legacy targeted job-only bootstrap
 
 <a id="stage-one-bootstrap"></a>
