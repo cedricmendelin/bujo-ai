@@ -233,7 +233,10 @@ class ProvisioningTests(unittest.TestCase):
                 return dict(EVIDENCE)
             evidence.calls = 0
             output = io.StringIO()
-            with patch.dict(os.environ, {"TF_VAR_deployment_client_id": CLIENT}, clear=True), \
+            with patch.dict(os.environ, {
+                "TF_VAR_deployment_client_id": CLIENT,
+                "TF_VAR_auth_allowed_principal_object_ids": OWNER,
+            }, clear=True), \
                  patch.object(review, "check_infrastructure_approval"), \
                  patch.object(review, "check_current_main"), \
                  patch.object(review, "check_release_quiescent"), \
@@ -260,6 +263,7 @@ class ProvisioningTests(unittest.TestCase):
         commands = self.exercise("plan")
         plan = next(args for args, _ in commands if "plan" in args)
         self.assertIn("-var=bootstrap_only=true", plan)
+        self.assertIn("-var=auth_allowed_principal_object_ids=", plan)
         self.assertIn(f"-var=container_image={IMAGE}", plan)
         self.assertFalse(any("apply" in args or "start" in args for args, _ in commands))
 

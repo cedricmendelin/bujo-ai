@@ -465,6 +465,7 @@ def infrastructure_main(args, account):
         run_text([
             "terraform", "-chdir=infra", "plan", "-input=false", "-lock-timeout=5m",
             "-var-file=prod.tfvars", "-var=bootstrap_only=true",
+            "-var=auth_allowed_principal_object_ids=",
             f"-var=container_image={evidence['expected_image']}", f"-out={args.plan}",
         ], private_log=args.plan.with_suffix(".plan.log"))
     digest = sha256(args.plan)

@@ -351,6 +351,74 @@ class InfrastructurePlanTests(unittest.TestCase):
                     unknown["template"][0]["container"][0][field] = True
                 self.assert_rejected(plan, "unknown input values")
 
+    def test_live_entra_tag_metadata_is_computed_without_allowing_unknown_permissions(self):
+        plan = self.plan("baseline_full_plan")
+        for address, fields in (
+            ("azuread_application.api", ("feature_tags",)),
+            ("azuread_service_principal.api", ("feature_tags", "features")),
+        ):
+            change = resource(plan, address)["change"]
+            for field in fields:
+                change["after_unknown"][field] = True
+                change["after"].pop(field, None)
+        self.validate(plan)
+
+        resource(plan, "azuread_application.api")["change"]["after_unknown"]["required_resource_access"] = True
+        with self.assertRaisesRegex(ValueError, "azuread_application.api"):
+            self.validate(plan)
+
+        plan = self.plan("baseline_full_plan")
+        unknown = resource(plan, "azuread_application.api")["change"]["after_unknown"]
+        unknown["feature_tags"] = [{"private_key_must_not_appear": True}]
+        with self.assertRaisesRegex(ValueError, "unknown input values") as error:
+            self.validate(plan)
+        self.assertNotIn("private_key_must_not_appear", str(error.exception))
+
+    def retained_template_plan(self):
+        plan = self.plan("baseline_full_plan")
+        app = resource(plan, "module.container_app.azapi_resource.container_app")["change"]
+        app["actions"] = ["update"]
+        app["after"]["id"] = EXPECTED_APP_ID
+        app["after"]["body"]["properties"]["template"]["containers"][0]["env"] = []
+        app["before"] = copy.deepcopy(app["after"])
+        app["after_unknown"].pop("id", None)
+        app["after_unknown"].get("body", {}).get("properties", {}).pop("template", None)
+        patch = resource(plan, "module.container_app.azapi_resource_action.post_creation_update")
+        patch["change"]["actions"] = ["delete", "create"]
+        patch["action_reason"] = "replace_by_triggers"
+        return plan
+
+    def test_existing_app_uses_the_scheduled_patch_for_environment_validation(self):
+        plan = self.retained_template_plan()
+        inventory = self.validate(plan)
+        self.assertIn(("module.container_app.azapi_resource_action.post_creation_update", "delete"), inventory)
+
+    def test_retained_environment_requires_an_unchanged_template_and_an_actual_patch(self):
+        for mutation in ("template", "patch", "target", "missing-target", "sql", "allowlist", "secret"):
+            with self.subTest(mutation=mutation):
+                plan = self.retained_template_plan()
+                app = resource(plan, "module.container_app.azapi_resource.container_app")["change"]
+                patch = resource(plan, "module.container_app.azapi_resource_action.post_creation_update")["change"]
+                environment = patch["after"]["body"]["properties"]["template"]["containers"][0]["env"]
+                if mutation == "template":
+                    app["after"]["body"]["properties"]["template"]["containers"][0]["env"] = [
+                        {"name": "unexpected", "value": "unexpected"}
+                    ]
+                elif mutation == "patch":
+                    patch["actions"] = ["no-op"]
+                elif mutation == "target":
+                    patch["after"]["resource_id"] = EXPECTED_APP_ID + "-other"
+                elif mutation == "missing-target":
+                    patch["after"]["resource_id"] = None
+                    patch["after_unknown"].pop("resource_id", None)
+                elif mutation == "sql":
+                    environment[0]["value"] = "Server=unexpected;Password=unexpected"
+                elif mutation == "allowlist":
+                    environment[4]["value"] = "unexpected"
+                else:
+                    environment[1]["secretRef"] = "unexpected"
+                self.assert_rejected(plan)
+
 
 if __name__ == "__main__":
     unittest.main()
