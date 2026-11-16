@@ -11,8 +11,14 @@ using Microsoft.IdentityModel.Tokens;
 
 var shouldMigrate = args.Contains("--migrate", StringComparer.Ordinal);
 var shouldMigrateOnly = args.Contains("--migrate-only", StringComparer.Ordinal);
+var shouldVerifyDatabase = args.Contains("--verify-database", StringComparer.Ordinal);
+if (new[] { shouldMigrate, shouldMigrateOnly, shouldVerifyDatabase }.Count(enabled => enabled) > 1)
+{
+    throw new InvalidOperationException("Migration and database verification modes cannot be combined.");
+}
+
 var builder = WebApplication.CreateBuilder(args.Where(argument =>
-    argument is not "--migrate" and not "--migrate-only").ToArray());
+    argument is not "--migrate" and not "--migrate-only" and not "--verify-database").ToArray());
 
 var tenantSetting = builder.Configuration["Auth:TenantId"];
 var tenantId = Guid.TryParse(tenantSetting, out var parsedTenantId)
@@ -90,6 +96,23 @@ if (shouldMigrate || shouldMigrateOnly)
     await context.Database.MigrateAsync();
 
     if (shouldMigrateOnly)
+    {
+        await app.DisposeAsync();
+        return;
+    }
+}
+
+if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:VerifyDatabaseOnStart"))
+{
+    var result = await app.Services.GetRequiredService<HealthCheckService>()
+        .CheckHealthAsync(registration => registration.Tags.Contains("ready"));
+    if (result.Status != HealthStatus.Healthy)
+    {
+        throw new InvalidOperationException(
+            "Journal database verification failed. Verify the release migrations and runtime SQL data permissions.");
+    }
+
+    if (shouldVerifyDatabase)
     {
         await app.DisposeAsync();
         return;

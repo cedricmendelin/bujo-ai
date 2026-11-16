@@ -43,6 +43,10 @@ module "container_app" {
             value = local.runtime_sql_connection_string
           },
           {
+            name  = "Deployment__VerifyDatabaseOnStart"
+            value = "true"
+          },
+          {
             name  = "Auth__TenantId"
             value = data.azurerm_client_config.current.tenant_id
           },

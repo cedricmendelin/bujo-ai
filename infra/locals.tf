@@ -19,7 +19,12 @@ locals {
 
   runtime_sql_connection_string   = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.identity.client_id}"
   migration_sql_connection_string = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.migration_identity.client_id}"
-  auth_allowed_principals = join(",", [
+  deployment_uses_current_identity = (
+    var.deployment_client_id == ""
+    || lower(var.deployment_client_id) == lower(data.azuread_client_config.current.client_id)
+  )
+  api_owner_object_id = local.deployment_uses_current_identity ? data.azuread_client_config.current.object_id : data.azuread_service_principal.deployment[0].object_id
+  auth_allowed_principals = trimspace(var.auth_allowed_principal_object_ids) == "" ? "" : join(",", [
     for object_id in split(",", var.auth_allowed_principal_object_ids) :
     "${data.azurerm_client_config.current.tenant_id}:${trimspace(object_id)}"
   ])

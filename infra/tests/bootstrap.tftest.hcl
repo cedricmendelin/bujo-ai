@@ -30,6 +30,7 @@ variables {
   sql_entra_admin_object_id         = "00000000-0000-0000-0000-000000000001"
   auth_allowed_principal_object_ids = ""
   budget_alert_email                = "test@example.com"
+  container_image                   = "ghcr.io/cedricmendelin/bujo-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 
 run "deployment_requires_allowlist" {
@@ -57,7 +58,7 @@ run "migration_job_uses_application_image" {
 
   variables {
     auth_allowed_principal_object_ids = "00000000-0000-0000-0000-000000000002"
-    container_image                   = "example.invalid/app:commit"
+    container_image                   = "ghcr.io/cedricmendelin/bujo-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
 
   plan_options {
@@ -65,7 +66,7 @@ run "migration_job_uses_application_image" {
   }
 
   assert {
-    condition     = azurerm_container_app_job.migration.template[0].container[0].image == "example.invalid/app:commit" && azurerm_container_app_job.migration.template[0].container[0].command[0] == "dotnet" && azurerm_container_app_job.migration.template[0].container[0].args[0] == "--migrate-only"
+    condition     = azurerm_container_app_job.migration.template[0].container[0].image == "ghcr.io/cedricmendelin/bujo-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" && azurerm_container_app_job.migration.template[0].container[0].command[0] == "dotnet" && azurerm_container_app_job.migration.template[0].container[0].args[0] == "--migrate-only"
     error_message = "Normal deployment must use the application migration image and command."
   }
 }

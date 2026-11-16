@@ -8,9 +8,15 @@ assistant.
 
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
-The application workload is not yet provisioned; its manually bootstrapped Azure
-prerequisites are documented in [the infrastructure guide](docs/infrastructure.md)
-and the [deployment guide](docs/deployment.md).
+The journal host/API and SQL persistence are implemented; a usable PWA and MCP
+tools remain separate stories. Production was last verified running the Azure
+quickstart image, not the journal host. The owner-reviewed infrastructure-first
+path provisions API/hosting resources before manual application setup; an
+unhealthy app is an accepted intermediate state. Bootstrap and permission
+setup are documented in [the infrastructure guide](docs/infrastructure.md)
+and the [deployment guide](docs/deployment.md). On a prepared baseline, after one-time activation,
+successful `main` CI releases deploy the tested host image through the migration
+gate; merging alone is not evidence that production is ready.
 
 ## Product and design
 
@@ -197,10 +203,14 @@ before implementation starts.
 Issues are implemented through the [governed delivery workflow](docs/workflow.md):
 `/plan` → owner approves with `plan:approved` → Copilot cloud agent (or a local
 GitHub Copilot app session) with the owning Squad custom agent → Squad Review
-(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → owner-dispatched
-deployment from `main`. Infrastructure is Terraform with Azure Verified Modules in Switzerland
+(Architect, Security, Verifier, DevOps) plus CI → squash auto-merge → successful
+`main` CI → gated deployment after one-time owner activation. Infrastructure is
+Terraform with Azure Verified Modules in Switzerland
 North. PR checks do not access Azure; the owner runs infrastructure plans locally.
-The `main` deployment uses GitHub OIDC, budgeted under 50 USD/month.
+The deployment uses GitHub OIDC and the exact tested image digest for migration
+and application rollout. The budget target is under 50 USD/month, not a spending
+cap. Future PWA/MCP capabilities integrated into the host use the same release
+pipeline; their feature implementation is not part of the deployment work.
 
 The [infrastructure guide](docs/infrastructure.md) documents the Terraform
 resources, OIDC bootstrap, owner-run plans, runtime Key Vault role assignment,

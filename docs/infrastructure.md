@@ -1,5 +1,12 @@
 # Production infrastructure
 
+> Automatic releases stay disabled until the owner completes
+> [#55](https://github.com/cedricmendelin/bujo-ai/issues/55) and sets
+> `BUJO_OWNER_SETUP_CONFIRMED` and `BUJO_DEPLOYMENT_ENABLED` (see
+> [production deployment](deployment.md#activation-owner-only)). Grants,
+> consent, the migration bootstrap placeholder (B6), initial serving configuration and the first live release are not
+> yet evidenced; production still runs the legacy quickstart image.
+
 The `infra/` Terraform root provisions one production environment in Switzerland
 North. It uses pinned Azure Verified Modules, an owner-created resource group,
 Azure Blob remote state, and one GitHub Actions OIDC deployment identity. The
@@ -18,14 +25,20 @@ passwords, or Terraform-managed Key Vault values.
 
 The app resource group `bujo-ai-rg` must be created by the owner before the
 first deployment. Terraform looks it up as data rather than managing it. The
-deployment first provisions the migration job and its dependencies without
-changing the running app revision. It starts one migration execution and waits
-for that exact execution to succeed before applying the new app image and
-probing `/health/live`. A missing or failed migration prevents app promotion.
-The app's external ingress forwards to container port 8080, with 0.25 vCPU/0.5 GiB and zero to one
-replica. Deployment publishes the root `Dockerfile` image to GHCR with the
-commit-SHA tag; the public quickstart image is only the fallback when no
-Dockerfile exists.
+owner reviews the exact infrastructure-first plan and authorizes its saved hash;
+the owner-only workflow or local helper can then provision the API/hosting baseline
+before application-specific manual setup. Afterwards each routine release first moves
+only the migration job to the release digest, runs one correlated execution,
+and only after it succeeds promotes the app image, then verifies the exact
+revision, the startup database check, `/health/live` and an anonymous 401 (see
+[production deployment](deployment.md#migration-and-promotion-gate)). The app's
+external ingress forwards to container port 8080, with 0.25 vCPU/0.5 GiB and
+zero to one replica. Releases use only the CI-built
+`ghcr.io/cedricmendelin/bujo-ai@sha256:<digest>` image; `container_image` must
+be such a digest. During the explicitly reviewed `bootstrap_only=true` baseline,
+the existing app image is read live and retained, and the migration job remains
+inert. No new app placeholder or real-release quickstart fallback is introduced.
+Application health may be incomplete while the owner configures manual setup.
 
 ## Resources and modules
 
@@ -119,7 +132,8 @@ guide.
    workflow receives the immutable `environment:prod` subject.
 5. Grant the deployment service principal only:
    * **Contributor** on `bujo-ai-rg`
-   * **Storage Blob Data Contributor** on the `tfstate` container only
+   * **Storage Blob Data Contributor** on the `tfstate` container only (state
+     and the release journal blob `deployments/bujo-ai-prod-release.json`)
 
 Contributor does not include Azure RBAC role-assignment write actions or
 Key Vault data actions. Do not grant the deployment identity Owner, User Access
@@ -135,7 +149,11 @@ principal. Grant the deployment service principal the Microsoft Graph
 in the target tenant. The Terraform-created application and service principal
 list that deployment principal as an owner. The pinned AzureAD 3.10.0 provider
 documents this permission for both resources when the Terraform principal owns
-them; `infra/api.tf` sets it as owner on each. This verifies the provider's
+them; `infra/api.tf` resolves `deployment_client_id` to the intended deployment
+service principal and sets it as owner on each, including when a local user
+creates the baseline. Provisioning and release workflows pass `AZURE_CLIENT_ID`
+through `TF_VAR_deployment_client_id`; this avoids changing ownership when
+switching from local bootstrap to OIDC. This verifies the provider's
 documented permission contract, not a live tenant apply. Do not grant
 `Application.ReadWrite.All`; the deployment identity otherwise retains only
 its resource-group and state-container roles described above.
@@ -157,8 +175,10 @@ GitHub settings and are never committed:
 | `TFSTATE_KEY` | State blob name, normally `prod.tfstate` |
 | `SQL_ENTRA_ADMIN_OBJECT_ID` | Object ID of the Entra SQL administrator security group |
 | `SQL_ENTRA_ADMIN_LOGIN` | Display name of that Entra security group |
-| `API_ALLOWED_PRINCIPAL_OBJECT_IDS` | Comma-separated object IDs of users allowed by the API authorization policy |
+| `API_ALLOWED_PRINCIPAL_OBJECT_IDS` | Comma-separated API account object IDs; can be absent for initial IaC (deny all), required before application activation |
 | `BUDGET_ALERT_EMAIL` | Address to receive Azure budget alerts |
+| `BUJO_OWNER_SETUP_CONFIRMED` | `true` only after the owner completes the #55 checklist; an explicit attestation, not automatic permission proof |
+| `BUJO_DEPLOYMENT_ENABLED` | `true` only once setup is verified; enables automatic releases (unset to stop) |
 
 Create an Entra security group for the SQL administrator, add the owner account
 as a member, and use the group's object ID and display name for the two SQL
@@ -217,34 +237,30 @@ merged after the owner has reviewed its local plan.
 
 ## First deployment and identity configuration
 
-The owner manually dispatches `deploy.yml` from `main`. It builds and pushes a GHCR image only
-when a root `Dockerfile` exists, authenticates to Azure through the single
-immutable-subject OIDC identity, and locks remote state. Terraform first
-applies only the migration job and its dependencies, leaving the current app
-revision untouched. The workflow triggers the manual job and requires its
-start response to identify the exact execution. It polls that execution; only success permits the full
-Terraform apply that promotes the image, followed by a public `/health/live`
-probe. Failed, ambiguous, or timed-out migration executions stop deployment
-before promotion. A start response without an execution ID, including an HTTP
-202 response, also stops promotion; safe correlation for that response remains
-to be implemented. Without a `Dockerfile`, the public quickstart image is used.
-The configured resource-group Contributor role includes the resource-management
-scope; live OIDC authorization remains untested until the owner runs deployment.
+Releases run automatically from `deploy.yml` after a successful CI push run on
+`main`, once activated; a manual dispatch accepts only a previous successful
+main CI run ID for recovery. The workflow admits the exact CI release before
+Azure access, authenticates through the single immutable-subject OIDC identity,
+serializes on `terraform-prod`, and runs `infra/deploy_gate.py`. The gate only
+updates the migration job and the app image; any other pending infrastructure
+change blocks the release and must be applied by the owner first (with the
+currently deployed digest as `container_image`). Live OIDC authorization
+remains untested until the owner's first release.
 
-Before the first migration can succeed, grant the SQL logical server identity
-directory lookup access. Terraform enables a system-assigned identity on the
-server, but does not manage Microsoft Entra role assignments. A Privileged
-Role Administrator must assign that identity the **Directory Readers** role,
-or the least-privilege Graph permissions documented by Microsoft, before
-`CREATE USER ... FROM EXTERNAL PROVIDER` can resolve managed identities.
+If SQL cannot resolve a managed identity while creating its database principal,
+the tenant administrator must inspect the required directory lookup permissions.
+Terraform enables a system-assigned identity on the server, but does not manage
+Microsoft Entra role assignments. Grant only the SQL server identity's necessary
+lookup permissions, using Microsoft's least-privilege guidance; do not assume
+the broad **Directory Readers** role is always required.
 This permission is not granted to the runtime, migration, or deployment
 identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
-Approved plan v6 requires an owner-controlled staged bootstrap before these
-grants. Follow the [stage-one plan and review procedure](deployment.md#stage-one-bootstrap);
-do not run production deployment until the reviewed bootstrap plan is applied
-by the owner and all grants and other prerequisites are complete. Also grant
+The owner-reviewed infrastructure baseline comes first. Follow the
+[infrastructure-first plan and review procedure](deployment.md#infrastructure-first-bootstrap), then these
+grants and the [application baseline](deployment.md#first-release-baseline); do not
+activate releases until all grants and other prerequisites are complete. Also grant
 the deployment application the Microsoft Graph permission described above.
 
 For the owner's local grant session, Azure SQL must be reachable from the

@@ -109,14 +109,22 @@ Issue #5 implements the [EF Core SQL Server provider](https://learn.microsoft.co
 and versioned [migrations](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/).
 The production migration job uses a separate identity rather than granting the
 runtime schema-owner privileges. Avoid automatic application-start migrations.
+The deployed runtime instead verifies all release-required migrations and its
+table data permissions before opening HTTP, without DDL or test writes.
 Azure SQL-specific parity, full-text behavior and restore procedures remain
 separate verification work.
 
 ### Deployment, identity and availability
 
-Issue #5 prepares a single Container Apps host and a separately triggered
-migration job, but does not authorize or perform Azure provisioning. The app
-image is promoted only after the migration execution succeeds; see the
+Issue #5 plan v9 separates owner-reviewed infrastructure provisioning from
+manual application setup and app readiness. An owner-authorized workflow or
+local helper applies the exact saved baseline, retaining the existing app image
+and an inert migration job; an unhealthy app is an accepted intermediate state,
+not a successful release. It then permits automatic routine deployment after successful trusted
+`main` CI and explicit one-time activation. PR execution never obtains Azure
+credentials. A single Container Apps host and the separately executed migration
+job use the same tested immutable image. The app image is promoted only after
+the exact migration execution succeeds; see the
 [deployment guide](../deployment.md). The database remains a candidate General
 Purpose serverless database with the [free tier explicitly enabled](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier?view=azuresql);
 ordinary serverless without the free-limit setting is billable. Verify eligible

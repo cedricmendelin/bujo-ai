@@ -53,3 +53,20 @@ output "api_application_identifier_uri" {
   description = "Identifier URI of the Bujo-AI API application."
   value       = local.api_identifier_uri
 }
+
+output "container_app_id" {
+  description = "Resource ID of the production container app, used by the release gate."
+  value       = module.container_app.resource_id
+}
+
+output "migration_sql_connection_string" {
+  description = "Trusted passwordless SQL target of the migration identity; read only by the release gate."
+  value       = local.migration_sql_connection_string
+  sensitive   = true
+}
+
+output "runtime_sql_connection_string" {
+  description = "Trusted passwordless SQL target of the runtime identity; read only by the release gate."
+  value       = local.runtime_sql_connection_string
+  sensitive   = true
+}

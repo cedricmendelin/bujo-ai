@@ -20,7 +20,7 @@ issue ──/plan──▶ Architect plan comment (v1, owner: builder|ai|devops|
           CI + Squad Review / Architect · Security · Verifier · DevOps
                                          │
                       Squad Review Gate (workflow_run aggregator)
-           all success ──▶ merge-readiness check + GitHub auto-merge ──▶ main ──▶ owner-dispatched deploy
+           all success ──▶ merge-readiness check + GitHub auto-merge ──▶ main ──▶ green CI ──▶ gated deploy
            review finding ──▶ bounded fix via @copilot (cloud) or Agent merge (local)
            failed workflow/conflict ──▶ native Watch and fix (cloud) or Agent merge (local)
                                         max 3 review-fix rounds ──▶ needs:human + @cedricmendelin
@@ -614,4 +614,8 @@ environment (that environment is only for the cloud agent's runtime).
 - Desktop-app Agent merge is optional local takeover. Cloud PRs use native
   Watch and fix plus the bounded review bridge; activation and native repair
   success still need live rollout evidence, not just passing unit tests.
-- Infrastructure deployment is owner-dispatched from `main`; see [infrastructure operations](infrastructure.md).
+- After one-time owner activation, successful trusted `main` CI releases trigger
+  OIDC deployment of the tested image through the exact-execution migration
+  gate. Bootstrap, consent and SQL grants remain owner-controlled; see
+  [deployment operations](deployment.md). Routine activation does not authorize
+  destructive infrastructure changes, broader permissions or unreviewed costs.
