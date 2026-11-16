@@ -8,7 +8,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..', '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('binding caller uses trusted default-branch checkout, plan core, GITHUB_TOKEN writes and owner-only external writes', () => {
+test('binding caller uses trusted code, bot-authored records and owner-token notifications', () => {
   const workflow = read('.github/workflows/squad-plan-binding.yml');
   assert.match(workflow, /workflow_run:\s*\n\s+workflows:\s*\[Squad Plan, Squad Plan Approved\]/);
   assert.match(workflow, /types:\s*\[created, edited, deleted\]/);
@@ -24,6 +24,13 @@ test('binding caller uses trusted default-branch checkout, plan core, GITHUB_TOK
   assert.match(workflow, /cross-referenced/);
   assert.match(workflow, /plan:waived/);
   assert.match(workflow, /disablePullRequestAutoMerge/);
+  assert.match(workflow, /async writeRecord\(number, body\) \{\s*await github\.rest\.issues\.createComment/);
+  assert.match(workflow, /async removeLabel\(number, name\) \{\s*await agent\.rest\.issues\.removeLabel/);
+  assert.match(workflow, /async commentIssue\(number, body\) \{\s*await agent\.rest\.issues\.createComment/);
+  assert.match(workflow, /async commentPr\(number, body\) \{\s*await agent\.rest\.issues\.createComment/);
+  assert.match(workflow, /squad-plan-binding-failure/);
+  assert.match(workflow, /issues\.updateComment/);
+  assert.match(workflow, /payload\.issue\.pull_request/);
   assert.doesNotMatch(workflow, /checkout@[^ \n]+\n\s+with:\s*\n\s+ref:\s*\$\{\{\s*github\.event\.pull_request\.head/);
 });
 
@@ -110,20 +117,25 @@ test('all generated review locks have a real same-job prompt dataflow and reject
   }
 });
 
-function workflowScript(file) {
-  const workflow = read(`.github/workflows/${file}`).replace(/\r\n/g, '\n');
+function workflowScript(file, stepName) {
+  let workflow = read(`.github/workflows/${file}`).replace(/\r\n/g, '\n');
+  if (stepName) {
+    const step = workflow.indexOf(`      - name: ${stepName}`);
+    assert.ok(step >= 0, `missing step ${stepName} in ${file}`);
+    workflow = workflow.slice(step);
+  }
   const block = workflow.match(/          script: \|\n([\s\S]*?)(?=\n {0,10}\S|$)/)?.[1];
   assert.ok(block, `missing script for ${file}`);
   return block.split('\n').map(line => line.slice(12)).join('\n');
 }
 
-async function runCaller(file, github, context, { agent = github, env = {}, requireOverride } = {}) {
+async function runCaller(file, github, context, { agent = github, env = {}, requireOverride, stepName } = {}) {
   const errors = [];
   const core = { info() {}, error() {}, setFailed: text => errors.push(text) };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const load = name => requireOverride?.(name) ?? (name.startsWith('./.github/scripts/')
     ? require(path.join(root, name)) : require(name));
-  await new AsyncFunction('require', 'github', 'getOctokit', 'core', 'context', 'process', workflowScript(file))(
+  await new AsyncFunction('require', 'github', 'getOctokit', 'core', 'context', 'process', workflowScript(file, stepName))(
     load, github, () => agent, core, context, { env });
   return errors;
 }
@@ -242,6 +254,76 @@ test('binding caller leaves an owner approval-label event to the approval workfl
     },
   });
   assert.deepEqual(errors, [], 'no migration/API access is allowed before the approval caller finishes');
+});
+
+test('binding caller ignores PR comments and trusted notices but reconciles forged notice markers', async () => {
+  const reconciledIssues = [];
+  const requireOverride = name => name === './.github/scripts/plan-binding'
+    ? {
+      CHECK: 'Squad Plan Binding',
+      reconcileIssue: async (_api, { issueNumber }) => {
+        reconciledIssues.push(issueNumber);
+        return { state: 'ok' };
+      },
+    }
+    : undefined;
+  const contexts = [
+    { issue: { number: 44, pull_request: { url: 'https://api.github.test/pulls/44' } }, comment: { user: { login: 'reviewer' }, body: 'Review note' } },
+    { issue: { number: 48 }, comment: { user: { login: 'owner' }, body: '<!-- squad-plan-binding-failure -->\nFailure notice' } },
+    { issue: { number: 5 }, comment: { user: { login: 'owner' }, body: '<!-- squad-plan-binding:5:legacy -->\nPlan notice' } },
+    { issue: { number: 7 }, comment: { user: { login: 'github-actions[bot]' }, body: '<!-- squad-plan-binding:7:legacy -->\nPlan notice' } },
+  ];
+  for (const payload of contexts) {
+    const errors = await runCaller('squad-plan-binding.yml', {}, {
+      repo: { owner: 'owner', repo: 'repo' }, eventName: 'issue_comment',
+      payload: { ...payload, repository: { owner: { login: 'owner' } } },
+    }, { requireOverride });
+    assert.deepEqual(errors, []);
+  }
+  assert.deepEqual(reconciledIssues, []);
+
+  const errors = await runCaller('squad-plan-binding.yml', {}, {
+    repo: { owner: 'owner', repo: 'repo' }, eventName: 'issue_comment',
+    payload: {
+      issue: { number: 19 },
+      comment: { user: { login: 'collaborator' }, body: '<!-- squad-plan-binding-failure -->\nForged notice' },
+      repository: { owner: { login: 'owner' } },
+    },
+  }, { requireOverride });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(reconciledIssues, [19]);
+});
+
+test('binding failure reporter creates one marked notice and updates it instead of posting duplicates', async () => {
+  const state = { comments: [], calls: [], nextId: 1 };
+  const issues = {
+    listForRepo: async () => ({ data: [{ number: 48, title: 'Squad Plan Binding reconciliation failed' }] }),
+    listComments: async () => ({ data: structuredClone(state.comments) }),
+    createComment: async ({ issue_number, body }) => {
+      state.calls.push(['create', issue_number, body]);
+      state.comments.push({ id: state.nextId++, body });
+    },
+    updateComment: async ({ comment_id, body }) => {
+      state.calls.push(['update', comment_id, body]);
+      state.comments = state.comments.map(comment => comment.id === comment_id ? { ...comment, body } : comment);
+    },
+  };
+  const github = {
+    rest: { issues },
+    paginate: async (method, args) => (await method(args)).data,
+  };
+  const context = { repo: { owner: 'owner', repo: 'repo' }, serverUrl: 'https://github.test', runId: 100 };
+  for (const runId of [100, 101]) {
+    context.runId = runId;
+    assert.deepEqual(await runCaller('squad-plan-binding.yml', github, context, {
+      stepName: 'Report reconciliation failure', env: { HUMAN: 'owner' },
+    }), []);
+  }
+  assert.deepEqual(state.calls.map(call => call[0]), ['create', 'update']);
+  assert.equal(state.calls[0][1], 48);
+  assert.equal(state.calls[1][1], state.comments[0].id);
+  assert.match(state.comments[0].body, /<!-- squad-plan-binding-failure -->/);
+  assert.match(state.comments[0].body, /actions\/runs\/101/);
 });
 
 test('real binding workflow follows PR connection cursors beyond 100 lifetime PRs and paginates timeline evidence', async () => {
