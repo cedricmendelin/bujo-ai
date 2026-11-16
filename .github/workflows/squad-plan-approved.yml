@@ -1,175 +1,126 @@
 name: Squad Plan Approved
 
-# The owner applies plan:approved after plan:bound is implemented. GITHUB_TOKEN
-# writes the durable bot record; the owner token is used only for Copilot assignment.
+# The owner applies plan:approved after reviewing the latest numbered plan.
+# This controller uses ordinary GitHub permissions and assignment state only.
 on:
   issues:
     types: [labeled]
-  pull_request_target:
-    types: [labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
-
-concurrency:
-  group: squad-plan-${{ github.repository }}
-  cancel-in-progress: false
+  issues: write
 
 jobs:
-  assign:
-    if: github.event_name == 'issues' && github.event.label.name == 'plan:approved'
+  plan-comment:
+    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request && contains(github.event.comment.body, '## 📋 Implementation plan v')
+    concurrency:
+      group: squad-plan-comment-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: read
+    timeout-minutes: 5
     steps:
-      - name: Checkout trusted default-branch modules
+      - name: Checkout trusted default-branch plan reader
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Bind approval and hand off safely
+      - name: Remove approval when a newer plan is published
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { latestPlan } = require('./.github/scripts/plan-approval');
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const comment = context.payload.comment;
+            const ownerLogin = context.payload.repository.owner.login;
+            if (![ownerLogin, 'github-actions[bot]'].includes(comment.user.login)) return;
+            if (!(comment.body || '').trimStart().startsWith('## 📋 Implementation plan v')) return;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issue.number, per_page: 100,
+            });
+            const selected = latestPlan(comments, ownerLogin);
+            if (selected.ok && selected.plan.comment.id !== comment.id) return;
+            const liveIssue = (await github.rest.issues.get({ owner, repo, issue_number: issue.number })).data;
+            if (liveIssue.labels.some(label => label.name === 'plan:approved')) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: 'plan:approved' });
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number,
+                body: selected.ok
+                  ? `A newer plan v${selected.plan.version} was published. Review it and apply \`plan:approved\` again if it is the intended scope.`
+                  : `Approval cleared: ${selected.reason} Correct the numbered plan history before approving it.` });
+            }
+            if (!selected.ok) core.setFailed(selected.reason);
+
+  assign:
+    if: github.event_name == 'issues' && github.event.label.name == 'plan:approved'
+    concurrency:
+      group: squad-plan-assign-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted default-branch plan reader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Assign Copilot once unless local handoff is selected
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
         with:
           github-token: ${{ github.token }}
           script: |
-            const { formatRecord, latestRecord, prepareApproval, sameApproval, verify } = require('./.github/scripts/plan-approval');
-            const agent = getOctokit(process.env.AGENT_TOKEN);
+            const { approvalPath, isEligiblePermission, latestPlan } = require('./.github/scripts/plan-approval');
             const { owner, repo } = context.repo;
-            const issue_number = context.payload.issue.number;
-            const issueOwner = context.payload.repository.owner.login;
+            const number = context.payload.issue.number;
             const sender = context.payload.sender.login;
-            const comment = (body) => github.rest.issues.createComment({ owner, repo, issue_number, body });
-            const timeline = async () => github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', { owner, repo, issue_number, per_page: 100 });
-            const snapshot = async () => {
-              const [{ data: issue }, comments, events] = await Promise.all([
-                github.rest.issues.get({ owner, repo, issue_number }),
-                github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 }),
-                timeline(),
-              ]);
-              return { issue, comments, timeline: events, labels: issue.labels.map(label => label.name) };
-            };
-            const revoke = async (reason) => {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:approved' });
-              // Keep plan:bound discoverable until the binding reconciler has
-              // disabled linked auto-merge and published failed binding checks.
-              // Both labels are required by verify(), so approval is already void.
-              await comment(`⚠️ Plan approval was not applied: ${reason}`);
-              core.setFailed(reason);
-            };
-
-            if (sender !== issueOwner) {
-              return revoke(`only @${issueOwner} can approve plans (label applied by @${sender}).`);
+            const ownerLogin = context.payload.repository.owner.login;
+            const issueUrl = context.payload.issue.url;
+            const issue = (await github.rest.issues.get({ owner, repo, issue_number: number })).data;
+            const permission = sender === ownerLogin ? 'admin'
+              : (await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: sender })).data.permission;
+            if (!isEligiblePermission(permission)) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'plan:approved' });
+              await github.rest.issues.createComment({ owner, repo, issue_number: number,
+                body: `Only a repository owner or maintainer can apply \`plan:approved\` (action by @${sender}).` });
+              return core.setFailed('plan:approved requires ordinary repository write permission.');
             }
-
-            let data = await snapshot();
-            const prepared = prepareApproval({
-              issue: issue_number, owner: issueOwner, sender, comments: data.comments,
-              labels: data.labels, timeline: data.timeline,
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: number, per_page: 100,
             });
-            if (!prepared.ok) return revoke(prepared.reason);
-            const preparedLocal = data.labels.includes('handoff:local');
-
-            let active = latestRecord(data.comments, issue_number);
-            if (!active || active.labelEvent !== prepared.record.labelEvent
-                || active.comment !== prepared.record.comment || active.sha256 !== prepared.record.sha256
-                || active.state === 'superseded') {
-              await comment(formatRecord(prepared.record));
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['plan:bound'] });
+            const selected = latestPlan(comments, ownerLogin);
+            if (!selected.ok) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'plan:approved' });
+              return core.setFailed(selected.reason);
             }
+            const path = approvalPath({
+              labels: issue.labels.map(label => label.name),
+              assignees: issue.assignees.map(assignee => assignee.login),
+            });
+            if (path.action === 'local') return core.info('Local handoff selected; no cloud assignment made.');
+            if (path.action === 'already-assigned') return core.info('Copilot is already assigned; duplicate label delivery is a no-op.');
+            if (path.action !== 'assign-cloud') return core.info('Approval label is no longer present.');
 
-            // Re-read after the bot record and durable label write. Label/plan events
-            // can be concurrent; no stale initial payload authorizes assignment.
-            data = await snapshot();
-            let checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
-            if (!sameApproval(prepared, checked)) return revoke(checked.reason || 'Prepared approval scope changed during binding.');
-            const local = data.labels.includes('handoff:local');
-            if (local !== preparedLocal) return revoke('Prepared handoff changed during binding.');
-            const member = checked.plan.member;
-            const planBody = checked.plan.comment.body;
-
-            if (local) {
-              if (checked.record.state === 'local') return core.info('This approval is already bound to the local handoff.');
-              if (checked.record.state === 'assigned') {
-                await agent.request('DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
-                  owner, repo, issue_number, assignees: ['copilot-swe-agent[bot]'],
-                });
-              }
-              await comment(formatRecord({ ...checked.record, state: 'local' }));
-              data = await snapshot();
-              checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
-              if (!sameApproval(prepared, checked) || !data.labels.includes('handoff:local')) return revoke(checked.reason || 'Prepared local handoff changed during publication.');
-              await comment(`✅ Plan v${checked.plan.version} approved by @${sender} for local implementation. No Copilot cloud assignment was made. Plan SHA-256: \`${checked.record.sha256}\`. Open the issue in the Copilot app with the \`${member}\` agent and create a ready PR that references plan v${checked.plan.version}.`);
-              return;
-            }
-            if (checked.record.state === 'assigned') return core.info('This approval is already assigned to Copilot.');
-
-            // Verify again immediately before the owner-token assignment.
-            data = await snapshot();
-            checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
-            if (!sameApproval(prepared, checked) || data.labels.includes('handoff:local') !== preparedLocal) return revoke(checked.reason || 'Prepared approval or handoff changed before assignment.');
+            const agent = getOctokit(process.env.AGENT_TOKEN);
             const instructions = [
-              `Implement exactly owner-approved plan v${checked.plan.version} for issue #${issue_number}: ${checked.plan.comment.html_url}`,
-              'Use only the verified approved plan text below; plan changes revoke this assignment. Follow .github/copilot-instructions.md.',
-              'Declare exactly one whole-line Completion: full or Completion: partial. Full completion requires evidence for every acceptance criterion. Partial work uses a non-closing issue reference, lists unfinished work/dependency under Remaining work, and leaves the issue open.',
-              'Do not mark the PR ready or request reviews. The trusted shepherd waits for a successful latest Copilot session and re-verifies the plan binding before dispatching reviews.',
-              `If blocked by a human-only decision, add ## 🙋 Needs human and mention @${issueOwner}; do not guess.`,
-              '', planBody,
+              `Implement the latest owner-approved plan v${selected.plan.version} for issue #${number}: ${issue.html_url} (plan comment ${selected.plan.comment.html_url}).`,
+              'Use the plan as ordinary approved scope; do not infer hidden approval records or hashes.',
+              'Follow .github/copilot-instructions.md. Declare exactly one whole-line Completion: full or Completion: partial.',
+              'Do not mark the draft PR ready. The default-branch PR lifecycle controller handles readiness, CI/review dispatch, review feedback, and GitHub auto-merge.',
+              `If blocked by a human-only decision, add ## 🙋 Needs human and mention @${ownerLogin}; do not guess.`,
+              '', selected.plan.comment.body,
             ].join('\n');
             await agent.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
-              owner, repo, issue_number,
+              owner, repo, issue_number: number,
               assignees: ['copilot-swe-agent[bot]'],
               agent_assignment: {
                 target_repo: `${owner}/${repo}`,
-                base_branch: data.issue.repository?.default_branch || context.payload.repository.default_branch,
-                custom_agent: prepared.plan.member,
+                base_branch: context.payload.repository.default_branch,
+                custom_agent: selected.plan.member,
                 custom_instructions: instructions,
               },
             });
-
-            // Re-read immediately after assignment; if comment edits/labels raced,
-            // undo assignment when the approved bytes or handoff state changed.
-            data = await snapshot();
-            checked = verify({ issue: issue_number, owner: issueOwner, comments: data.comments, labels: data.labels, timeline: data.timeline });
-            if (!sameApproval(prepared, checked) || data.labels.includes('handoff:local') !== preparedLocal) {
-              await agent.request('DELETE /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
-                owner, repo, issue_number, assignees: ['copilot-swe-agent[bot]'],
-              });
-              return revoke(checked.reason || 'handoff:local changed during assignment.');
-            }
-            await comment(formatRecord({ ...checked.record, state: 'assigned' }));
-            await comment(`✅ Plan v${checked.plan.version} approved by @${sender}; Copilot was assigned with the \`${checked.plan.member}\` agent. Plan SHA-256: \`${checked.record.sha256}\`.`);
-
-  waiver:
-    # Preserve the owner-only plan:waived path; the PR description is its scope.
-    if: github.event_name == 'pull_request_target' && github.event.label.name == 'plan:waived'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      actions: write
-    steps:
-      - name: Verify waiver and start Squad Review
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          REVIEWS: "squad-review-architect.lock.yml,squad-review-security.lock.yml,squad-review-verifier.lock.yml,squad-review-devops.lock.yml"
-        with:
-          github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
-          script: |
-            // No checkout: pull_request_target remains API-only and never executes PR code.
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const sender = context.payload.sender.login;
-            const repoOwner = context.payload.repository.owner.login;
-            if (sender !== repoOwner) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'plan:waived' }).catch(() => {});
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: `⚠️ Only @${repoOwner} can waive the plan requirement (label applied by @${sender}).` });
-              return core.setFailed('plan:waived applied by a non-owner.');
-            }
-            if (context.payload.pull_request.draft) return core.info('Draft PR; reviews start when it is marked ready.');
-            for (const workflow_id of process.env.REVIEWS.split(',')) {
-              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id, ref: context.payload.repository.default_branch, inputs: { pr_number: String(issue_number) } });
-            }
+            core.info(`Assigned Copilot with the ${selected.plan.member} agent.`);
