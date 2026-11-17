@@ -73,6 +73,15 @@ automatically removes `plan:approved`; `/plan revise` and `/plan route` also
 remove it. The label authorizes initial cloud assignment, not a cryptographic
 scope hash.
 
+## Manual Squad Retro
+
+The **Squad Retro** workflow is available in GitHub Actions and runs only when a
+user selects **Run workflow**. Choose a 7-, 14-, or 30-day lookback; the workflow
+publishes one report issue with evidence, friction, likely causes, and proposed
+improvements. It does not create separate action-item issues, assign work,
+dispatch another workflow, modify the repository, or schedule another run.
+Proposals are not approved or applied by publishing the report.
+
 Direct local PRs may use scope agreed in the Copilot conversation without an
 issue, plan, approval, or waiver prerequisite. If a PR links an issue plan, cite
 the plan version. Reviewers read the cited plan and issue acceptance criteria as
