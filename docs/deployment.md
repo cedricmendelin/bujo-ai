@@ -48,7 +48,9 @@ not an unrestricted apply or a weaker release gate.
    `BUJO_RELEASE_VALIDATED=true` and `BUJO_DEPLOYMENT_ENABLED=true`, and reruns
    `release_admission.py recheck` immediately before each cloud write (job
    update, job start, app promotion), so a newer main release or a replaced
-   attempt stops an older run before it changes anything.
+   attempt stops an older run before it changes anything. A plan blocked by
+   unexpected managed-resource changes reports only Terraform resource types
+   and planned actions; inspect the full plan privately before reconciling drift.
 
 ## Activation (owner only)
 
