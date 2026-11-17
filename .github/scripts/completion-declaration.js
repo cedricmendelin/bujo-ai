@@ -126,4 +126,45 @@ function evaluateCompletion(body, options = {}) {
   }
 }
 
-module.exports = { evaluateCompletion, LEGACY_PR_CUTOFF };
+function repairGeneratedClosingReferences(body, options) {
+  if (typeof body !== 'string') return body;
+  const prose = removeNonProse(body);
+  const declarations = [...prose.matchAll(/^\s*Completion\s*:\s*(full|partial)\s*$/gim)];
+  if (declarations.length !== 1 || declarations[0][1].toLowerCase() !== 'partial') return body;
+  // Only the known generated suffix is mutable; prose and examples are not.
+  const start = '<!-- START COPILOT CODING AGENT SUFFIX -->';
+  const end = '<!-- END COPILOT CODING AGENT SUFFIX -->';
+  if (body.split(start).length !== 2 || body.split(end).length > 2) return body;
+  const offset = body.indexOf(start) + start.length;
+  if (body.includes(end) && body.indexOf(end) < offset) return body;
+  const endOffset = body.indexOf(end, offset);
+  const suffix = body.slice(offset, endOffset < 0 ? body.length : endOffset);
+  if (/`|~~~|<!--/.test(suffix)) return body;
+  const repaired = suffix.replace(
+    /^( {0,3}-[ \t]+)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)([ \t]+(?:#[1-9]\d*|[a-z0-9_.-]+\/[a-z0-9_.-]+#[1-9]\d*|https:\/\/github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+\/issues\/[1-9]\d*))[ \t]*(?=\r?$)/gim,
+    '$1Refs$2',
+  );
+  const candidate = body.slice(0, offset) + repaired + body.slice(offset + suffix.length);
+  return candidate !== body && evaluateCompletion(candidate, options).ok ? candidate : body;
+}
+
+function partialHandoff(body, repository) {
+  if (typeof body !== 'string') return null;
+  const prose = removeNonProse(body);
+  if (!/^\s*Completion:\s*partial\s*$/im.test(prose)) return null;
+  const refs = [...prose.matchAll(/\b(?:Refs|Relates to|Part of)\s+(?:([a-z0-9_.-]+\/[a-z0-9_.-]+))?#([1-9]\d*)\b/gi)]
+    .filter(match => !match[1] || match[1].toLowerCase() === repository.toLowerCase());
+  const issues = [...new Set(refs.map(match => Number(match[2])))];
+  if (issues.length !== 1 || !Number.isSafeInteger(issues[0])) return null;
+  const lines = body.split(/\r?\n/);
+  const start = lines.findIndex(line => /^#{1,6}\s+Remaining work\s*$/i.test(line));
+  if (start < 0) return null;
+  const level = lines[start].match(/^#+/)[0].length;
+  let end = start + 1;
+  while (end < lines.length && !new RegExp(`^#{1,${level}}\\s`).test(lines[end])
+    && !lines[end].includes('<!-- START COPILOT CODING AGENT SUFFIX -->')) end++;
+  const remaining = lines.slice(start + 1, end).join('\n').trim();
+  return remaining ? { issue: issues[0], remaining } : null;
+}
+
+module.exports = { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, LEGACY_PR_CUTOFF };

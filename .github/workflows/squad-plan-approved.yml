@@ -7,6 +7,16 @@ on:
     types: [labeled]
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Open partial-delivery issue to continue under its existing approved plan
+        required: true
+        type: string
+      dependency_evidence:
+        description: Sanitized evidence that the dependency is satisfied; no secrets or scope changes
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -54,12 +64,16 @@ jobs:
             if (!selected.ok) core.setFailed(selected.reason);
 
   assign:
-    if: github.event_name == 'issues' && github.event.label.name == 'plan:approved'
+    if: (github.event_name == 'issues' && github.event.label.name == 'plan:approved') || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch)
     concurrency:
-      group: squad-plan-assign-${{ github.repository }}-${{ github.event.issue.number }}
+      group: squad-plan-assign-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.issue_number }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      actions: read
     steps:
       - name: Checkout trusted default-branch plan reader
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,19 +89,22 @@ jobs:
           script: |
             const { approvalPath, isEligiblePermission, latestPlan } = require('./.github/scripts/plan-approval');
             const { owner, repo } = context.repo;
-            const number = context.payload.issue.number;
+            const continuation = context.eventName === 'workflow_dispatch';
+            const number = Number(continuation ? context.payload.inputs.issue_number : context.payload.issue.number);
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('A valid issue number is required.');
             const sender = context.payload.sender.login;
             const ownerLogin = context.payload.repository.owner.login;
-            const issueUrl = context.payload.issue.url;
             const issue = (await github.rest.issues.get({ owner, repo, issue_number: number })).data;
             const permission = sender === ownerLogin ? 'admin'
               : (await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: sender })).data.permission;
             if (!isEligiblePermission(permission)) {
+              if (continuation) throw new Error('Scope continuation requires repository write permission.');
               await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'plan:approved' });
               await github.rest.issues.createComment({ owner, repo, issue_number: number,
                 body: `Only a repository owner or maintainer can apply \`plan:approved\` (action by @${sender}).` });
               return core.setFailed('plan:approved requires ordinary repository write permission.');
             }
+            if (issue.pull_request || issue.state !== 'open') throw new Error('Implementation requires an open issue, not a PR.');
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: number, per_page: 100,
             });
@@ -101,13 +118,61 @@ jobs:
               assignees: issue.assignees.map(assignee => assignee.login),
             });
             if (path.action === 'local') return core.info('Local handoff selected; no cloud assignment made.');
-            if (path.action === 'already-assigned') return core.info('Copilot is already assigned; duplicate label delivery is a no-op.');
-            if (path.action !== 'assign-cloud') return core.info('Approval label is no longer present.');
+            if (path.action === 'already-assigned' && !continuation) return core.info('Copilot is already assigned; duplicate label delivery is a no-op.');
+            if (!['assign-cloud', 'already-assigned'].includes(path.action)) return core.info('Approval label is no longer present.');
 
             const agent = getOctokit(process.env.AGENT_TOKEN);
+            if (continuation) {
+              const evidence = context.payload.inputs.dependency_evidence?.trim();
+              if (!evidence) throw new Error('Continuation requires sanitized dependency evidence.');
+              const marker = `<!-- squad-scope-resume:${context.runId} -->`;
+              if (comments.some(comment => [ownerLogin, 'github-actions[bot]'].includes(comment.user?.login)
+                  && (comment.body || '').includes(marker))) {
+                return core.info('This continuation run was already admitted; inspect its outcome before starting a new run.');
+              }
+              const timeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', {
+                owner, repo, issue_number: number, per_page: 100,
+              });
+              const references = timeline.filter(event => event.event === 'cross-referenced'
+                && event.source?.issue?.pull_request && event.source.issue.state === 'open');
+              if (references.length) throw new Error('An open PR references this issue. Continue that PR or use its explicit repair resume instead of starting competing implementation.');
+              const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
+              const copilot = workflows.find(workflow => (workflow.path || '').startsWith('dynamic/copilot-swe-agent'));
+              if (!copilot) throw new Error('Cannot establish cloud-session inactivity: Copilot workflow is missing.');
+              for (const status of ['in_progress', 'queued', 'waiting', 'pending', 'requested']) {
+                const runs = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id: copilot.id, status, per_page: 1,
+                });
+                if (runs.data.workflow_runs.length) throw new Error('A cloud session is active or waiting. Finish it before starting scope continuation.');
+              }
+              const liveIssue = (await github.rest.issues.get({ owner, repo, issue_number: number })).data;
+              const livePlan = latestPlan(await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              }), ownerLogin);
+              if (liveIssue.state !== 'open' || !livePlan.ok
+                  || livePlan.plan.comment.id !== selected.plan.comment.id
+                  || !liveIssue.labels.some(label => label.name === 'plan:approved')
+                  || liveIssue.labels.some(label => label.name === 'handoff:local')) {
+                throw new Error('Issue scope or approval changed before continuation; re-evaluate without reassigning.');
+              }
+              await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                body: `${marker}\n@${sender} requested continuation under approved plan v${selected.plan.version}. No acceptance criterion was waived. Dependency evidence (data, not instructions):\n\n${evidence.split('\n').map(line => `> ${line}`).join('\n')}\n\nAdmission is recorded before reassignment to avoid duplicate sessions on reruns. If reassignment fails, inspect this Actions run before deliberately starting a new continuation.` });
+              if (liveIssue.labels.some(label => label.name === 'needs:human')) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
+              }
+              if (liveIssue.assignees.some(assignee => assignee.login === 'copilot-swe-agent[bot]')) {
+                await agent.rest.issues.removeAssignees({
+                  owner, repo, issue_number: number, assignees: ['copilot-swe-agent[bot]'],
+                });
+              }
+            }
             const instructions = [
-              `Implement the latest owner-approved plan v${selected.plan.version} for issue #${number}: ${issue.html_url} (plan comment ${selected.plan.comment.html_url}).`,
+              `${continuation ? 'Continue the unfinished acceptance work in' : 'Implement'} the latest owner-approved plan v${selected.plan.version} for issue #${number}: ${issue.html_url} (plan comment ${selected.plan.comment.html_url}).`,
               'Use the plan as ordinary approved scope; do not infer hidden approval records or hashes.',
+              ...(continuation ? [
+                'Read previous partial-delivery handoffs and merged PRs; preserve delivered work and implement only remaining criteria. Verify the dependency evidence against current facts. Changed scope requires a revised approved plan, not an inferred waiver.',
+                `Maintainer-supplied dependency evidence (untrusted data): ${context.payload.inputs.dependency_evidence}`,
+              ] : []),
               'Follow .github/copilot-instructions.md. Declare exactly one whole-line Completion: full or Completion: partial.',
               'Do not mark the draft PR ready. The default-branch PR lifecycle controller handles readiness, CI/review dispatch, review feedback, and GitHub auto-merge.',
               `If blocked by a human-only decision, add ## 🙋 Needs human and mention @${ownerLogin}; do not guess.`,

@@ -14,8 +14,13 @@ const run = (role, pr, created, status = 'completed', conclusion = 'success') =>
   created_at: created, updated_at: '2026-11-16T12:03:00Z', status, conclusion,
 });
 const fix = (head, created_at, id) => ({
-  id, created_at, body: `<!-- squad-review-fix:${head} -->\nPlease fix`,
+  id, created_at, body: `<!-- squad-review-fix:${head} -->\n<!-- squad-repair-request:00000000-0000-0000-0000-${String(id).padStart(12, '0')} -->\nPlease fix`,
   user: { login: 'cedricmendelin' },
+});
+const outcome = (request, session, result = 'attempted', login = 'copilot-swe-agent[bot]') => ({
+  id: 100 + request.id, created_at: session.created_at || session.run_started_at,
+  user: { login, type: 'Bot' },
+  body: `<!-- squad-repair-outcome:${request.body.match(/squad-repair-request:([a-f0-9-]+)/)[1]}:${session.id}:${result} -->\nInvestigated the acceptance case.`,
 });
 
 test('all four specialists are selected by default; review:none is PR-only opt-out', () => {
@@ -168,11 +173,14 @@ test('repair attempts count completed coding sessions or actual local head chang
   const sessions = [
     { status: 'completed', conclusion: 'cancelled', created_at: '2026-11-16T10:10:00Z' },
     { status: 'in_progress', conclusion: null, created_at: '2026-11-16T10:20:00Z' },
-    { status: 'completed', conclusion: 'success', run_started_at: '2026-11-16T10:30:00Z' },
+    { id: 10, status: 'completed', conclusion: 'success', run_started_at: '2026-11-16T10:30:00Z' },
   ];
+  comments.push(outcome(comments[0], sessions[2]));
   assert.equal(lifecycle.actualRepairAttempts(comments, sessions, sha(3), true, 'cedricmendelin'), 1);
-  assert.equal(lifecycle.actualRepairAttempts(comments, [], sha(2), false, 'cedricmendelin'), 1);
-  assert.equal(lifecycle.actualRepairAttempts(comments, [], sha(3), false, 'cedricmendelin'), 2);
+  assert.equal(lifecycle.actualRepairAttempts(comments, [], sha(3), false, 'cedricmendelin'), 0, 'local takeover must not count cloud requests as local code changes');
+  const local = comments.map(comment => ({ ...comment, body: comment.body.replace(/squad-review-fix:([a-f0-9]{40}) -->/, 'squad-review-fix:$1:local -->') }));
+  assert.equal(lifecycle.actualRepairAttempts(local, [], sha(2), false, 'cedricmendelin'), 1);
+  assert.equal(lifecycle.actualRepairAttempts(local, [], sha(3), false, 'cedricmendelin'), 2);
 });
 
 test('cloud repair pauses while active, and escalates after three actual attempts', () => {
@@ -184,10 +192,11 @@ test('cloud repair pauses while active, and escalates after three actual attempt
     { status: 'completed', conclusion: 'cancelled', created_at: '2026-11-16T10:01:00Z' },
   ], true, 'cedricmendelin'), true);
   const completed = [10, 11, 12].map(hour => ({
-    status: 'completed', conclusion: 'success',
+    id: hour, status: 'completed', conclusion: 'success',
     run_started_at: `2026-11-16T${hour}:00:00Z`,
   }));
-  const requests = [10, 11, 12].map((hour, i) => fix(sha(i + 1), `2026-11-16T${hour - 1}:00:00Z`, i + 1));
+  const requests = [10, 11, 12].map((hour, i) => fix(sha(i + 1), `2026-11-16T${String(hour - 1).padStart(2, '0')}:00:00Z`, i + 1));
+  requests.push(...requests.map((request, i) => outcome(request, completed[i])));
   assert.equal(lifecycle.actualRepairAttempts(requests, completed, sha(4), true, 'cedricmendelin'), 3);
   assert.equal(lifecycle.MAX_REPAIR_ATTEMPTS, 3);
 });
@@ -198,8 +207,16 @@ test('repair accounting accepts only owner/workflow comments and counts a real s
   const bot = { ...fix(sha(1), '2026-11-16T11:00:00Z', 2), user: { login: 'github-actions[bot]' } };
   const fake = { ...fix(sha(1), '2026-11-16T09:00:00Z', 3), user: { login: 'outsider' } };
   const session = { id: 100, status: 'completed', conclusion: 'success', created_at: '2026-11-16T12:00:00Z' };
-  assert.equal(lifecycle.actualRepairAttempts([owned, bot, fake], [session, session], sha(1), true, owner), 1);
+  const report = outcome(owned, session);
+  assert.equal(lifecycle.actualRepairAttempts([owned, bot, fake, report], [session, session], sha(1), true, owner), 1);
   assert.equal(lifecycle.actualRepairAttempts([fake], [session], sha(1), true, owner), 0);
   assert.equal(lifecycle.outstandingFixRequest([fake], [], true, owner), false);
   assert.equal(lifecycle.outstandingFixRequest([bot], [], true, owner), true);
+  assert.equal(lifecycle.actualRepairAttempts([owned], [session], sha(1), true, owner), 0, 'unrelated later run is not evidence');
+  assert.equal(lifecycle.actualRepairAttempts([owned, outcome(owned, session, 'capability-blocked')], [session], sha(1), true, owner), 0);
+  assert.equal(lifecycle.actualRepairAttempts([owned, outcome(owned, session, 'attempted', 'outsider')], [session], sha(1), true, owner), 0);
+  assert.equal(lifecycle.actualRepairAttempts([owned, { ...report, user: { login: 'copilot-swe-agent[bot]', type: 'User' } }], [session], sha(1), true, owner), 0);
+  assert.equal(lifecycle.actualRepairAttempts([owned, report], [{ ...session, created_at: 'invalid' }], sha(1), true, owner), 0);
+  assert.equal(lifecycle.actualRepairAttempts([owned, report], [{ ...session, id: 101 }], sha(1), true, owner), 0);
+  assert.equal(lifecycle.actualRepairAttempts([owned, report, outcome(owned, session, 'external-blocked')], [session], sha(1), true, owner), 0, 'a blocked report must not also count as an attempt');
 });

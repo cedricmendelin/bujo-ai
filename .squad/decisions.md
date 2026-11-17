@@ -391,3 +391,30 @@
   CI applies pending `infra/` changes. The owner can also dispatch a single
   plan/apply run to reconcile drift.
 - Keep GitHub OIDC, private state, and migration-before-promotion for app releases.
+
+### 2026-11-17: Capability-aware partial delivery and repair recovery
+
+- Implement the PR completion recovery proposal agreed in the Copilot
+  conversation. This supersedes session-completion-based repair counting and
+  head-only review freshness in the simplified lifecycle decision.
+- Keep honest issue completion separate from an explicitly agreed mergeable
+  milestone. Partial work never closes an unfinished issue or becomes full
+  merely to unblock merging. Preserve unfinished criteria, owner, dependency,
+  evidence needed, and next action on the issue.
+- The trusted controller repairs narrowly recognized generated closing suffixes
+  before specialist review. Other metadata errors receive explicit feedback,
+  not impossible coding requests. Never broaden into arbitrary model-authored
+  metadata patches or revive approval binding/provenance protocols.
+- Key reviews to both head and substantive description input; ignore only
+  whitespace-only cosmetic changes. Reviewers inspect the applicable code even
+  when metadata is wrong; incomplete inspection cannot pass.
+- Count only request-attributed substantive cloud repair outcomes or local code
+  changes. Capability/dependency failures pause once, without consuming three
+  attempts. Missing attribution requires inspection, not optimistic inference.
+- A maintainer's explicit lifecycle resume deliberately clears the human pause
+  and starts a bounded recovery episode; ordinary events never do. A code
+  commit does not reset the budget. Preserve all prior outcomes in history.
+- Manual issue continuation with dependency evidence works after a partial PR
+  merges even if Copilot remains assigned. Keep the approved plan, reject
+  competing open-PR/active-session work, and require a revised approval for
+  changed scope. Settings, live PR recovery, and deployment remain separate.

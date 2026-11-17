@@ -133,9 +133,20 @@ Cloud Watch and fix does **not** address review comments. Our bounded bridge
 forwards actionable specialist findings and trusted human change requests to
 the implementer. It ignores resolved/outdated threads and duplicate deliveries;
 arbitrary top-level comments do not automatically start work. Review repair
-requests stop while a cloud session is active. Only actual completed repair
-sessions or local code changes count toward the three-attempt limit; cancellations,
-queued runs, and orchestration retries do not.
+requests stop while a cloud session is active. The controller repairs recognized
+generated closing suffixes on partial PRs itself; it never sends those to a
+coding agent. Only request-linked substantive repair outcomes or local code
+changes count toward the three-attempt limit. Capability/dependency failures
+pause once, without consuming that budget.
+
+Meaningful description changes refresh reviews; whitespace-only edits do not.
+To recover after inspecting a pause, manually run **Squad PR Lifecycle** with
+the PR number and **resume_repairs** selected. Ordinary re-evaluation never
+clears `needs:human`. To continue an issue after a partial PR merges and its
+dependency is met, manually run **Squad Plan Approved** with the issue number
+and sanitized dependency evidence. It resumes existing approved scope even if
+Copilot is still assigned; an open related PR or active cloud session blocks
+competing implementation. Changed scope still requires a revised approved plan.
 
 `review:none`, applied by an owner or maintainer, skips pending and existing
 specialist findings for that PR only. It never skips CI or trusted human change
