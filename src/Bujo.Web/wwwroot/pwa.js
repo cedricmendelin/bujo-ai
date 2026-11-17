@@ -2,6 +2,7 @@
     "use strict";
 
     let circuitConnected = false;
+    let hasConfirmedCircuit = false;
     let circuitProbe;
     let connectionGeneration = 0;
     let modalWasDisconnected = false;
@@ -69,6 +70,7 @@
 
     function circuitUp() {
         if (!navigator.onLine) return update();
+        hasConfirmedCircuit = true;
         connectionGeneration++;
         circuitConnected = true;
         update();
@@ -90,8 +92,10 @@
     function inspectReconnectModal() {
         const modal = document.getElementById("components-reconnect-modal");
         if (modal) {
-            const disconnected = ["components-reconnect-show", "components-reconnect-failed",
-                "components-reconnect-rejected"].some(name => modal.classList.contains(name));
+            const disconnected = ["components-reconnect-show", "components-reconnect-retrying",
+                "components-reconnect-failed", "components-reconnect-rejected",
+                "components-reconnect-paused", "components-reconnect-resume-failed"]
+                .some(name => modal.classList.contains(name));
             if (disconnected) {
                 if (!modalWasDisconnected) {
                     modalWasDisconnected = true;
@@ -99,7 +103,7 @@
                 }
             } else if (modalWasDisconnected && modal.classList.contains("components-reconnect-hide")) {
                 modalWasDisconnected = false;
-                circuitUp();
+                if (hasConfirmedCircuit) circuitUp();
             }
         }
         update();
@@ -127,6 +131,17 @@
 
     window.addEventListener("offline", circuitDown);
     window.addEventListener("online", checkConnection);
+    document.addEventListener("components-reconnect-state-changed", event => {
+        if (event.detail?.state === "hide") {
+            if (modalWasDisconnected) {
+                modalWasDisconnected = false;
+                if (hasConfirmedCircuit) circuitUp();
+            }
+        } else {
+            modalWasDisconnected = true;
+            circuitDown();
+        }
+    }, true);
     for (const name of ["click", "submit", "keydown", "beforeinput"]) {
         document.addEventListener(name, blockDisconnectedWrite, true);
     }

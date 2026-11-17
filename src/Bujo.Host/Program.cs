@@ -2,6 +2,7 @@ using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Host.Authentication;
 using Bujo.Web;
+using Microsoft.AspNetCore.Authentication;
 using Bujo.Infrastructure;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -69,6 +70,12 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 builder.Services.AddBff(builder.Configuration, tenantId);
+builder.Services.Configure<AuthenticationOptions>(options =>
+{
+    // Populate SSR account chrome from the UI cookie. API fallback explicitly selects bearer.
+    options.DefaultAuthenticateScheme = BffAuthentication.CookieScheme;
+    options.DefaultChallengeScheme = BffAuthentication.CookieScheme;
+});
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<CircuitHandler, ApprovedCircuitHandler>();
@@ -111,9 +118,12 @@ if (!app.Environment.IsDevelopment())
 }
 app.Use(async (context, next) =>
 {
+    // Chromium applies form-action to redirects of the sign-in POST as well.
+    var formAction = context.Request.Path.Equals("/auth/sign-in", StringComparison.OrdinalIgnoreCase)
+        ? "'self' https://login.microsoftonline.com" : "'self'";
     context.Response.Headers.ContentSecurityPolicy =
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
-        "connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+        $"connect-src 'self'; object-src 'none'; base-uri 'self'; form-action {formAction}; frame-ancestors 'none'";
     context.Response.Headers.XContentTypeOptions = "nosniff";
     context.Response.Headers.XFrameOptions = "DENY";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";

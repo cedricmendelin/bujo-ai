@@ -50,6 +50,29 @@ main { padding: clamp(1rem, 3vw, 2rem); background: white; border-radius: .5rem;
 .proof-scope { margin-top: 2rem; border-top: 1px solid #aebdc5; padding-top: 1rem; }
 footer { padding-block: 1rem; font-size: .9rem; }
 
+#components-reconnect-modal { display: none; }
+#components-reconnect-modal:is(
+    .components-reconnect-show,
+    .components-reconnect-retrying,
+    .components-reconnect-failed,
+    .components-reconnect-rejected,
+    .components-reconnect-paused,
+    .components-reconnect-resume-failed
+) {
+    display: block;
+    position: fixed;
+    z-index: 50;
+    inset-inline: 1rem;
+    bottom: 1rem;
+    max-height: 50vh;
+    overflow: auto;
+    border: 2px solid #8a4000;
+    border-radius: .35rem;
+    padding: 1rem;
+    background: #fff3da;
+    color: #542700;
+}
+
 @media (min-width: 48rem) {
     .app-shell { padding: 2rem; }
     .site-header { justify-content: space-between; }

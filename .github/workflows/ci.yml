@@ -117,6 +117,9 @@ jobs:
             fi
           done
           test -f "$RUNNER_TEMP/host-publish/Bujo.Host.dll"
+          for asset in service-worker.js manifest.webmanifest icons/icon-192.png icons/icon-512.png; do
+            test -f "$RUNNER_TEMP/host-publish/wwwroot/_content/Bujo.Web/$asset"
+          done
 
       - name: Smoke-test production image
         if: steps.detect.outputs.dotnet == 'true'

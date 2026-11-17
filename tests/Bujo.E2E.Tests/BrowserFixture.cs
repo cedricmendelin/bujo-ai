@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
-using Bujo.Host;
 using Bujo.Host.Authentication;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -17,6 +17,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Playwright;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace Bujo.E2E.Tests;
 
@@ -80,6 +82,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
 {
     private readonly string _tenant = Guid.NewGuid().ToString("D");
     private readonly string _approvedObject = Guid.NewGuid().ToString("D");
+    private readonly string _clientId = Guid.NewGuid().ToString("D");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -92,12 +95,30 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
                 ["Auth:TenantId"] = _tenant,
                 ["Auth:Audience"] = "urn:bujo:e2e",
                 ["Auth:AllowedPrincipals"] = $"{_tenant}:{_approvedObject}",
+                ["Auth:Pwa:ClientId"] = _clientId,
+                ["Auth:Pwa:ClientSecret"] = Guid.NewGuid().ToString("N"),
+                ["Auth:Pwa:Scope"] = "urn:bujo:e2e/journal.access",
                 ["ConnectionStrings:journal"] = "Server=127.0.0.1,1;Database=unused-proof;Integrated Security=true;Encrypt=true;Connect Timeout=1"
             }));
         builder.ConfigureTestServices(services =>
         {
+            services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
+            {
+                options.ClientId = _clientId;
+                options.Configuration = new OpenIdConnectConfiguration
+                {
+                    Issuer = $"https://login.microsoftonline.com/{_tenant}/v2.0",
+                    AuthorizationEndpoint = $"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/authorize",
+                    TokenEndpoint = $"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/token"
+                };
+                options.ConfigurationManager =
+                    new StaticConfigurationManager<OpenIdConnectConfiguration>(options.Configuration);
+            });
             services.PostConfigure<AntiforgeryOptions>(options =>
-                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest);
+            {
+                options.Cookie.Name = "bujo-e2e-antiforgery";
+                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            });
             services.AddAuthentication()
                 .AddScheme<AuthenticationSchemeOptions, ProofUiAuthentication>(ProofUiAuthentication.Scheme, _ => { });
             services.PostConfigure<AuthenticationOptions>(options =>

@@ -7,11 +7,19 @@
     <base href="/" />
     <link rel="stylesheet" href="/_content/Bujo.Web/pwa.css" />
     <link rel="manifest" href="/_content/Bujo.Web/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/_content/Bujo.Web/icons/icon-192.png" />
     <HeadOutlet />
 </head>
 <body>
     <Routes />
-    <script src="/_framework/blazor.web.js"></script>
+    <div id="components-reconnect-modal" class="components-reconnect-hide"
+         role="status" aria-live="polite" aria-atomic="true">
+        <p>Server connection interrupted. Keep this page open to retain your text.</p>
+        <p>No changes are saved or replayed while disconnected. If reconnection fails,
+            <a href="/rendering-proof" data-enhance-nav="false">reload and sign in again</a>.
+            Reloading loses unsaved text.</p>
+    </div>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script src="/_content/Bujo.Web/pwa.js" defer></script>
 </body>
 </html>

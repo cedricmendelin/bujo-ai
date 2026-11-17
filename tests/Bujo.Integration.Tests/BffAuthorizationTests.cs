@@ -53,6 +53,14 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         Assert.Contains("no-store", response.Headers.CacheControl!.ToString());
         Assert.Contains("frame-ancestors 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        if (path == "/auth/sign-in")
+            Assert.Contains("form-action 'self' https://login.microsoftonline.com;", csp);
+        else
+        {
+            Assert.Contains("form-action 'self';", csp);
+            Assert.DoesNotContain("login.microsoftonline.com", csp);
+        }
     }
 
     [Fact]
@@ -245,7 +253,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
     }
 }
 
-public sealed class BffTestFactory : WebApplicationFactory<Program>
+public sealed class BffTestFactory : WebApplicationFactory<JournalDatabaseHealthCheck>
 {
     internal const string Tenant = "00000000-0000-0000-0000-000000000001";
     internal const string Subject = "00000000-0000-0000-0000-000000000002";

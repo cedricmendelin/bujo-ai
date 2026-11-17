@@ -679,6 +679,8 @@ internal sealed class JournalSqlApiFactory(string connectionString, bool verifyO
             }).AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
                 TestAuthenticationHandler.SchemeName,
                 _ => { });
+            services.PostConfigure<AuthenticationOptions>(options =>
+                options.Schemes.Single(scheme => scheme.Name == "Bearer").HandlerType = typeof(TestAuthenticationHandler));
         });
     }
 }

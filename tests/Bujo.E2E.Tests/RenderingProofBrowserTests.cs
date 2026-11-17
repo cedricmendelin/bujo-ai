@@ -69,7 +69,14 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         await page.GotoAsync("/rendering-proof");
         await page.EvaluateAsync("async () => { await navigator.serviceWorker.ready; }");
         await page.ReloadAsync();
-        await page.WaitForFunctionAsync("() => navigator.serviceWorker.controller !== null");
+        await page.EvaluateAsync("""
+            async () => {
+                if (!navigator.serviceWorker.controller) {
+                    await new Promise(resolve =>
+                        navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
+                }
+            }
+            """);
         var manifestHref = await page.Locator("link[rel=manifest]").GetAttributeAsync("href");
         Assert.Equal("/_content/Bujo.Web/manifest.webmanifest", manifestHref);
         var manifestResponse = await context.APIRequest.GetAsync(manifestHref!);
@@ -92,6 +99,29 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
                 source);
             Assert.Equal(new[] { size, size }, dimensions);
         }
+
+        const string cssPath = "/_content/Bujo.Web/pwa.css";
+        const string staleCss = "/* Synthetic stale stylesheet: network-first regression proof. */";
+        var serverCssResponse = await context.APIRequest.GetAsync(cssPath);
+        Assert.Equal(200, serverCssResponse.Status);
+        var serverCss = await serverCssResponse.TextAsync();
+        Assert.NotEqual(staleCss, serverCss);
+        var refreshedCss = await page.EvaluateAsync<string[]>("""
+            async ({ path, stale }) => {
+                const names = (await caches.keys()).filter(name => name.startsWith("bujo-static-shell-"));
+                if (names.length !== 1) throw new Error("Expected exactly one static shell cache.");
+                const cache = await caches.open(names[0]);
+                await cache.put(path, new Response(stale, { headers: { "content-type": "text/css" } }));
+                const before = await (await cache.match(path)).text();
+                const response = await fetch(path);
+                const returned = await response.text();
+                const after = await (await cache.match(path)).text();
+                return [before, returned, after];
+            }
+            """, new { path = cssPath, stale = staleCss });
+        Assert.Equal(staleCss, refreshedCss[0]);
+        Assert.Equal(serverCss, refreshedCss[1]);
+        Assert.Equal(serverCss, refreshedCss[2]);
 
         await page.EvaluateAsync("""
             async () => {
@@ -131,7 +161,10 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         var devTools = await context.NewCDPSessionAsync(page);
         var installability = await devTools.SendAsync("Page.getInstallabilityErrors");
         Assert.NotNull(installability);
-        Assert.Empty(installability.Value.GetProperty("installabilityErrors").EnumerateArray());
+        var installabilityErrors = installability.Value.GetProperty("installabilityErrors");
+        output.WriteLine($"Chromium installability diagnostics: {installabilityErrors}");
+        Assert.All(installabilityErrors.EnumerateArray(), error =>
+            Assert.Equal("in-incognito", error.GetProperty("errorId").GetString()));
     }
 
     [Theory]
@@ -168,8 +201,8 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         var input = page.Locator("#proof-input");
         var action = page.Locator("#proof-action");
         var result = page.Locator("#proof-result");
-        await page.WaitForFunctionAsync("() => window.bujoPwa?.writesAvailable() === true");
         await Expect(action).ToBeEnabledAsync();
+        Assert.True(await page.EvaluateAsync<bool>("window.bujoPwa.writesAvailable()"));
         await input.FillAsync("First explicit circuit action");
         await Expect(result).ToHaveTextAsync("No server roundtrip requested.");
         await action.ClickAsync();
@@ -193,9 +226,8 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
             await context.SetOfflineAsync(false);
         }
 
-        await page.WaitForFunctionAsync("() => window.bujoPwa.writesAvailable() === true", null,
-            new() { Timeout = 60000 });
-        await Expect(action).ToBeEnabledAsync();
+        await Expect(action).ToBeEnabledAsync(new() { Timeout = 60000 });
+        Assert.True(await page.EvaluateAsync<bool>("window.bujoPwa.writesAvailable()"));
         await Expect(input).ToHaveValueAsync("Retained unsaved input");
         await Expect(result).ToHaveTextAsync(acknowledged);
         await action.ClickAsync();
@@ -215,6 +247,15 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
             activeSocket = socket;
         });
         var page = await context.NewPageAsync();
+        var unexpectedErrors = new List<string>();
+        page.PageError += (_, error) => unexpectedErrors.Add(error);
+        page.Console += (_, message) =>
+        {
+            if (message.Type == "error" &&
+                (message.Text.Contains("Content Security Policy", StringComparison.OrdinalIgnoreCase) ||
+                 message.Text.Contains("Refused to", StringComparison.OrdinalIgnoreCase)))
+                unexpectedErrors.Add(message.Text);
+        };
         await page.GotoAsync("/rendering-proof");
         var action = page.Locator("#proof-action");
         var input = page.Locator("#proof-input");
@@ -226,12 +267,54 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         blockReconnect = true;
         await activeSocket.CloseAsync(new() { Code = 1011, Reason = "Synthetic server transport failure" });
 
-        await Expect(page.Locator("[data-circuit-status]")).ToBeVisibleAsync(new() { Timeout = 30000 });
+        try
+        {
+            await Expect(page.Locator("[data-circuit-status]")).ToBeVisibleAsync(new() { Timeout = 10000 });
+        }
+        catch
+        {
+            output.WriteLine(await page.EvaluateAsync<string>(
+                "() => [...document.querySelectorAll('[id*=reconnect], dialog')].map(element => element.outerHTML).join('\\n')"));
+            throw;
+        }
         await Expect(page.Locator("[data-circuit-status]")).ToContainTextAsync("Server connection lost");
         Assert.True(await page.EvaluateAsync<bool>("navigator.onLine"));
         await Expect(action).ToBeDisabledAsync();
         await Expect(input).ToHaveValueAsync("Unsaved across transport loss");
         await Expect(result).ToHaveTextAsync(before);
+        Assert.Empty(unexpectedErrors);
+    }
+
+    [Fact]
+    public async Task AntiforgerySignInPostCanRedirectToTheEntraEndpointUnderTheRealCsp()
+    {
+        await using var context = await fixture.CreateContextAsync(identity: null);
+        var page = await context.NewPageAsync();
+        var errors = new List<string>();
+        page.PageError += (_, error) => errors.Add(error);
+        page.Console += (_, message) =>
+        {
+            if (message.Type == "error") errors.Add(message.Text);
+        };
+        string? authorizationUrl = null;
+        await page.RouteAsync("https://login.microsoftonline.com/**", async route =>
+        {
+            authorizationUrl = route.Request.Url;
+            await route.FulfillAsync(new()
+            {
+                ContentType = "text/html",
+                Body = "<!doctype html><html lang=\"en\"><head><title>Synthetic identity endpoint</title></head><body><h1>Synthetic identity endpoint</h1></body></html>"
+            });
+        });
+        await page.GotoAsync("/auth/sign-in");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Synthetic identity endpoint" })).ToBeVisibleAsync();
+        Assert.NotNull(authorizationUrl);
+        var query = Uri.UnescapeDataString(new Uri(authorizationUrl).Query);
+        Assert.Contains("response_type=code", query, StringComparison.Ordinal);
+        Assert.Contains("code_challenge_method=S256", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("client_secret", query, StringComparison.Ordinal);
+        Assert.Empty(errors);
     }
 
     [Theory]

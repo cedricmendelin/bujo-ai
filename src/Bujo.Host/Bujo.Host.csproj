@@ -12,6 +12,8 @@
     <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Components live in the RCL, so SDK .razor-file autodetection cannot opt us in. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
 </Project>

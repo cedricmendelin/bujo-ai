@@ -60,11 +60,18 @@
 
     private async Task CheckAsync()
     {
-        if (!await JS.InvokeAsync<bool>("bujoPwa.writesAvailable"))
-            return;
+        try
+        {
+            if (!await JS.InvokeAsync<bool>("bujoPwa.writesAvailable"))
+                return;
 
-        _checks++;
-        _result = $"Connection confirmed. Check {_checks}. Nothing was saved.";
+            _checks++;
+            _result = $"Connection confirmed. Check {_checks}. Nothing was saved.";
+        }
+        catch (JSDisconnectedException)
+        {
+            _result = "Connection check was not confirmed. Reconnect and try again. Nothing was saved.";
+        }
     }
 
     public void Dispose() => _reference?.Dispose();

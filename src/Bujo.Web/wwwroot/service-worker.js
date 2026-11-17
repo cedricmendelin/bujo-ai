@@ -10,8 +10,15 @@ const STATIC_ASSETS = new Map([
     ["/_content/Bujo.Web/icons/icon-512.png", "image/png"]
 ]);
 
+class StaticNetworkError extends Error {}
+
 async function fetchStatic(url) {
-    const response = await fetch(url, { credentials: "omit", cache: "no-cache", redirect: "error" });
+    let response;
+    try {
+        response = await fetch(url, { credentials: "omit", cache: "no-cache", redirect: "error" });
+    } catch {
+        throw new StaticNetworkError("Static asset network request failed.");
+    }
     const expectedType = STATIC_ASSETS.get(new URL(url).pathname);
     const actualType = response.headers.get("content-type") || "";
     const validType = expectedType === "manifest"
@@ -56,10 +63,16 @@ self.addEventListener("fetch", event => {
     }
     event.respondWith((async () => {
         const cache = await caches.open(CACHE_NAME);
-        const cached = await cache.match(url.href);
-        if (cached) return cached;
-        const response = await fetchStatic(url.href);
-        await cache.put(url.href, response.clone());
-        return response;
+        try {
+            const response = await fetchStatic(url.href);
+            await cache.put(url.href, response.clone());
+            return response;
+        } catch (error) {
+            if (error instanceof StaticNetworkError) {
+                const cached = await cache.match(url.href);
+                if (cached) return cached;
+            }
+            throw error;
+        }
     })());
 });

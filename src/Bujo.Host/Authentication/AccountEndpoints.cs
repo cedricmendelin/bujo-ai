@@ -67,6 +67,7 @@ public static class AccountEndpoints
         <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{title} — Bujo-AI</title><link rel="stylesheet" href="/_content/Bujo.Web/pwa.css">
+        <link rel="icon" type="image/png" href="/_content/Bujo.Web/icons/icon-192.png">
         </head><body><main><h1>{title}</h1>{body}<p><a href="/">Home</a></p></main></body></html>
         """, "text/html");
 

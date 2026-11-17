@@ -68,13 +68,18 @@ public static class BffAuthentication
                     var token = context.TokenEndpointResponse?.AccessToken;
                     var delegated = token is null ? null :
                         await sessions.ValidateTokenAsync(token, context.HttpContext.RequestAborted);
-                    var authorization = context.HttpContext.RequestServices.GetRequiredService<IAuthorizationService>();
                     if (delegated is null || context.Principal is null ||
-                        !BffSessions.SameIdentity(context.Principal, delegated) ||
-                        !(await authorization.AuthorizeAsync(delegated, null,
-                            new ApprovedPrincipalRequirement(configuration))).Succeeded)
+                        !BffSessions.SameIdentity(context.Principal, delegated))
                     {
-                        context.Fail("Access denied.");
+                        context.Fail("Sign-in could not be validated.");
+                        return;
+                    }
+                    var authorization = context.HttpContext.RequestServices.GetRequiredService<IAuthorizationService>();
+                    if (!(await authorization.AuthorizeAsync(delegated, null,
+                        new ApprovedPrincipalRequirement(configuration))).Succeeded)
+                    {
+                        context.HandleResponse();
+                        context.Response.Redirect("/auth/denied");
                         return;
                     }
                     // Copy only validated delegated permission; never trust an ID-token scope.
