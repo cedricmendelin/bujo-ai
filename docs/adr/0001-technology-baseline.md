@@ -193,8 +193,8 @@ depend on region and configuration.
 
 ### Backup, restore and full-text search
 
-Automated backups support point-in-time restore. With the free tier's
-auto-pause-at-limit setting, the FAQ specifies seven-day retention, locally
+Automated backups support point-in-time restore. Under the free tier's
+`AutoPause` free-limit option, the FAQ specifies seven-day retention, locally
 redundant backup storage, a 4-vCore/32-GB limit and no long-term retention.
 Paid-overage mode permits different backup redundancy. The free tier applies
 only to a new database: a restore cannot be made into a free-tier database.

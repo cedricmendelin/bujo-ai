@@ -67,7 +67,7 @@ versions are recorded in `infra/.terraform.lock.hcl`.
 | --- | --- |
 | Resource group lookup | The owner pre-creates the app resource group so deployment needs no subscription-scope Contributor. A Terraform data source references it without managing it. |
 | `azurerm_container_app_job` | The workload needs a separately triggered one-shot job with its own identity and execution lifecycle; it is separate from the Container App module's app resource. |
-| `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = AutoPause` in one request. |
+| `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = BillForUsage` in one request. |
 | `azurerm_consumption_budget_resource_group` | No `avm-res-consumption-budget` module is published in the Terraform Registry. |
 | State storage | The storage account and private state container are owner-bootstrapped (#24), avoiding a bootstrap dependency on Terraform state itself. |
 
@@ -83,20 +83,44 @@ use assumes activity remains within documented free grants.
 | --- | ---: | ---: |
 | Resource group and managed identity | $0 | $0 |
 | Container Apps consumption | $0 | $0–$4 |
-| Azure SQL serverless, free offer, auto-pause | $0 | $0–$3 |
+| Azure SQL serverless, free offer (while within monthly free limits) | $0 | $0–$3 |
 | Log Analytics, maximum 0.1 GB/day | $0 | $0–$1 |
 | Standard Key Vault | $0 | $0–$1 |
 | Monthly Azure budget | $0 | $0 |
 | State storage, Standard_LRS | <$1 | <$1 |
 | **Estimated total** | **<$1/month** | **<$10/month** |
 
-The estimates leave at least $40/month of headroom under the $50 budget. The
-budget is scoped to the production resource group (not the separate state
-resource group), alerts at 80% forecast spend and 100% actual spend, and emails
-the configured `BUDGET_ALERT_EMAIL`. Container Apps and SQL can incur costs if
-usage exceeds free grants or the SQL free offer is unavailable. The SQL offer
-is limited by Azure eligibility and quota; monitor usage and billing after
-deployment. The budget is an alert, not a spending cap.
+The estimates leave at least $40/month of headroom under the $50 budget only
+while usage stays within the applicable free grants. The SQL estimate assumes
+that monthly free compute is not exhausted; paid compute overage is not included.
+When the monthly SQL free compute allowance is exhausted,
+`freeLimitExhaustionBehavior = BillForUsage` keeps the database online and bills
+continued compute at paid rates, which can increase costs beyond the estimate,
+as documented by Microsoft's [Create or Update API](https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update?view=rest-sql-2023-08-01-preview).
+This is separate from idle auto-pause: `autoPauseDelay = 60` pauses an otherwise
+idle serverless database after 60 minutes, but it does not pause the database
+for the rest of the month at free-limit exhaustion. The budget is scoped to the
+production resource group (not the separate state resource group), alerts at
+80% forecast spend and 100% actual spend, and emails the configured
+`BUDGET_ALERT_EMAIL`. Container Apps and SQL can also incur costs if the SQL
+free offer is unavailable. The SQL offer is limited by Azure eligibility and
+quota; monitor usage and billing after deployment. The budget is an alert, not
+a spending cap.
+
+Changing only `freeLimitExhaustionBehavior` changes the AzAPI request body, not
+the database identity; the [AzAPI 2.12 resource documentation](https://registry.terraform.io/providers/Azure/azapi/2.12.0/docs/resources/resource)
+documents `body` as an input and name/parent changes as replacement triggers.
+With the identity unchanged and no replacement triggers configured, Terraform
+plans this body change as an in-place update, not a replacement. Azure's
+acceptance of changing this property on an existing
+free-tier database has not been verified without a live API call. The selected
+change does not alter `useFreeLimit`, which Azure only accepts at database
+creation. Before any apply, review the actual plan and stop if it proposes a
+replacement or Azure rejects the update. A replacement requires owner approval
+and a migration plan: export the database (for example, as a BACPAC) or take a
+backup, create a new database, restore the data, switch the application
+connection, verify operation, then remove the old database. Do not apply a
+replacement before that approval and migration plan.
 
 ## Manual prerequisites (#24)
 
