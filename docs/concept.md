@@ -27,16 +27,28 @@ or credentials belong in the repository.
   offline state, and server-confirmed saves; no offline write/sync queue.
 - Azure SQL is the durable source for journal and knowledge data; hosting
   configuration, local development and operating cost still require validation.
-- Microsoft Foundry with AG-UI for in-app chat; verify the exact integration
-  and Blazor client approach before choosing an implementation.
+- **Agreed first in-app AI experience:** a weekly-planning coach launched from
+  the weekly view. It receives relevant unfinished items and the user's stated
+  constraints, then returns a structured plan for review; no journal changes
+  happen before the user approves the exact proposal. General journal Q&A and
+  proactive actions are outside this first AI slice.
+- **Accepted chat architecture:** app-owned orchestration and authorization in
+  the existing ASP.NET Core host, with AG-UI for the Blazor Interactive Server
+  experience and an optional server-side Foundry model provider. Foundry is not
+  the journal source of truth or a required hosted-agent runtime. A local
+  .NET 11 spike validated the mock Preview path; production readiness remains
+  unverified. See the [accepted ADR](adr/0002-foundry-agui-chat.md).
+  See the [issue #6 research](ai-chat.md) and
+  [proposed ADR](adr/0002-foundry-agui-chat.md).
 - MCP access for assistants such as Copilot and Claude, sharing application
   capabilities rather than maintaining a second copy of the user's journal.
 - Scheduling configurable through the application or assistant.
 - Expose assistant setup guidance through MCP prompts and/or skills, including
   examples for configuring scheduled prompts. Client support and execution
   capabilities must be verified; exposing a prompt does not install a scheduler.
-- Simple text, voice, and web-search interactions in the app; more sophisticated
-  orchestration can remain in external assistants.
+- Longer-term app interaction candidates include simple text, voice and
+  web-search flows; more sophisticated orchestration can remain in external
+  assistants.
 
 Container Apps is a hosting direction, not a decision to put the database or
 durable scheduler state in an application's ephemeral filesystem.
@@ -164,10 +176,10 @@ unavailable. The system must not silently treat missing evidence as proof.
 - What are the exact list-local states and reopening rules?
 - Who executes later proactive reminders, through which delivery channel, and with what
   timezone, retry, deduplication, and missed-run guarantees?
-- Which Blazor rendering mode and Azure SQL configuration provide the simplest
-  affordable deployment? Issue #5 approves .NET 11, EF Core SQL Server and the
-  modular host; see the [technology baseline](adr/0001-technology-baseline.md)
-  for the remaining proposed choices.
+- Do target-browser installability and reconnect behavior work for the selected
+  Interactive Server mode, and is the selected Azure SQL configuration eligible
+  and affordable? The [accepted technology baseline](adr/0001-technology-baseline.md)
+  records these choices and the verification gates before provisioning.
 - How does Entra ID authorization work in the actual Copilot and Claude clients?
   See the [proposed auth design and blocked client proofs](auth.md).
 - How are retention, export/deletion, and backups handled?
