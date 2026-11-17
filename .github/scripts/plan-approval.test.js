@@ -2,119 +2,43 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BOT, digest, formatRecord, latestRecord, prepareApproval, selectPlan, verify } = require('./plan-approval');
+const { approvalPath, isEligiblePermission, latestPlan, parsePlan } = require('./plan-approval');
 
-const owner = 'owner';
-const issue = 12;
-const plan = (id, version, login = owner, updated_at = '2026-01-01T10:00:00Z') => ({
-  id, user: { login }, updated_at, body: `## 📋 Implementation plan v${version} · owner: \`devops\`\n\nPlan ${version}`,
+const owner = 'cedricmendelin';
+const plan = (version, id, login = owner, member = 'devops') => ({
+  id, user: { login }, body: `## 📋 Implementation plan v${version} · owner: ${member}\n\nScope`,
 });
-const label = (id = 20, login = owner, event = 'labeled') => ({
-  id, event, actor: { login }, label: { name: 'plan:approved' }, created_at: '2026-01-01T10:00:02Z',
-});
-const input = () => ({
-  issue, owner, sender: owner, comments: [plan(10, 1)],
-  labels: ['plan:approved', 'plan:bound'], timeline: [label()], now: '2026-01-01T10:00:02Z',
-});
-function approved() {
-  const data = input();
-  const result = prepareApproval(data);
+
+test('reads owner- or workflow-authored numbered plans and preserves their exact comment', () => {
+  const old = plan(1, 1);
+  const next = plan(2, 2, 'github-actions[bot]', 'architect');
+  const result = latestPlan([old, next], owner);
   assert.equal(result.ok, true);
-  data.comments.push({ id: 11, user: { login: BOT }, body: formatRecord(result.record) });
-  return data;
-}
-
-test('accepts an owner plan and a bot plan but ignores untrusted plan authors', () => {
-  assert.equal(selectPlan([plan(1, 1, BOT)], owner).plan.version, 1);
-  assert.equal(selectPlan([plan(1, 1), plan(2, 2, 'collaborator')], owner).plan.version, 1);
-  assert.equal(selectPlan([plan(1, 1, 'other[bot]')], owner).ok, false);
-  assert.equal(selectPlan([plan(1, 2), plan(2, 1)], owner).ok, false);
+  assert.equal(result.plan.comment, next);
+  assert.equal(result.plan.version, 2);
+  assert.equal(result.plan.member, 'architect');
+  assert.equal(parsePlan(plan(3, 3, 'stranger'), owner), null);
 });
 
-test('binds exact plan contents to the latest owner label event', () => {
-  const data = approved();
-  const result = verify(data);
-  assert.equal(result.ok, true);
-  assert.equal(result.record.comment, 10);
-  assert.equal(result.record.sha256, digest(data.comments[0].body));
-  assert.equal(result.record.member, 'devops');
-  assert.equal(result.record.createdAt, '2026-01-01T10:00:02Z');
-  data.comments[0].body += '\nChanged';
-  assert.match(verify(data).reason, /no longer matches/);
+test('rejects gaps and duplicate version numbers rather than hiding plan history', () => {
+  assert.equal(latestPlan([plan(1, 1), plan(3, 3)], owner).ok, false);
+  assert.equal(latestPlan([plan(1, 1), plan(1, 2)], owner).ok, false);
+  assert.equal(latestPlan([plan(2, 1)], owner).ok, false);
+  assert.equal(latestPlan([plan(1, 1), { ...plan(2, 2), body: '## 📋 Implementation plan v2 · owner: unknown\nbad' }], owner).ok, false);
 });
 
-test('rejects approval of a plan edited in or after the label second', () => {
-  for (const updated_at of ['2026-01-01T10:00:02Z', '2026-01-01T10:00:03Z']) {
-    const data = input();
-    data.comments = [plan(10, 1, owner, updated_at)];
-    assert.equal(prepareApproval(data).ok, false);
-  }
+test('approval dispatch is idempotent and local handoff always wins', () => {
+  assert.deepEqual(approvalPath({ labels: [] }), { action: 'none' });
+  assert.deepEqual(approvalPath({ labels: ['plan:approved', 'handoff:local'] }), { action: 'local' });
+  assert.deepEqual(approvalPath({ labels: ['plan:approved'], assignees: ['copilot-swe-agent[bot]'] }),
+    { action: 'already-assigned' });
+  assert.deepEqual(approvalPath({ labels: ['plan:approved'] }), { action: 'assign-cloud' });
 });
 
-test('rejects non-owner approval, stale labels and forged records', () => {
-  const data = input();
-  assert.equal(prepareApproval({ ...data, sender: 'collaborator' }).ok, false);
-  assert.equal(prepareApproval({ ...data, timeline: [label(20, 'collaborator')] }).ok, false);
-  assert.equal(prepareApproval({ ...data, labels: [] }).ok, false);
-  const valid = approved();
-  valid.comments[1].user.login = owner;
-  assert.equal(verify(valid).ok, false);
-  valid.comments[1].user.login = BOT;
-  valid.timeline.push(label(21, owner, 'unlabeled'));
-  assert.equal(verify(valid).ok, false);
-});
-
-test('rejects a record copied from a different issue or without a binding label', () => {
-  const data = approved();
-  assert.equal(verify({ ...data, issue: issue + 1 }).ok, false);
-  assert.equal(verify({ ...data, labels: ['plan:approved'] }).ok, false);
-});
-
-test('newer or deleted plans and superseded records invalidate the binding', () => {
-  const data = approved();
-  data.comments.push(plan(12, 2));
-  assert.equal(verify(data).ok, false);
-  data.comments.pop();
-  data.comments.shift();
-  assert.equal(verify(data).ok, false);
-  const revoked = approved();
-  const record = JSON.parse(revoked.comments[1].body.match(/\{.*\}/)[0]);
-  record.state = 'superseded';
-  revoked.comments[1].body = formatRecord(record);
-  assert.equal(verify(revoked).ok, false);
-});
-
-test('a malformed newer trusted plan cannot leave an older plan approved', () => {
-  const data = approved();
-  data.comments.push({ id: 12, user: { login: owner }, body: '## 📋 Implementation plan v2 · owner: unknown' });
-  assert.match(verify(data).reason, /malformed/);
-  data.comments[2].user.login = 'collaborator';
-  assert.equal(verify(data).ok, true);
-});
-
-test('reapproval invalidates records from earlier label events', () => {
-  const data = approved();
-  data.timeline.push(label(21, owner, 'unlabeled'), label(22));
-  assert.equal(verify(data).ok, false);
-});
-
-test('normalizes line endings consistently', () => {
-  assert.equal(digest('  example\r\ntext  '), digest('example\ntext'));
-});
-
-test('record transitions whitelist schema fields and retain the original approval timestamps', () => {
-  const data = approved();
-  const sizes = [];
-  for (let n = 0; n < 20; n++) {
-    const record = latestRecord(data.comments, issue);
-    const body = formatRecord({ ...record, state: 'assigned', arbitrary: 'not persisted' });
-    const serialized = JSON.parse(body.match(/\{.*\}/)[0]);
-    assert.equal(serialized.approvedAt, '2026-01-01T10:00:02Z');
-    assert.equal(serialized.createdAt, '2026-01-01T10:00:02Z');
-    assert.equal(serialized.recordComment, undefined);
-    assert.equal(serialized.arbitrary, undefined);
-    sizes.push(body.length);
-    data.comments.push({ id: 100 + n, user: { login: BOT }, body });
-  }
-  assert.equal(new Set(sizes).size, 1, 'repeated parse/transition/format must not nest history');
+test('approval uses ordinary repository write roles rather than provenance evidence', () => {
+  assert.equal(isEligiblePermission('admin'), true);
+  assert.equal(isEligiblePermission('maintain'), true);
+  assert.equal(isEligiblePermission('write'), true);
+  assert.equal(isEligiblePermission('triage'), false);
+  assert.equal(isEligiblePermission('read'), false);
 });

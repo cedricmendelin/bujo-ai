@@ -73,14 +73,18 @@ fix, and merge. A human (currently @cedricmendelin) is only pulled in when the
 automation cannot continue. Details, commands, and one-time setup are in the
 [governed delivery workflow](docs/workflow.md).
 
-### 1. Plan (always)
+### 1. Agree the scope
+
+For issue-driven work, use the versioned planning flow below. For a direct local
+PR, agree the scope in the Copilot conversation and record it in the PR; no issue
+or approval/waiver label is required.
 
 1. Write or pick an issue. Comment `/plan` (not `/squad plan`): the Architect
    posts `## 📋 Implementation plan vN · owner: <member>` and labels
    `plan:proposed`. No label is needed to draft or revise a plan.
 2. Iterate with `/plan revise <feedback>` or `/plan route <member>` until it is
    right. Review the latest version before approving it.
-3. Choose **where** the work happens, then apply `plan:approved` (owner only)
+3. Choose **where** the work happens, then apply `plan:approved`
    to the latest reviewed plan:
    - no extra label → **cloud**: Copilot cloud agent implements it;
    - add `handoff:local` first → **local**: you implement it in the GitHub
@@ -88,91 +92,95 @@ automation cannot continue. Details, commands, and one-time setup are in the
 
 #### Plan locally, implement locally or in the cloud
 
-Local plan publishing and approval are supported. Draft a versioned plan with
-the same heading and completion contract as `/plan`, then publish it as an
+Local plan publishing is supported. Draft a versioned plan with the same
+heading and completion contract as `/plan`, then publish it as the next
 owner-authored issue comment (for example, `gh issue comment <N> --body-file
-<plan-file>`). Publishing does **not** assign work. Apply `handoff:local` first
-for local implementation, then have the repository owner apply `plan:approved`.
-The trusted workflow records the exact plan comment, version, normalized SHA-256
-and owner label-timeline event, and adds the bot-managed `plan:bound` marker.
-Local handoff never assigns the cloud agent; without `handoff:local`, the
-verified plan is assigned to Copilot's plan-owner agent.
+<plan-file>`). Plan comments are append-only and all numbered versions remain
+visible. Publishing a newer plan removes `plan:approved`, so the new version
+must be reviewed and approved again.
 
-The owner approval and binding are invalidated when the approved text is edited,
-a newer trusted plan is posted, the approval label changes, or a live check
-detects drift. Publish a new version and re-apply approval after choosing the
-handoff label. See [the workflow guide](docs/workflow.md) for hashes, review
-attestations, race limits, migration and rollout.
+`plan:approved` starts one cloud assignment unless `handoff:local` is already
+present. Duplicate label delivery is harmless. Choosing `handoff:local` first
+keeps the work local. Adding it later stops further custom cloud dispatches but
+does not cancel a running cloud session or native Watch and fix. There are no
+plan hashes, approval records, binding labels, or review attestations. See
+[the workflow guide](docs/workflow.md) for the rollout and ruleset migration.
 
 ### 2a. Cloud path (default, hands-off)
 
 ```text
 plan:approved ─▶ Copilot cloud agent (custom agent = plan owner) works on a draft PR
-              ─▶ latest session succeeds ─▶ Shepherd marks ready, starts CI + Squad Review
-              ─▶ Gate requires session success + shepherd approval for this PR head
-                   all green   ─▶ GitHub squash auto-merge ─▶ main ─▶ deploy
-                   blocking    ─▶ "@copilot fix …" ─▶ Copilot fixes ─▶ shepherd re-reviews
-              ─▶ interrupted ─▶ at most 2 bounded recoveries; recovery failure/stall
-                                ─▶ needs:human + @cedricmendelin (no ready/merge)
+              ─▶ successful session ─▶ Squad PR Lifecycle marks ready; starts CI + reviews
+                   all green   ─▶ ci + Squad Merge Readiness ─▶ GitHub squash auto-merge
+                   blocking    ─▶ review-only "@copilot fix …" ─▶ fresh reviews
+                   3 actual fix attempts ─▶ needs:human + @cedricmendelin
 ```
 
 The latest Copilot cloud-agent workflow run is authoritative; a `[WIP]` title is
 only a hint. An active session is left alone. A failed, cancelled, or timed-out
-session is not reported as finished; duplicate events do not repeat its recovery
-request, and the gate cannot bypass the shepherd. If you intend to stop a session
-yourself, add `needs:human` or `handoff:local` before cancelling it.
+session is not reported as finished. Use the lifecycle workflow's manual
+recovery entry point to re-evaluate after inspecting an interrupted session.
 
 Enable **Watch and fix** in the PR's GitHub.com merge box, selecting **Fix failed
 Actions workflows** and **Resolve merge conflicts**. Native cloud Agent Merge
-then owns those repairs; the shepherd/gate never issue duplicate CI/conflict
-fix requests. GitHub **auto-merge** executes the merge after the gate verifies
-scope, completion, current reviews and CI. There is no direct-merge fallback.
+then owns those repairs; the lifecycle controller never issues duplicate
+CI/conflict fix requests. GitHub **auto-merge** executes the merge after the
+controller verifies completion, current selected reviews, CI, and human feedback.
+There is no direct-merge fallback.
 
 Cloud Watch and fix does **not** address review comments. Our bounded bridge
-forwards Squad blocking findings and submitted human/Copilot review feedback to
-`@copilot`. It ignores resolved/outdated threads and deduplicates requests;
-arbitrary top-level comments do not automatically start work. Review feedback is
-polled after Plan Binding runs (normally every ten minutes), with an hourly
-fallback. You can still steer Copilot explicitly with an `@copilot …` comment.
+forwards actionable specialist findings and trusted human change requests to
+the implementer. It ignores resolved/outdated threads and duplicate deliveries;
+arbitrary top-level comments do not automatically start work. Review repair
+requests stop while a cloud session is active. Only actual completed repair
+sessions or local code changes count toward the three-attempt limit; cancellations,
+queued runs, and orchestration retries do not.
 
-**Rollout prerequisite:** the owner must enable Copilot automations/Watch and fix
-and require `Squad Plan Binding` plus `Squad Merge Readiness` alongside the five
-existing checks on `main`. The gate refuses to arm auto-merge without all seven.
-Account-default Watch and fix applies to PRs that account creates; do not assume
-it covers Copilot-created PRs. See [setup and migration](docs/workflow.md#native-agent-merge-rollout).
+`review:none`, applied by an owner or maintainer, skips pending and existing
+specialist findings for that PR only. It never skips CI or trusted human change
+requests/unresolved blocking threads. Removing it starts fresh reviews, even on
+the same head; code commits also start fresh reviews, while cosmetic PR
+description edits do not.
+
+**Rollout prerequisite:** a repository owner must stage the required-check
+migration to `ci` plus `Squad Merge Readiness`; do not remove the four existing
+review checks until the aggregate check is available and required. See the
+[workflow guide](docs/workflow.md#ruleset-migration-and-active-pr-coordination).
 
 ### 2b. Local path (GitHub Copilot app)
 
-Use this when you want to watch or steer the work, or for work that is not an
-issue plan.
+Use this when you want to watch or steer work, including direct PRs without an
+issue or issue plan.
 
 1. **From an approved issue** (`handoff:local` + `plan:approved`): open the issue
    in the GitHub Copilot app, start a session with the plan owner's custom agent
    (`builder`, `ai`, `devops`, or `architect`), and ask it to implement the
    approved plan.
-2. **Other work** (no issue plan): describe it in a session; the owner applies
-   `plan:waived` to the PR so reviewers use the PR description as the scope.
-3. The session opens a **ready (non-draft) PR** with one whole-line
-   `Completion: full` or `Completion: partial` declaration and the plan version.
+2. **Other work** (no issue plan): agree the scope in the Copilot conversation
+   and describe it in the PR. No issue plan or waiver label is required.
+3. Open a **ready (non-draft) PR** with one whole-line
+   `Completion: full` or `Completion: partial` declaration and, when linked, the
+   referenced plan version.
    Use `Closes #N` only when every acceptance criterion is delivered with
    evidence, including code and relevant tests. A partial PR uses `Relates to #N`
    (or another non-closing reference) and keeps the issue open.
-4. Optionally turn on desktop-app **Agent merge** with *Address reviews*,
-   *Fix CI*, and *Resolve conflicts*. This is an alternative repair controller:
+4. Optionally turn on desktop-app **Agent merge** for local repairs. This is an
+   alternative repair controller:
    disable cloud **Watch and fix** on that PR first. Leave *Merge* off:
    GitHub auto-merge remains the single merge executor after gate approval.
-5. Every push re-runs CI and Squad Review; the gate posts blocking findings for
-   Agent merge to fix (max 3 rounds).
+5. Every code push starts fresh CI and default Squad reviews. Description-only
+   edits do not re-run the reviews.
 
 **Taking over a cloud PR locally:** add `handoff:local` to the PR, open it in
 the GitHub Copilot app, disable cloud Watch and fix, and turn on app Agent merge.
-The shepherd and cloud `@copilot` fix requests then stop for that PR.
+Further custom cloud dispatches and review-fix requests then stop for that PR;
+native running work is not cancelled automatically.
 
 ### 3. Human in the loop
 
 | Signal | Meaning | What to do |
 |--------|---------|------------|
-| `needs:human` label + `@cedricmendelin` comment on a PR | 3 failed fix rounds, Copilot stopped without fixing, unresolved conflicts, or a reviewer did not report | Decide: fix, re-dispatch reviewers, revise the plan, or close. Remove `needs:human` to hand back to automation. |
+| `needs:human` label + `@cedricmendelin` comment on a PR | 3 actual review-fix attempts remain blocking or a human decision is needed | Decide: fix, re-dispatch reviewers, revise the plan, or close. Remove `needs:human` explicitly to hand back to automation. |
 | `## 🙋 Needs human` in a PR description | The implementer needs a secret, setting, or product decision | Provide it, then comment `@copilot continue` (cloud) or tell the session (local). |
 | Issue `Squad automation failing: …` (`needs:human`) | A workflow itself failed (for example an expired token) | Fix the cause from the linked run, then close the issue. |
 | Issue labeled `needs:human` for setup | Something must be configured once in GitHub or Azure | Follow the checklist in the issue. |

@@ -1,0 +1,178 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const lifecycle = require('./delivery-lifecycle');
+
+const sha = n => String(n).repeat(40);
+const check = (name, head, conclusion = 'success') => ({
+  id: Number(head[0]), name, head_sha: head, status: 'completed', conclusion,
+  started_at: '2026-11-16T12:01:00Z', completed_at: '2026-11-16T12:02:00Z',
+});
+const run = (role, pr, created, status = 'completed', conclusion = 'success') => ({
+  name: `Squad Review ${role}`, display_title: `Squad Review ${role} · PR #${pr}`,
+  created_at: created, updated_at: '2026-11-16T12:03:00Z', status, conclusion,
+});
+const fix = (head, created_at, id) => ({
+  id, created_at, body: `<!-- squad-review-fix:${head} -->\nPlease fix`,
+  user: { login: 'cedricmendelin' },
+});
+
+test('all four specialists are selected by default; review:none is PR-only opt-out', () => {
+  assert.deepEqual(lifecycle.reviewSelection([]), ['Architect', 'Security', 'Verifier', 'DevOps']);
+  assert.deepEqual(lifecycle.reviewSelection(['review:none']), []);
+  assert.deepEqual(lifecycle.reviewFailures([
+    check('Squad Review / Architect', sha(1), 'failure'),
+  ], sha(1), ['review:none']), []);
+});
+
+test('removing review:none starts a fresh generation even when old checks share the head', () => {
+  const removedAt = '2026-11-16T12:00:00Z';
+  const current = check('Squad Review / Security', sha(1));
+  assert.equal(lifecycle.reviewResultIsFresh({
+    check: current, run: run('Security', 8, '2026-11-16T11:59:59Z'), sha: sha(1), removedAt,
+  }), false);
+  assert.equal(lifecycle.reviewResultIsFresh({
+    check: current, run: run('Security', 8, '2026-11-16T12:00:00Z'), sha: sha(1), removedAt,
+  }), true);
+  assert.equal(lifecycle.reviewResultIsFresh({
+    check: check('Squad Review / Security', sha(2)),
+    run: run('Security', 8, '2026-11-16T12:01:00Z'), sha: sha(1), removedAt,
+  }), false);
+});
+
+test('review freshness requires complete timestamps within the selected successful run window', () => {
+  const selected = run('Architect', 8, '2026-11-16T12:00:00Z');
+  const result = check('Squad Review / Architect', sha(1));
+  assert.equal(lifecycle.reviewResultIsFresh({ check: result, run: selected, sha: sha(1) }), true);
+  for (const invalid of [
+    { ...result, started_at: undefined },
+    { ...result, completed_at: undefined },
+    { ...result, completed_at: '2026-11-16T12:04:00Z' },
+    { ...result, started_at: '2026-11-16T11:59:59Z' },
+    { ...result, completed_at: '2026-11-16T12:00:00Z' },
+  ]) {
+    assert.equal(lifecycle.reviewResultIsFresh({ check: invalid, run: selected, sha: sha(1) }), false);
+  }
+  assert.equal(lifecycle.reviewResultIsFresh({ check: result, run: null, sha: sha(1) }), false);
+});
+
+test('new code heads and review:none removal dispatch a fresh review once without duplicate delivery', () => {
+  const activeOldRun = [run('Architect', 8, '2026-11-16T11:00:00Z', 'in_progress')];
+  assert.equal(lifecycle.reviewDispatchNeeded({
+    fresh: false, runs: activeOldRun, forceFresh: true, eventAt: '2026-11-16T12:00:00Z',
+  }), true);
+  const dispatchedAfterEvent = [run('Architect', 8, '2026-11-16T12:00:01Z', 'in_progress')];
+  assert.equal(lifecycle.reviewDispatchNeeded({
+    fresh: false, runs: dispatchedAfterEvent, forceFresh: true, eventAt: '2026-11-16T12:00:00Z',
+  }), false);
+  assert.equal(lifecycle.reviewDispatchNeeded({
+    fresh: false, runs: dispatchedAfterEvent, forceFresh: false,
+  }), false);
+});
+
+test('review:none removal time comes from the latest unlabeled event', () => {
+  assert.equal(lifecycle.reviewNoneRemovedAt([
+    { event: 'unlabeled', label: { name: 'review:none' }, created_at: '2026-11-16T10:00:00Z', id: 1 },
+    { event: 'labeled', label: { name: 'review:none' }, created_at: '2026-11-16T10:30:00Z', id: 2 },
+    { event: 'unlabeled', label: { name: 'review:none' }, created_at: '2026-11-16T11:00:00Z', id: 3 },
+  ]), '2026-11-16T11:00:00Z');
+});
+
+test('cosmetic description edits do not change current-head review selection', () => {
+  const shaNow = sha(4);
+  const checks = lifecycle.ROLES.map(role => check(`Squad Review / ${role}`, shaNow));
+  assert.equal(lifecycle.ROLES.every(role =>
+    lifecycle.currentHeadCheck(checks, `Squad Review / ${role}`, shaNow)?.conclusion === 'success'), true);
+  assert.equal(lifecycle.currentHeadCheck(checks, 'Squad Review / Architect', sha(5)), null);
+});
+
+test('human change requests and unresolved blocking threads remain blockers under review:none', () => {
+  const inputs = {
+    owner: 'cedricmendelin',
+    reviews: [
+      { id: 1, state: 'CHANGES_REQUESTED', user: { login: 'cedricmendelin', type: 'User' }, author_association: 'OWNER' },
+    ],
+    threads: [],
+  };
+  assert.equal(lifecycle.hasHumanBlocks(inputs), true);
+  assert.equal(lifecycle.hasHumanBlocks({
+    owner: 'cedricmendelin', reviews: [],
+    threads: [{
+      isResolved: false, isOutdated: false, body: '[blocking] Fix this',
+      author: { login: 'maintainer', type: 'User', association: 'COLLABORATOR' },
+    }],
+  }), true);
+  assert.equal(lifecycle.hasHumanBlocks({
+    owner: 'cedricmendelin', reviews: [],
+    threads: [{
+      isResolved: true, isOutdated: false, body: '[blocking] Fixed',
+      author: { login: 'maintainer', type: 'User', association: 'COLLABORATOR' },
+    }],
+  }), false);
+});
+
+test('CI, completion, humans, and cloud-session state independently block readiness', () => {
+  const base = {
+    draft: false, needsHuman: false, completionOk: true, sessionOk: true,
+    ci: true, reviewsOk: true, humanBlocks: false,
+  };
+  assert.equal(lifecycle.readiness(base).conclusion, 'success');
+  assert.notEqual(lifecycle.readiness({ ...base, ci: false }).conclusion, 'success');
+  assert.notEqual(lifecycle.readiness({ ...base, humanBlocks: true }).conclusion, 'success');
+  assert.notEqual(lifecycle.readiness({ ...base, needsHuman: true }).conclusion, 'success');
+  assert.equal(lifecycle.readiness({ ...base, sessionOk: false }).status, 'in_progress');
+  assert.notEqual(lifecycle.readiness({ ...base, completionOk: false }).conclusion, 'success');
+});
+
+test('only ci and aggregate readiness are the final required branch contexts', () => {
+  assert.equal(lifecycle.hasRequiredMergeRules([
+    { type: 'required_status_checks', parameters: { required_status_checks: [
+      { context: 'ci' }, { context: 'Squad Merge Readiness' },
+    ] } },
+  ]), true);
+  assert.equal(lifecycle.hasRequiredMergeRules([
+    { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'ci' }] } },
+  ]), false);
+});
+
+test('repair attempts count completed coding sessions or actual local head changes, not queue noise', () => {
+  const comments = [fix(sha(1), '2026-11-16T10:00:00Z', 1), fix(sha(2), '2026-11-16T11:00:00Z', 2)];
+  const sessions = [
+    { status: 'completed', conclusion: 'cancelled', created_at: '2026-11-16T10:10:00Z' },
+    { status: 'in_progress', conclusion: null, created_at: '2026-11-16T10:20:00Z' },
+    { status: 'completed', conclusion: 'success', run_started_at: '2026-11-16T10:30:00Z' },
+  ];
+  assert.equal(lifecycle.actualRepairAttempts(comments, sessions, sha(3), true, 'cedricmendelin'), 1);
+  assert.equal(lifecycle.actualRepairAttempts(comments, [], sha(2), false, 'cedricmendelin'), 1);
+  assert.equal(lifecycle.actualRepairAttempts(comments, [], sha(3), false, 'cedricmendelin'), 2);
+});
+
+test('cloud repair pauses while active, and escalates after three actual attempts', () => {
+  const comments = [fix(sha(1), '2026-11-16T10:00:00Z', 1)];
+  assert.equal(lifecycle.outstandingFixRequest(comments, [
+    { status: 'in_progress', created_at: '2026-11-16T10:01:00Z' },
+  ], true, 'cedricmendelin'), true);
+  assert.equal(lifecycle.outstandingFixRequest(comments, [
+    { status: 'completed', conclusion: 'cancelled', created_at: '2026-11-16T10:01:00Z' },
+  ], true, 'cedricmendelin'), true);
+  const completed = [10, 11, 12].map(hour => ({
+    status: 'completed', conclusion: 'success',
+    run_started_at: `2026-11-16T${hour}:00:00Z`,
+  }));
+  const requests = [10, 11, 12].map((hour, i) => fix(sha(i + 1), `2026-11-16T${hour - 1}:00:00Z`, i + 1));
+  assert.equal(lifecycle.actualRepairAttempts(requests, completed, sha(4), true, 'cedricmendelin'), 3);
+  assert.equal(lifecycle.MAX_REPAIR_ATTEMPTS, 3);
+});
+
+test('repair accounting accepts only owner/workflow comments and counts a real session ID once', () => {
+  const owner = 'cedricmendelin';
+  const owned = fix(sha(1), '2026-11-16T10:00:00Z', 1);
+  const bot = { ...fix(sha(1), '2026-11-16T11:00:00Z', 2), user: { login: 'github-actions[bot]' } };
+  const fake = { ...fix(sha(1), '2026-11-16T09:00:00Z', 3), user: { login: 'outsider' } };
+  const session = { id: 100, status: 'completed', conclusion: 'success', created_at: '2026-11-16T12:00:00Z' };
+  assert.equal(lifecycle.actualRepairAttempts([owned, bot, fake], [session, session], sha(1), true, owner), 1);
+  assert.equal(lifecycle.actualRepairAttempts([fake], [session], sha(1), true, owner), 0);
+  assert.equal(lifecycle.outstandingFixRequest([fake], [], true, owner), false);
+  assert.equal(lifecycle.outstandingFixRequest([bot], [], true, owner), true);
+});

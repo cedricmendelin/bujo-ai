@@ -19,7 +19,7 @@ tools:
 safe-outputs:
   add-comment:
     max: 1
-    hide-older-comments: true
+    hide-older-comments: false
   add-labels:
     allowed: [plan:proposed, squad:architect, squad:builder, squad:ai, squad:devops]
     max: 1
@@ -49,8 +49,9 @@ ${{ steps.sanitized.outputs.text }}
 
 ## Gather context (read-only)
 
-1. Read the issue title, body, labels, and all comments. The latest plan is the
-   newest comment whose first line starts with `## 📋 Implementation plan v`.
+1. Read the issue title, body, labels, and all comments.    The latest plan is the highest numbered comment whose first line starts with
+   `## 📋 Implementation plan v`. Preserve every earlier version visibly and
+   unchanged.
 2. Read `.squad/decisions.md`, `.squad/routing.md`, `docs/concept.md`,
    `docs/workflow.md`, `.github/copilot-instructions.md`, and any repository
    files the issue touches.
@@ -89,6 +90,9 @@ stripped, so do not use them):
 ```
 
 - `<N>` is 1 for a new plan, otherwise previous version + 1.
+- Never edit or hide an earlier plan comment. A revised or re-routed plan is a
+  new, higher-numbered comment. Publication of a newer plan removes
+  `plan:approved`; it must be approved again before a cloud assignment.
 - Each acceptance criterion from the issue must map to at least one check.
 - State the evidence required for full completion of every acceptance criterion,
   including the code changes and relevant automated tests expected for
@@ -107,9 +111,10 @@ stripped, so do not use them):
 
 ## Labels
 
-- On every revise or route, call `remove_labels` with `plan:approved`, whether
+- On every plan publication, call `remove_labels` with `plan:approved`, whether
   or not the label is currently present; approval applies only to the exact
-  reviewed plan version.
+  reviewed plan version. This also covers a new `/plan` when an older version
+  already exists.
 - If the owner changes, include the previous `squad:<member>` label in the same
   `remove_labels` call.
 - Call `add_labels` once with both `plan:proposed` and `squad:<owner>`.

@@ -15,11 +15,12 @@
 - Bujo-AI Azure Container Apps hosting, durable storage boundaries, operational cost, and recovery
 - Terraform (Azure Verified Modules first), GitHub OIDC deployment, and the under-50-USD/month cost budget
 - CI and the governed delivery workflows (`docs/workflow.md`), including the
-  trusted gate that validates merge eligibility, publishes `Squad Merge
-  Readiness`, and arms GitHub squash auto-merge under branch protections
+  event-driven controller that publishes `Squad Merge Readiness` and arms
+  GitHub squash auto-merge under branch protections
 - The Squad Review / DevOps review of infrastructure, workflow, and cost
-  changes; main-branch protections require CI, all four Squad Review checks,
-  `Squad Plan Binding`, and `Squad Merge Readiness`
+  changes; after the owner-controlled migration, main protections require `ci`
+  and `Squad Merge Readiness`, with all four specialist reviewers selected by
+  default
 - CI/CD pipelines and deployment automation
 - Infrastructure provisioning and configuration management
 - Container orchestration and service mesh configuration
@@ -29,13 +30,17 @@
 
 - GitHub.com Copilot Watch and fix owns cloud repair of failed Actions workflows
   and base-branch conflicts when the owner enables it; it does not handle review
-  comments. Do not build conflict repair into the Squad shepherd.
-- The cloud shepherd remains responsible for successful-session readiness,
-  initial CI/review dispatch, bounded interrupted-session recovery, explicit
-  metadata proposal application, reviewer-feedback forwarding, and escalation.
-- The trusted gate must never directly merge. GitHub auto-merge is the only
-  merge executor. `needs:human` is a stop and must not be silently cleared when
-  checks pass; it does not stop native Watch and fix.
+  comments. Do not build conflict/CI repair into the Squad lifecycle controller.
+- One event-driven default-branch controller handles cloud readiness, initial
+  CI/review dispatch, reviewer-feedback forwarding, aggregate readiness, and
+  bounded review-fix escalation. No binding sweep, review attestation, or
+  description-metadata proposal protocol is used.
+- The controller must never directly merge. GitHub auto-merge is the only merge
+  executor. `needs:human` is a stop and must not be silently cleared when checks
+  pass; it does not stop native Watch and fix.
+- The required-check transition is an explicit owner action. Keep current
+  protections until `Squad Merge Readiness` is available and required; then
+  retain only `ci` and the aggregate readiness context.
 - For an optional `handoff:local` takeover, keep Agent merge's Merge action off
   and have the owner disable native Watch and fix to prevent competing fixes.
 

@@ -327,3 +327,31 @@
   takeover. Agent merge's Merge action stays off so it cannot compete with
   GitHub auto-merge, and the owner disables native Watch and fix for that PR to
   prevent concurrent fixes.
+
+### 2026-11-16: Simplified plan approval and PR lifecycle
+
+- This supersedes the approval-provenance, plan-binding, review-attestation,
+  metadata-proposal, scheduled-reconciliation, and required-check portions of
+  the earlier delivery and PR-finalization decisions.
+- Keep `/plan`, `/plan revise`, and `/plan route`, with append-only numbered
+  issue comments. Chat-authored plans use the same version convention. A new
+  version clears `plan:approved`; applying that label starts cloud assignment
+  unless `handoff:local` is already present. No bot binding or hashes.
+- Direct local PRs use chat-agreed scope without an issue or waiver prerequisite.
+  Keep honest completion evidence and non-closing linkage for partial work.
+- Architect, Security, Verifier, and DevOps remain default reviewers. PR-only
+  `review:none` skips existing and pending specialist findings, but never CI or
+  trusted human change requests. Removing it starts fresh reviews.
+- Use one event-driven default-branch lifecycle controller and current-head
+  results. Cosmetic PR-description edits do not restart model reviews.
+  `ci` and aggregate `Squad Merge Readiness` become the required checks after
+  the owner stages and verifies the ruleset migration.
+- Forward blocking review findings for at most three actual repair attempts;
+  queued jobs, cancellations, and orchestration retries do not consume them.
+  `needs:human` remains an explicit pause and is never silently cleared.
+- Native Watch and fix owns cloud CI/conflicts; desktop Agent merge owns local
+  repairs after cloud takeover is coordinated. A handoff label does not cancel
+  native running work. GitHub protected squash auto-merge is the only merge
+  executor; no direct merge or protection bypass.
+- The owner separately coordinates active PRs and performs the ruleset/label
+  rollout. Code delivery does not imply live settings have changed.
