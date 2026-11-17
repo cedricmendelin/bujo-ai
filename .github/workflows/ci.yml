@@ -201,7 +201,9 @@ jobs:
           tag="ghcr.io/cedricmendelin/bujo-ai:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker tag bujo-host-test "$tag"
           docker push "$tag"
-          python3 .github/scripts/release_admission.py publish --manifest "$RUNNER_TEMP/release/release.json"
+          python3 .github/scripts/release_admission.py publish \
+            --manifest "$RUNNER_TEMP/release/release.json" \
+            --tested-image "$RUNNER_TEMP/tested-image/tested-host.tar"
 
       - name: Publish release provenance
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

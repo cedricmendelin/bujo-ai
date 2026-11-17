@@ -1,9 +1,11 @@
 import copy
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import types
 import unittest
@@ -16,6 +18,11 @@ spec = importlib.util.spec_from_file_location(
 )
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+preflight_spec = importlib.util.spec_from_file_location(
+    "deployment_preflight", ROOT / ".github/scripts/deployment_preflight.py",
+)
+preflight = importlib.util.module_from_spec(preflight_spec)
+preflight_spec.loader.exec_module(preflight)
 
 
 def trusted_run():
@@ -35,6 +42,21 @@ def manifest():
         "image": f"{release.PACKAGE}@sha256:" + "b" * 64,
         "config_digest": "sha256:" + "c" * 64,
     }
+
+
+def write_tested_image(path, config, *, config_path=None, tags=None, entries=None):
+    content = json.dumps(config).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    name = config_path or f"blobs/sha256/{digest}"
+    entries = entries if entries is not None else [{
+        "Config": name, "RepoTags": ["bujo-host-test:latest"] if tags is None else tags,
+    }]
+    with tarfile.open(path, "w") as archive:
+        for filename, body in (("manifest.json", json.dumps(entries).encode()), (name, content)):
+            info = tarfile.TarInfo(filename)
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+    return f"sha256:{digest}"
 
 
 class ReleaseAdmissionTests(unittest.TestCase):
@@ -151,21 +173,72 @@ class ReleaseAdmissionTests(unittest.TestCase):
     def test_publication_records_loaded_image_not_a_tag_or_rebuilt_image(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
+            archive = Path(directory) / "tested-host.tar"
+            config_digest = write_tested_image(archive, {"os": "linux", "architecture": "amd64"})
             env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_SHA": "a" * 40}
             result = types.SimpleNamespace(returncode=0, stdout=json.dumps([{
-                "RepoDigests": [manifest()["image"]], "Id": manifest()["config_digest"],
+                "RepoDigests": [manifest()["image"]], "Id": manifest()["image"].split("@")[1],
             }]))
             with patch.dict(release.os.environ, env), \
                  patch.object(release.subprocess, "run", return_value=result) as inspect:
-                release.publish_manifest(path)
-                self.assertEqual(manifest(), json.loads(path.read_text()))
+                release.publish_manifest(path, archive)
+                self.assertEqual(manifest() | {"config_digest": config_digest}, json.loads(path.read_text()))
                 self.assertEqual(
                     ["docker", "image", "inspect", f"{release.PACKAGE}:ci-123-2"],
                     inspect.call_args.args[0],
                 )
                 result.stdout = json.dumps([{"RepoDigests": [], "Id": manifest()["config_digest"]}])
                 with self.assertRaises(ValueError):
-                    release.publish_manifest(path)
+                    release.publish_manifest(path, archive)
+
+    def test_tested_archive_rejects_wrong_image_or_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "image.tar"
+            valid = {"os": "linux", "architecture": "amd64"}
+            for config, options in (
+                (valid, {"tags": ["other:latest"]}),
+                (valid, {"entries": []}),
+                (valid, {"config_path": "blobs/sha256/" + "0" * 64}),
+                (valid, {"config_path": "../config.json"}),
+                ({"os": "windows", "architecture": "amd64"}, {}),
+                ({"os": "linux", "architecture": "arm64"}, {}),
+            ):
+                with self.subTest(config=config, options=options):
+                    write_tested_image(archive, config, **options)
+                    with self.assertRaises(ValueError):
+                        release.tested_config_digest(archive)
+            digest = write_tested_image(archive, valid)
+            classic_name = digest.removeprefix("sha256:") + ".json"
+            write_tested_image(archive, valid, config_path=classic_name)
+            self.assertEqual(digest, release.tested_config_digest(archive))
+
+    def test_published_provenance_matches_registry_index_and_rejects_changed_config(self):
+        config = {"os": "linux", "architecture": "amd64"}
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "tested-host.tar"
+            config_digest = write_tested_image(archive, config)
+            child = json.dumps({"config": {"digest": config_digest}}).encode()
+            child_digest = "sha256:" + hashlib.sha256(child).hexdigest()
+            index = json.dumps({"manifests": [{
+                "digest": child_digest, "platform": {"os": "linux", "architecture": "amd64"},
+            }]}).encode()
+            index_digest = "sha256:" + hashlib.sha256(index).hexdigest()
+            inspected = types.SimpleNamespace(returncode=0, stdout=json.dumps([{
+                "RepoDigests": [f"{release.PACKAGE}@{index_digest}"], "Id": index_digest,
+            }]))
+            path = Path(directory) / "release.json"
+            with patch.dict(release.os.environ, {
+                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_SHA": "a" * 40,
+            }), patch.object(release.subprocess, "run", return_value=inspected):
+                release.publish_manifest(path, archive)
+            provenance = json.loads(path.read_text())
+            self.assertEqual(config_digest, provenance["config_digest"])
+            def verify(value):
+                responses = iter((b'{"token":"test-token"}', index, child))
+                preflight.verify_public_image(value, lambda *_args, **_kwargs: io.BytesIO(next(responses)))
+            verify(provenance)
+            with self.assertRaisesRegex(ValueError, "not the CI-tested"):
+                verify(provenance | {"config_digest": "sha256:" + "0" * 64})
 
     def test_stale_release_never_downloads_artifacts(self):
         evidence = {
@@ -248,6 +321,7 @@ class ReleaseAdmissionTests(unittest.TestCase):
         self.assertIn("needs: ci", publish)
         self.assertIn("github.event_name == 'push'", publish)
         self.assertIn("docker load", publish)
+        self.assertIn('--tested-image "$RUNNER_TEMP/tested-image/tested-host.tar"', publish)
         self.assertNotIn("docker build", publish)
         self.assertNotIn("id-token: write", ci)
         self.assertIn("workflow_run:", deploy)

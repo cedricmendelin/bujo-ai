@@ -22,8 +22,9 @@ not an unrestricted apply or a weaker release gate.
 
 1. **Build once (CI).** CI builds and smoke-tests the root `Dockerfile` image
    once. For main pushes only, a separate publish job pushes it to GHCR and
-   records the immutable digest with its provenance (source SHA, CI run ID and
-   attempt) in a release manifest artifact. Pull requests get no publish or
+   records the immutable digest with its provenance (source SHA, CI run ID,
+   attempt and Linux/amd64 configuration digest read from the saved tested
+   image archive) in a release manifest artifact. Pull requests get no publish or
    Azure credentials. There is no quickstart fallback.
    When retrying CI, rerun **all** jobs: the tested-image artifact is bound to
    the producing run attempt, so rerunning publication alone cannot reuse a
