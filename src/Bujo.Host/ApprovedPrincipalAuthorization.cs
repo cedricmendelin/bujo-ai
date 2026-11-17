@@ -5,14 +5,18 @@ namespace Bujo.Host;
 
 public sealed class ApprovedPrincipalRequirement : IAuthorizationRequirement
 {
+    private readonly IConfiguration _configuration;
+
     public ApprovedPrincipalRequirement(IConfiguration configuration)
     {
-        var tenantId = configuration["Auth:TenantId"];
-        TenantId = Guid.TryParse(tenantId, out var parsedTenantId)
-            ? parsedTenantId.ToString("D")
-            : null;
+        _configuration = configuration;
+    }
 
-        AllowedObjectIds = (configuration["Auth:AllowedPrincipals"] ?? string.Empty)
+    public string? TenantId => Guid.TryParse(_configuration["Auth:TenantId"], out var tenantId)
+        ? tenantId.ToString("D") : null;
+
+    public IReadOnlySet<string> AllowedObjectIds =>
+        (_configuration["Auth:AllowedPrincipals"] ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(value => value.Split(':', 2, StringSplitOptions.TrimEntries))
             .Where(parts =>
@@ -23,11 +27,6 @@ public sealed class ApprovedPrincipalRequirement : IAuthorizationRequirement
                 StringComparer.OrdinalIgnoreCase.Equals(configuredTenantId.ToString("D"), TenantId))
             .Select(parts => Guid.Parse(parts[1]).ToString("D"))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    }
-
-    public string? TenantId { get; }
-
-    public IReadOnlySet<string> AllowedObjectIds { get; }
 }
 
 public sealed class ApprovedPrincipalHandler : AuthorizationHandler<ApprovedPrincipalRequirement>

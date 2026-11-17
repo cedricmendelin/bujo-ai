@@ -39,10 +39,9 @@ The AppHost's SQL data volume persists across local runs. Its `--migrate`
 argument applies EF migrations only while the host runs in Development. The
 production host does not run migrations at startup; production deployment uses
 the dedicated `--migrate-only` job entry point before promoting an app revision.
-The Aspire dashboard shows the host and SQL resource status. Only
-`/health/live` allows anonymous access;
-`/health/ready` is protected by the approved-principal policy and returns no
-response body.
+The Aspire dashboard shows the host and SQL resource status. Of the health
+endpoints, only `/health/live` allows anonymous access; `/health/ready` is
+protected by the approved-principal policy and returns no response body.
 
 Production sets `Deployment__VerifyDatabaseOnStart=true`. Before serving HTTP,
 the runtime identity must be able to read the migration history, find every
@@ -101,3 +100,68 @@ notes](https://github.com/microsoft/aspire/releases/tag/v13.6.5) do not explicit
 certify this repository's .NET 11 AppHost combination. That narrower official
 compatibility evidence remains an issue #5/B3 blocker; do not silently change
 the approved application runtime or declare it resolved from a local run.
+
+## PWA rendering proof (issue #10, plan v3)
+
+The initial UI is a rendering proof, **not the journal UI**. The protected
+`/rendering-proof` page exercises Interactive Server without reading or writing
+journal data. `/auth/sign-in`, `/auth/signed-out`, `/auth/denied`, and `/auth/error`
+are safe anonymous account pages. API endpoints still require bearer tokens;
+signing into the browser does not authorize an API request.
+
+The manifest and icons support an installable online-first shell. The service
+worker caches only explicitly listed public static assets, never navigations,
+account pages, journal responses, or API responses. There is no offline capture,
+write queue, or automatic replay. Disconnecting preserves the current document
+while the circuit remains recoverable; a host restart, circuit expiration, or
+scale-to-zero can require a reload and lose unsaved input. A successful proof
+roundtrip is not evidence that a journal item was saved.
+
+Run the browser proof tests with the existing .NET test tooling:
+
+```sh
+dotnet build Bujo.slnx --configuration Release
+pwsh tests/Bujo.E2E.Tests/bin/Release/net11.0/playwright.ps1 install --with-deps chromium
+dotnet test tests/Bujo.E2E.Tests/Bujo.E2E.Tests.csproj --no-build --configuration Release
+```
+
+CI installs Chromium before running the test projects. The browser suite uses a
+real local Kestrel server and authentication configured **only inside the test
+host**; it does not add a production sign-in bypass or contact Entra. The suite
+must fail rather than skip if its browser is unavailable. SQL-backed tests
+continue to require the disposable SQL Server described above.
+
+### Owner-operated proof gate
+
+Interactive Server with static SSR where appropriate is Accepted in
+[ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. The rendering proof
+provides implementation evidence for that decision; it is not a request to
+select a render mode. Plan v3 still requires owner and Architect review of the
+proof evidence before building the capture, lists, history, daily-start, and
+upcoming views. Live Entra sign-in, target-browser installation, cost and
+multi-replica recovery remain open verification gates. Real
+Entra sign-in and target-browser installation cannot be certified by the test
+authentication scheme. Follow the approved proof runbook in [auth.md](auth.md);
+do not access credentials, change registrations, grant consent, or deploy
+without the owner's authorization.
+
+On the approved HTTPS deployment, check the following with synthetic text only:
+
+1. Sign in through Entra as the approved account. Verify a non-approved account
+   cannot reach `/rendering-proof`, and that anonymous account/error pages show
+   no protected information.
+2. Install the shell in each supported browser and launch it from its installed
+   icon. Record browser/platform and observed installation behavior.
+3. Use only the keyboard to enter proof text and invoke the roundtrip control.
+   Disconnect networking: the banner must appear, interaction must be disabled,
+   and text must remain visible without any success claim or queued action.
+4. Reconnect and verify an explicit new interaction works. Repeat after a host
+   restart; verify reload guidance rather than promising circuit recovery.
+5. Inspect service-worker caches: only public shell assets may be present.
+   Record sanitized results and request owner/Architect review in the PR.
+
+Assume one host replica: circuits and server-side authentication sessions are
+not shared across replicas. No replica settings, Azure resources, or deployment
+configuration are changed here. Retained circuits consume server memory and
+require an online host; no live scale-to-zero, cost, or production performance
+measurements have been made.

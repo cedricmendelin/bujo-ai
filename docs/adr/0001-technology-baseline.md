@@ -4,7 +4,8 @@
 Interactive Server for the initial interactive UI and the General Purpose
 serverless Azure SQL free tier where eligible, with paid continuation at the
 free limit. These choices do not authorize provisioning; implementation,
-eligibility and operational checks below still apply. The owner-approved
+eligibility and operational checks below still apply. The rendering proof
+provides implementation evidence, not live verification. The owner-approved
 [implementation plan v4](https://github.com/cedricmendelin/bujo-ai/issues/5#issuecomment-6901233646)
 selects .NET 11, EF Core SQL Server, and one modular host for that issue only.
 MCP client compatibility and Azure SQL configuration availability remain
@@ -55,6 +56,32 @@ patched automatically by updating the host.
 
 ## Blazor rendering and installability
 
+### Issue #10 plan v3 proof checkpoint (2026-11-17)
+
+A thin SSR + Interactive Server proof is implemented in the existing modular
+host with a `Bujo.Web` Razor class library. Anonymous home/account states use
+static SSR; the protected `/rendering-proof` page alone opens an authorized
+Interactive Server circuit. Its synthetic text and read-only connection check
+are not journal persistence. Public manifest/icons and a static-asset-only
+service worker supply installation prerequisites without caching HTML, API
+responses, identities or journal data. Offline writes are neither queued nor
+replayed.
+
+The BFF boundary validates server-held delegated tokens and current approved
+identity on requests, circuit start/reconnect and inbound events; APIs remain
+bearer-only. See [authentication checkpoint](../auth.md#issue-10-v3-renderingbff-checkpoint)
+for configuration, single-replica/restart limitations and the human setup gate.
+
+**Rendering decision: Accepted on 2026-11-17.** This proof supplies implementation
+evidence for the selected Interactive Server mode, not a pending rendering
+decision. Test-host rendering and locally signed token tests do not establish
+real Entra sign-in, target-browser installation,
+production proxy behavior, scale-to-zero cost, multi-replica recovery or durable
+journal saves. Owner and Architect must review the proof in the PR before
+further journal UI implementation. Missing live credentials/configuration are a
+human verification gate, not a reversal of the accepted decision or permission
+to silently adopt WASM.
+
 [Render modes](https://learn.microsoft.com/en-us/aspnet/core/blazor/components/render-modes?view=aspnetcore-10.0)
 describe where components execute. The matrix compares a Blazor Web App using
 each mode with a standalone WASM client served by the same ASP.NET Core host.
@@ -73,7 +100,7 @@ Microsoft documents the [standalone WASM PWA template](https://learn.microsoft.c
 the Web App template's PWA option is still tracked in
 [Microsoft's issue](https://github.com/dotnet/aspnetcore/issues/48935). A
 manifest, icons, HTTPS and browser-specific installation checks are therefore
-implementation work for the proposed Web App, not a claimed template feature.
+implementation work for the selected Web App, not a claimed template feature.
 Installability **does not mean offline editing**. Show an explicit offline or
 disconnected state, never queue offline writes, and confirm saves only after
 server persistence. Avoid caching authenticated journal responses or secrets
@@ -87,9 +114,9 @@ can require a reload; do not assume recovery of unsaved input or replay writes.
 The owner selected Interactive Server for initial interactive components on
 2026-11-17, with static SSR where appropriate. This is an online-first choice,
 not an offline-write or recovery guarantee. Prove installability, authentication
-and disconnect/reconnect on target browsers before committing to production
-scaffolding. If a requirement fails, bring the WASM alternative back for approval
-rather than claiming that a manifest alone meets the requirement.
+and disconnect/reconnect on target browsers before production use. If a
+requirement fails, bring the WASM alternative back for approval rather than
+claiming that a manifest alone meets the requirement.
 
 For later [AG-UI work](https://github.com/cedricmendelin/bujo-ai/issues/6),
 Microsoft's [Interactive Server sample](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/05-end-to-end/AGUIWebChat)
@@ -258,5 +285,6 @@ deployments.
 modular host with a separate production migration job. The owner selected
 Interactive Server and the conditional Azure SQL free-tier/paid-continuation
 baseline on 2026-11-17. MCP client compatibility, Azure SQL eligibility and
-regional configuration, full-text parity, actual Azure permissions, cost and
-provisioning remain unverified. No resources are provisioned by this ADR.
+regional configuration, full-text parity, live authentication, installability,
+multi-replica recovery, actual Azure permissions, cost and provisioning remain
+unverified. No resources are provisioned by this ADR.
