@@ -49,7 +49,7 @@ turning guesses into behavior. No implementation is dispatched by these labels.
 
 | Issue | Outcome | Prerequisites |
 |-------|---------|---------------|
-| [#6](https://github.com/cedricmendelin/bujo-ai/issues/6) | Verify Foundry/AG-UI/Blazor integration and approve approach | #2, #4 |
+| [#6](https://github.com/cedricmendelin/bujo-ai/issues/6) | Verify Foundry/AG-UI/Blazor integration and approve approach ([research](ai-chat.md), [proposed ADR](adr/0002-foundry-agui-chat.md)) | #2, #4 |
 | [#8](https://github.com/cedricmendelin/bujo-ai/issues/8) | User-invoked AI drafts for weekly retro/planning | #5, #6, #10, #11, #12, #13 |
 | [#16](https://github.com/cedricmendelin/bujo-ai/issues/16) | Release 2: SQL-to-AI-search synchronization and retrieval for RAG | #4, #13, #14 |
 | [#15](https://github.com/cedricmendelin/bujo-ai/issues/15) | Release 2: source-grounded in-app knowledge Q&A over the index | #6, #13, #14, #16 |

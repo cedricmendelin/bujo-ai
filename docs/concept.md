@@ -28,7 +28,9 @@ or credentials belong in the repository.
 - Azure SQL is the durable source for journal and knowledge data; hosting
   configuration, local development and operating cost still require validation.
 - Microsoft Foundry with AG-UI for in-app chat; verify the exact integration
-  and Blazor client approach before choosing an implementation.
+  and Blazor client approach before choosing an implementation. See the
+  [issue #6 research](ai-chat.md) and [proposed ADR](adr/0002-foundry-agui-chat.md);
+  neither is an accepted implementation decision.
 - MCP access for assistants such as Copilot and Claude, sharing application
   capabilities rather than maintaining a second copy of the user's journal.
 - Scheduling configurable through the application or assistant.
