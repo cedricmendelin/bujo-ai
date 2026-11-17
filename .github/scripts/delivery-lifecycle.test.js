@@ -50,11 +50,31 @@ test('review freshness requires complete timestamps within the selected successf
     { ...result, completed_at: undefined },
     { ...result, completed_at: '2026-11-16T12:04:00Z' },
     { ...result, started_at: '2026-11-16T11:59:59Z' },
-    { ...result, completed_at: '2026-11-16T12:00:00Z' },
+    { ...result, completed_at: '2026-11-16T11:59:59Z' },
+    { ...result, started_at: '2026-11-16T12:04:00Z' },
   ]) {
     assert.equal(lifecycle.reviewResultIsFresh({ check: invalid, run: selected, sha: sha(1) }), false);
   }
   assert.equal(lifecycle.reviewResultIsFresh({ check: result, run: null, sha: sha(1) }), false);
+});
+
+test('safe-output completion may precede the GitHub-assigned start within the same run', () => {
+  const selected = run('Verifier', 94, '2026-11-17T08:48:40Z');
+  selected.updated_at = '2026-11-17T08:54:07Z';
+  const result = {
+    ...check('Squad Review / Verifier', sha(1)),
+    started_at: '2026-11-17T08:53:35Z',
+    completed_at: '2026-11-17T08:53:34Z',
+  };
+  assert.equal(lifecycle.reviewResultIsFresh({ check: result, run: selected, sha: sha(1) }), true);
+  for (const invalid of [
+    { ...result, started_at: '2026-11-17T08:48:39Z' },
+    { ...result, completed_at: '2026-11-17T08:48:39Z' },
+    { ...result, started_at: '2026-11-17T08:54:08Z' },
+    { ...result, completed_at: '2026-11-17T08:54:08Z' },
+  ]) {
+    assert.equal(lifecycle.reviewResultIsFresh({ check: invalid, run: selected, sha: sha(1) }), false);
+  }
 });
 
 test('new code heads and review:none removal dispatch a fresh review once without duplicate delivery', () => {

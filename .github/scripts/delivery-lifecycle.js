@@ -36,13 +36,16 @@ function reviewResultIsFresh({ check, run, sha, removedAt = null }) {
   const started = Date.parse(check.started_at);
   const completed = Date.parse(check.completed_at);
   const runCompleted = Date.parse(run.updated_at);
+  const runStarted = Date.parse(run.run_started_at || run.created_at);
   // Safe-output checks must belong to this completed run's time window, not
   // merely share its head. In particular, a cancelled run cannot adopt an old
   // passing check and a late old-generation result cannot satisfy a new run.
-  return [created, started, completed, runCompleted].every(Number.isFinite)
+  // GitHub may assign started_at after the publisher's completed_at. Bind
+  // both independently to the run rather than assuming their API ordering.
+  return [created, started, completed, runCompleted, runStarted].every(Number.isFinite)
     && (!removedAt || created >= Date.parse(removedAt))
-    && started >= Date.parse(run.run_started_at || run.created_at)
-    && completed >= started && completed <= runCompleted;
+    && started >= runStarted && started <= runCompleted
+    && completed >= runStarted && completed <= runCompleted;
 }
 
 function reviewDispatchNeeded({ fresh, runs = [], forceFresh = false, eventAt = null }) {
