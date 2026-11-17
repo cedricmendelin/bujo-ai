@@ -1,10 +1,12 @@
 # ADR 0001: Technology baseline
 
-**Status:** Partially approved for issue #5; UI rendering and SQL free-tier
-choices remain proposed. The owner-approved
+**Status:** Interactive Server for the initial interactive UI, with static SSR
+where appropriate, is Accepted by the owner on 2026-11-17. This rendering
+decision does not establish live verification or authorize provisioning.
+The owner-approved
 [implementation plan v4](https://github.com/cedricmendelin/bujo-ai/issues/5#issuecomment-6901233646)
 selects .NET 11, EF Core SQL Server, and one modular host for that issue only.
-This does not approve a Blazor render mode, Azure SQL free-tier operating
+The issue #5 approval alone does not approve Azure SQL free-tier operating
 behavior, or MCP client compatibility. Evidence retrieved 2026-11-14; links
 below are primary Microsoft sources. Prices, availability and product behavior
 must be rechecked before provisioning.
@@ -19,10 +21,10 @@ direction targets Switzerland North and less than USD 50/month, not a spending
 guarantee. See [concept](../concept.md) and
 [recorded decisions](../../.squad/decisions.md).
 
-| Choice | Recommendation for owner review | Status |
+| Choice | Decision or recommendation | Status |
 | --- | --- | --- |
 | Runtime | .NET 11, current supported servicing patch | Approved for issue #5 |
-| UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Proposed |
+| UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Accepted 2026-11-17; installability and runtime behavior still require verification |
 | Database | Azure SQL Database; General Purpose serverless free tier remains subject to the operational checks below | Provider approved; tier and exhaustion behavior remain proposed |
 | Persistence | EF Core SQL Server provider and reviewed migrations | Approved for issue #5 |
 | Structure | One modular ASP.NET Core host with small in-process modules; no microservices | Approved for issue #5 |
@@ -68,12 +70,15 @@ identity on requests, circuit start/reconnect and inbound events; APIs remain
 bearer-only. See [authentication checkpoint](../auth.md#issue-10-v3-renderingbff-checkpoint)
 for configuration, single-replica/restart limitations and the human setup gate.
 
-**Decision status remains Proposed.** Test-host rendering and locally signed
-token tests do not establish real Entra sign-in, target-browser installation,
+**Rendering decision: Accepted on 2026-11-17.** This proof supplies implementation
+evidence for the selected Interactive Server mode, not a pending rendering
+decision. Test-host rendering and locally signed token tests do not establish
+real Entra sign-in, target-browser installation,
 production proxy behavior, scale-to-zero cost, multi-replica recovery or durable
 journal saves. Owner and Architect must review the proof in the PR before
 further journal UI implementation. Missing live credentials/configuration are a
-human gate, not permission to silently adopt WASM.
+human verification gate, not a reversal of the accepted decision or permission
+to silently adopt WASM.
 
 [Render modes](https://learn.microsoft.com/en-us/aspnet/core/blazor/components/render-modes?view=aspnetcore-10.0)
 describe where components execute. The matrix compares a Blazor Web App using
@@ -93,7 +98,7 @@ Microsoft documents the [standalone WASM PWA template](https://learn.microsoft.c
 the Web App template's PWA option is still tracked in
 [Microsoft's issue](https://github.com/dotnet/aspnetcore/issues/48935). A
 manifest, icons, HTTPS and browser-specific installation checks are therefore
-implementation work for the proposed Web App, not a claimed template feature.
+implementation work for the selected Web App, not a claimed template feature.
 Installability **does not mean offline editing**. Show an explicit offline or
 disconnected state, never queue offline writes, and confirm saves only after
 server persistence. Avoid caching authenticated journal responses or secrets
@@ -104,8 +109,9 @@ services in one host. Its trade-off is a live connection and server-side circuit
 state. [Microsoft's circuit guidance](https://learn.microsoft.com/en-us/aspnet/core/blazor/state-management/server?view=aspnetcore-10.0)
 describes reconnect and state loss: circuit expiration, host restart or scale-to-zero
 can require a reload; do not assume recovery of unsaved input or replay writes.
-Prove installability, authentication and disconnect/reconnect on target browsers
-before committing to scaffolding. If this fails, bring the WASM alternative back
+The owner selected Interactive Server on 2026-11-17. Prove installability,
+authentication and disconnect/reconnect on target browsers before production use.
+If this fails, bring the WASM alternative back
 for approval rather than claiming that a manifest alone meets the requirement.
 
 For later [AG-UI work](https://github.com/cedricmendelin/bujo-ai/issues/6),
@@ -269,7 +275,9 @@ deployments.
   authoritative.
 
 **Approval boundary:** issue #5 approves .NET 11, EF Core SQL Server, and one
-modular host with a separate production migration job. Blazor rendering,
+modular host with a separate production migration job. Interactive Server with
+static SSR where appropriate is Accepted on 2026-11-17; live authentication,
+installability, cost and multi-replica recovery remain unverified.
 Azure SQL free-tier behavior, MCP client compatibility, actual Azure
 permissions, and provisioning remain unapproved or unverified. No resources
 are provisioned by this ADR.

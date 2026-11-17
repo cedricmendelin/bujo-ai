@@ -6,8 +6,12 @@ The host now implements a **thin proof**, not the complete journal UI or a
 verified Entra deployment. Static SSR renders anonymous `/` and safe account
 states; only `/rendering-proof` creates an Interactive Server circuit. Its
 synthetic text and connection check never access SQL or save journal items.
-Owner and Architect review of this checkpoint remains required before journal
-UI work. The original issue #4 MCP/client proposal below remains provisional.
+Interactive Server with static SSR where appropriate is Accepted in
+[ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
+provides implementation evidence, not live verification. Owner and Architect
+review of that evidence remains required before journal UI work. Live Entra
+sign-in, target-browser installation, cost and multi-replica recovery remain
+unverified. The original issue #4 MCP/client proposal below remains provisional.
 
 ### Implemented boundaries
 

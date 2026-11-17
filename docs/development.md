@@ -133,8 +133,13 @@ continue to require the disposable SQL Server described above.
 
 ### Owner-operated proof gate
 
-Plan v3 requires owner and Architect review of the rendering proof before
-building the capture, lists, history, daily-start, and upcoming views. Real
+Interactive Server with static SSR where appropriate is Accepted in
+[ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. The rendering proof
+provides implementation evidence for that decision; it is not a request to
+select a render mode. Plan v3 still requires owner and Architect review of the
+proof evidence before building the capture, lists, history, daily-start, and
+upcoming views. Live Entra sign-in, target-browser installation, cost and
+multi-replica recovery remain open verification gates. Real
 Entra sign-in and target-browser installation cannot be certified by the test
 authentication scheme. Follow the approved proof runbook in [auth.md](auth.md);
 do not access credentials, change registrations, grant consent, or deploy
