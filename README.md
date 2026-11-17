@@ -4,7 +4,8 @@ Organize your thoughts. Plan your tasks. Live mindfully.
 
 An AI-assisted bullet journal for capturing tasks and thoughts, intentional
 planning, and reliable follow-through through a web app or your preferred AI
-assistant.
+assistant. This demo is also a place to try agent capabilities and practice
+software delivery.
 
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
@@ -12,8 +13,8 @@ The journal host/API and SQL persistence are implemented; an authenticated
 remote MCP adapter is exposed at `/mcp`, but Copilot and Claude client
 compatibility is not yet live-verified. See the [MCP guide](docs/mcp.md). A
 usable PWA remains a separate story. Production was last verified running the Azure
-quickstart image, not the journal host. The owner-reviewed infrastructure-first
-path provisions API/hosting resources before manual application setup; an
+quickstart image, not the journal host. CI applies merged infrastructure changes
+without a separate approval, and provisioning sets up API/hosting resources before manual application setup; an
 unhealthy app is an accepted intermediate state. Bootstrap and permission
 setup are documented in [the infrastructure guide](docs/infrastructure.md)
 and the [deployment guide](docs/deployment.md). On a prepared baseline, after one-time activation,
@@ -135,9 +136,20 @@ Cloud Watch and fix does **not** address review comments. Our bounded bridge
 forwards actionable specialist findings and trusted human change requests to
 the implementer. It ignores resolved/outdated threads and duplicate deliveries;
 arbitrary top-level comments do not automatically start work. Review repair
-requests stop while a cloud session is active. Only actual completed repair
-sessions or local code changes count toward the three-attempt limit; cancellations,
-queued runs, and orchestration retries do not.
+requests stop while a cloud session is active. The controller repairs recognized
+generated closing suffixes on partial PRs itself; it never sends those to a
+coding agent. Only request-linked substantive repair outcomes or local code
+changes count toward the three-attempt limit. Capability/dependency failures
+pause once, without consuming that budget.
+
+Meaningful description changes refresh reviews; whitespace-only edits do not.
+To recover after inspecting a pause, manually run **Squad PR Lifecycle** with
+the PR number and **resume_repairs** selected. Ordinary re-evaluation never
+clears `needs:human`. To continue an issue after a partial PR merges and its
+dependency is met, manually run **Squad Plan Approved** with the issue number
+and sanitized dependency evidence. It resumes existing approved scope even if
+Copilot is still assigned; an open related PR or active cloud session blocks
+competing implementation. Changed scope still requires a revised approved plan.
 
 `review:none`, applied by an owner or maintainer, skips pending and existing
 specialist findings for that PR only. It never skips CI or trusted human change

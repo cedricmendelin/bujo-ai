@@ -1,12 +1,16 @@
 ---
 name: Squad Review Verifier
-run-name: "Squad Review Verifier · PR #${{ github.event.inputs.pr_number }}"
+run-name: "Squad Review Verifier · PR #${{ github.event.inputs.pr_number }} · input ${{ github.event.inputs.review_input }}"
 description: Independent Verifier review of pull requests. Publishes "Squad Review / Verifier" for aggregation.
 on:
   workflow_dispatch:
     inputs:
       pr_number:
         description: Pull request number to review
+        required: true
+        type: string
+      review_input:
+        description: Controller review-input key; dispatch reviews through Squad PR Lifecycle
         required: true
         type: string
   bots: [Copilot, copilot-swe-agent]

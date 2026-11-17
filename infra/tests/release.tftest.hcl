@@ -234,6 +234,15 @@ run "release_migration_rerun_plan" {
   }
 }
 
+run "infrastructure_retains_both_images" {
+  command = plan
+
+  variables {
+    retained_app_image = "ghcr.io/cedricmendelin/bujo-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    container_image    = "ghcr.io/cedricmendelin/bujo-ai@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+
 run "release_promotion_plan" {
   command = plan
 

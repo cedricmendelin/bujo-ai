@@ -34,7 +34,7 @@ module "container_app" {
     containers = [
       {
         name   = "bujo-ai"
-        image  = var.container_image
+        image  = var.retained_app_image == null ? var.container_image : var.retained_app_image
         cpu    = 0.25
         memory = "0.5Gi"
         env = [

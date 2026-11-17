@@ -759,7 +759,7 @@ def has_unknown(value) -> bool:
     return value is True
 
 
-def managed_changes(plan: dict) -> list[tuple[str, list, dict]]:
+def managed_changes(plan: dict) -> list[tuple[str, str, list, dict]]:
     if plan.get("errored") or plan.get("deferred_changes") or not isinstance(plan.get("resource_changes"), list):
         raise DeploymentBlocked("Plan inventory is incomplete or errored.")
     result = []
@@ -771,8 +771,25 @@ def managed_changes(plan: dict) -> list[tuple[str, list, dict]]:
         change = resource.get("change")
         if not isinstance(change, dict) or not isinstance(change.get("actions"), list):
             raise DeploymentBlocked("Plan inventory is incomplete or errored.")
-        result.append((resource.get("address"), change["actions"], change))
+        resource_type = resource.get("type")
+        if not isinstance(resource_type, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,128}", resource_type):
+            resource_type = "unknown"
+        result.append((resource.get("address"), resource_type, change["actions"], change))
     return result
+
+
+def unexpected_change_summary(changes: list[tuple[str, str, list, dict]]) -> str:
+    summary = set()
+    for _, resource_type, actions, _ in changes:
+        if actions == ["no-op"]:
+            continue
+        safe_actions = [
+            action for action in actions
+            if isinstance(action, str) and re.fullmatch(r"[a-z-]{1,32}", action)
+        ]
+        summary.add(f"{resource_type} ({', '.join(safe_actions) or 'unknown action'})")
+    summary = sorted(summary)
+    return ", ".join(summary[:5]) + (f", and {len(summary) - 5} more" if len(summary) > 5 else "")
 
 
 def require_output_unchanged(plan: dict, name: str) -> None:
@@ -792,7 +809,7 @@ def release_targets(job_id: str, app_id: str, migration_sql: str, runtime_sql: s
 
 
 def job_dependencies(plan: dict) -> str:
-    for address, _, change in managed_changes(plan):
+    for address, _, _, change in managed_changes(plan):
         if address == JOB_ADDRESS:
             job = copy.deepcopy(change.get("after"))
             if not isinstance(job, dict):
@@ -844,13 +861,18 @@ def validate_migration_plan(plan: dict, image: str, trusted_sql: str) -> bool:
         raise DeploymentBlocked("The migration image is not an immutable approved release digest.")
     require_trusted_sql_target(trusted_sql)
     job = None
-    for address, actions, change in managed_changes(plan):
+    changes = managed_changes(plan)
+    unexpected = [item for item in changes if item[0] != JOB_ADDRESS and item[2] != ["no-op"]]
+    for address, _, actions, change in changes:
         if address == JOB_ADDRESS:
             if job is not None or actions not in (["no-op"], ["update"]):
                 raise DeploymentBlocked("Migration plan contains an unsafe job action.")
             job = (actions, change)
-        elif actions != ["no-op"]:
-            raise DeploymentBlocked("Migration plan contains an unexpected resource change.")
+    if unexpected:
+        raise DeploymentBlocked(
+            "Migration plan contains unexpected managed changes: "
+            f"{unexpected_change_summary(unexpected)}."
+        )
     if job is None:
         raise DeploymentBlocked("Migration plan does not contain the bootstrapped job.")
     require_output_unchanged(plan, "migration_sql_connection_string")
@@ -913,13 +935,19 @@ def validate_promotion_plan(plan: dict, image: str, trusted_runtime_sql: str, ex
         raise DeploymentBlocked("The application image is not an immutable approved release digest.")
     require_trusted_sql_target(trusted_runtime_sql)
     found: dict[str, tuple[list, dict]] = {}
-    for address, actions, change in managed_changes(plan):
+    changes = managed_changes(plan)
+    expected_addresses = {APP_KEEPER_ADDRESS, APP_UPDATE_ADDRESS, JOB_ADDRESS}
+    unexpected = [item for item in changes if item[0] not in expected_addresses and item[2] != ["no-op"]]
+    for address, _, actions, change in changes:
         if address in {APP_KEEPER_ADDRESS, APP_UPDATE_ADDRESS, JOB_ADDRESS}:
             if address in found:
                 raise DeploymentBlocked("Promotion plan has duplicate application resources.")
             found[address] = (actions, change)
-        elif actions != ["no-op"]:
-            raise DeploymentBlocked("Promotion plan contains infrastructure drift or an unexpected change.")
+    if unexpected:
+        raise DeploymentBlocked(
+            "Promotion plan contains infrastructure drift or unexpected managed changes: "
+            f"{unexpected_change_summary(unexpected)}."
+        )
     if set(found) != {APP_KEEPER_ADDRESS, APP_UPDATE_ADDRESS, JOB_ADDRESS}:
         raise DeploymentBlocked("Promotion plan is missing the application or migration job.")
     if found[JOB_ADDRESS][0] != ["no-op"]:

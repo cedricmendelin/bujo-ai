@@ -2,18 +2,6 @@ name: Provision infrastructure
 
 on:
   workflow_dispatch:
-    inputs:
-      operation:
-        description: Plan first; apply only after privately reviewing the saved plan
-        required: true
-        type: choice
-        options: [plan, apply]
-      plan_run_id:
-        description: Successful plan run ID (apply only)
-        type: string
-      plan_sha256:
-        description: Exact privately reviewed saved-plan SHA-256 (apply only)
-        type: string
 
 permissions:
   contents: read
@@ -30,44 +18,29 @@ jobs:
     environment: prod
     permissions:
       contents: read
-      issues: read
-      actions: read
       id-token: write
     env:
-      GH_TOKEN: ${{ github.token }}
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
       ARM_USE_CLI: "false"
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
       TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
       TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
       TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
-      SQL_ENTRA_ADMIN_OBJECT_ID: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
-      SQL_ENTRA_ADMIN_LOGIN: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
-      BUDGET_ALERT_EMAIL: ${{ vars.BUDGET_ALERT_EMAIL }}
       TF_VAR_resource_group_name: ${{ vars.AZURE_RESOURCE_GROUP }}
       TF_VAR_deployment_client_id: ${{ vars.AZURE_CLIENT_ID }}
       TF_VAR_sql_entra_admin_object_id: ${{ vars.SQL_ENTRA_ADMIN_OBJECT_ID }}
       TF_VAR_sql_entra_admin_login: ${{ vars.SQL_ENTRA_ADMIN_LOGIN }}
       TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
       TF_VAR_auth_allowed_principal_object_ids: ${{ vars.API_ALLOWED_PRINCIPAL_OBJECT_IDS }}
-      OPERATION: ${{ inputs.operation }}
-      PLAN_RUN_ID: ${{ inputs.plan_run_id }}
-      PLAN_SHA256: ${{ inputs.plan_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
-
-      - name: Require only infrastructure configuration, not completed app setup
-        run: python3 .github/scripts/deployment_preflight.py --mode infrastructure
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -83,51 +56,13 @@ jobs:
 
       - name: Initialize the existing private state backend
         run: |
-          python3 .github/scripts/deployment_preflight.py --mode infrastructure --private-storage
-          if ! terraform -chdir=infra init -input=false -lockfile=readonly \
+          terraform -chdir=infra init -input=false -lockfile=readonly \
             -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
             -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" \
             -backend-config="container_name=$TFSTATE_CONTAINER" \
             -backend-config="key=$TFSTATE_KEY" \
             -backend-config="use_oidc=true" \
-            -backend-config="use_azuread_auth=true" > "$RUNNER_TEMP/bootstrap.init.log" 2>&1; then
-            echo "::error::Private backend initialization failed; inspect the private diagnostics and state permissions."
-            exit 1
-          fi
+            -backend-config="use_azuread_auth=true"
 
-      - name: Prepare or apply the exact owner-reviewed infrastructure plan
-        run: |
-          args=(--mode infrastructure --operation "$OPERATION"
-                --plan "$RUNNER_TEMP/bootstrap.tfplan" --auth-mode oidc
-                --subscription "$ARM_SUBSCRIPTION_ID" --expected-commit "$GITHUB_SHA")
-          if [ "$OPERATION" = plan ]; then
-            args+=(--publish-plan)
-          else
-            args+=(--plan-run-id "$PLAN_RUN_ID" --expected-sha256 "$PLAN_SHA256")
-          fi
-          python3 .github/scripts/bootstrap_review.py "${args[@]}"
-
-      - name: Preserve failed provisioning diagnostics privately
-        if: failure()
-        run: |
-          python3 .github/scripts/deployment_preflight.py --mode infrastructure --private-storage
-          for phase in init plan apply; do
-            log="$RUNNER_TEMP/bootstrap.$phase.log"
-            if [ -f "$log" ]; then
-              if ! az storage blob upload --auth-mode login \
-                --account-name "$TFSTATE_STORAGE_ACCOUNT" --container-name "$TFSTATE_CONTAINER" \
-                --name "bootstrap/diagnostics/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT/$phase.log" \
-                --file "$log" --overwrite false --only-show-errors --output none \
-                > /dev/null 2> "$RUNNER_TEMP/bootstrap.upload-error.log"; then
-                echo "::error::Private diagnostic storage failed; the owner must inspect state and storage access."
-                exit 1
-              fi
-            fi
-          done
-
-      - name: Remove runner-local sensitive files
-        if: always()
-        run: |
-          rm -f -- "$RUNNER_TEMP/bootstrap.tfplan" "$RUNNER_TEMP/bootstrap.review.json" \
-            "$RUNNER_TEMP/bootstrap.init.log" "$RUNNER_TEMP/bootstrap.plan.log" \
-            "$RUNNER_TEMP/bootstrap.apply.log" "$RUNNER_TEMP/bootstrap.upload-error.log"
+      - name: Plan and apply infrastructure
+        run: python3 .github/scripts/apply_infrastructure.py --always

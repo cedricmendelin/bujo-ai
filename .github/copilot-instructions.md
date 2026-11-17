@@ -28,6 +28,11 @@ changing anything.
   for every issue acceptance criterion, including implementation and relevant
   tests. A partial PR uses a non-closing issue reference, names unfinished work
   and its dependency under `Remaining work`, and leaves the issue open.
+- Separate an explicitly agreed mergeable milestone from full issue completion.
+  For partial delivery, list unfinished criteria, responsible owner,
+  dependency/evidence needed, and next action under `Remaining work`. The
+  controller copies an unambiguous same-repository issue handoff to the issue.
+  Never invent a smaller milestone or promote partial work to full to merge.
 - If blocked on a human-only decision, add `## 🙋 Needs human` to the PR
   description and mention @cedricmendelin rather than guessing.
 - If a genuinely necessary deviation is made, list it under
@@ -54,7 +59,8 @@ changing anything.
 - The default-branch `Squad PR Lifecycle` controller handles cloud PR readiness,
   initial CI/review dispatch, review-feedback forwarding, aggregate
   `Squad Merge Readiness`, and GitHub squash auto-merge. It uses current-head
-  checks; code commits trigger new reviews, cosmetic description edits do not.
+  checks; code commits and meaningful description changes trigger new reviews.
+  Blank lines, trailing whitespace, and line endings do not change review input.
   The required checks are `ci` and `Squad Merge Readiness`.
 - Reviews, CI, and controller jobs do not execute PR code in a privileged job.
   Lifecycle workflows use trusted default-branch code. No workflow directly
@@ -63,13 +69,24 @@ changing anything.
   conflicts. Local desktop-app Agent merge owns local repairs; the owner must
   disable cloud Watch and fix before local takeover. Keep Agent merge's *Merge*
   action off; GitHub auto-merge remains the only merge executor.
-- The lifecycle forwards actionable review findings, not CI/conflict repairs.
-  It suppresses cloud review-fix requests while a session is active, counts only
-  actual completed repair attempts or local code changes, and escalates after
-  three. Cancellations, queued runs, and orchestration retries are not attempts.
-  `needs:human` is an explicit pause and is never silently cleared. Preserve
-  manual recovery through Actions → *Squad PR Lifecycle* → Run workflow with a
-  PR number.
+- The controller repairs only recognized generated closing suffixes on valid
+  partial PRs; it never changes scope or completion claims. Other completion
+  errors receive explicit metadata feedback, not a coding request.
+- The lifecycle forwards implementation findings, not CI/conflict repairs.
+  Cloud repair prompts require a request-linked outcome with the actual Actions
+  run ID: substantive `attempted`, `capability-blocked`, or `external-blocked`.
+  Follow the exact marker in the request and explain evidence or the missing
+  capability/owner/next action. Do not claim an attempt for inability or unrelated
+  work. The controller counts only attributed substantive outcomes (or local
+  code changes); after three it pauses. Missing attribution or capability pauses
+  once instead of repeating an impossible request.
+- `needs:human` is never silently cleared. Actions → *Squad PR Lifecycle* →
+  Run workflow re-evaluates normally; only an explicit maintainer
+  `resume_repairs: true` clears the pause and starts a new bounded episode.
+  Code commits alone never reset the budget. After a partial delivery's PR is
+  merged/closed and its dependency is met, Actions → *Squad Plan Approved* →
+  Run workflow continues the existing approved issue with dependency evidence,
+  even if Copilot is still assigned. Changed scope needs a revised approved plan.
 
 ## Human-only setup
 

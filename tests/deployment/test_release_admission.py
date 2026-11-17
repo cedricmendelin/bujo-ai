@@ -331,6 +331,8 @@ class ReleaseAdmissionTests(unittest.TestCase):
         apply_job = deploy.split("\n  apply:", 1)[1]
         self.assertNotIn("runner.temp", apply_job.split("    steps:", 1)[0])
         self.assertIn("BUJO_RELEASE_MANIFEST: ${{ runner.temp }}/release.json", apply_job)
+        self.assertLess(apply_job.index("release_admission.py recheck"), apply_job.index("apply_infrastructure.py"))
+        self.assertLess(apply_job.index("apply_infrastructure.py"), apply_job.index("infra/deploy_gate.py"))
         self.assertNotIn("docker build", deploy)
         self.assertNotIn("quickstart:latest", deploy)
 
