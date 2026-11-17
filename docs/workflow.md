@@ -193,6 +193,11 @@ label alone preserves the previous budget. Human review blocks, CI, completion,
 and scope approval still apply. `needs:human` does not stop native Watch and fix,
 which must be disabled separately when pausing.
 
+The resume operation removes the PR label with the existing `GH_AW_AGENT_TOKEN`
+PR-write credential. If a run records a resume marker but fails to remove the
+label, fix the reported cause and start a **new** dispatch; rerunning the same
+Actions run must not clear a later pause.
+
 ## Completion and partial delivery
 
 Every PR declares exactly one whole-line `Completion: full` or
