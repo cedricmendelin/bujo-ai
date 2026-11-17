@@ -24,6 +24,8 @@ namespace Bujo.E2E.Tests;
 
 public sealed class BrowserFixture : IAsyncLifetime
 {
+    // Redirects must never reach Entra, even when browser request routing misses a redirect hop.
+    internal const string IdentityHostDenialRule = "--host-resolver-rules=MAP login.microsoftonline.com ~NOTFOUND";
     private readonly ProofHostFactory _factory = new();
     private IPlaywright _playwright = null!;
     private HttpClient _client = null!;
@@ -42,7 +44,7 @@ public sealed class BrowserFixture : IAsyncLifetime
         {
             Headless = true,
             ExecutablePath = Environment.GetEnvironmentVariable("BUJO_PLAYWRIGHT_CHROMIUM"),
-            Args = ["--no-sandbox"]
+            Args = ["--no-sandbox", "--enable-automation", "--no-proxy-server", IdentityHostDenialRule]
         });
     }
 

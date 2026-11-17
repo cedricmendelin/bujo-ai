@@ -57,6 +57,7 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         await page.Keyboard.PressAsync("Enter");
         await Expect(result).ToHaveTextAsync("Connection confirmed. Check 1. Nothing was saved.");
         await Expect(input).ToHaveValueAsync("Synthetic unsaved proof");
+        await Expect(page).ToHaveTitleAsync("Connection proof · Bujo-AI");
         Assert.Empty(apiWrites);
         Assert.Empty(browserErrors);
     }
@@ -290,31 +291,40 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
     {
         await using var context = await fixture.CreateContextAsync(identity: null);
         var page = await context.NewPageAsync();
-        var errors = new List<string>();
-        page.PageError += (_, error) => errors.Add(error);
+        var pageErrors = new List<string>();
+        var consoleErrors = new List<string>();
+        page.PageError += (_, error) => pageErrors.Add(error);
         page.Console += (_, message) =>
         {
-            if (message.Type == "error") errors.Add(message.Text);
+            if (message.Type == "error") consoleErrors.Add(message.Text);
         };
-        string? authorizationUrl = null;
-        await page.RouteAsync("https://login.microsoftonline.com/**", async route =>
+        var blockedRequest = new TaskCompletionSource<IRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        page.RequestFailed += (_, request) =>
         {
-            authorizationUrl = route.Request.Url;
-            await route.FulfillAsync(new()
-            {
-                ContentType = "text/html",
-                Body = "<!doctype html><html lang=\"en\"><head><title>Synthetic identity endpoint</title></head><body><h1>Synthetic identity endpoint</h1></body></html>"
-            });
-        });
+            if (new Uri(request.Url).Host == "login.microsoftonline.com")
+                blockedRequest.TrySetResult(request);
+        };
+        var devTools = await context.NewCDPSessionAsync(page);
+        var commandLine = await devTools.SendAsync("Browser.getBrowserCommandLine");
+        Assert.NotNull(commandLine);
+        var arguments = commandLine.Value.GetProperty("arguments").EnumerateArray()
+            .Select(argument => argument.GetString()).ToArray();
+        Assert.Contains(BrowserFixture.IdentityHostDenialRule, arguments);
+        Assert.Contains("--no-proxy-server", arguments);
         await page.GotoAsync("/auth/sign-in");
         await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
-        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Synthetic identity endpoint" })).ToBeVisibleAsync();
-        Assert.NotNull(authorizationUrl);
-        var query = Uri.UnescapeDataString(new Uri(authorizationUrl).Query);
+        var failedRequest = await blockedRequest.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("net::ERR_NAME_NOT_RESOLVED", failedRequest.Failure);
+        Assert.True(failedRequest.IsNavigationRequest);
+        Assert.Equal("GET", failedRequest.Method);
+        var query = Uri.UnescapeDataString(new Uri(failedRequest.Url).Query);
         Assert.Contains("response_type=code", query, StringComparison.Ordinal);
+        Assert.Contains("code_challenge=", query, StringComparison.Ordinal);
         Assert.Contains("code_challenge_method=S256", query, StringComparison.Ordinal);
         Assert.DoesNotContain("client_secret", query, StringComparison.Ordinal);
-        Assert.Empty(errors);
+        Assert.Empty(pageErrors);
+        Assert.All(consoleErrors, error => Assert.Equal(
+            "Failed to load resource: net::ERR_NAME_NOT_RESOLVED", error));
     }
 
     [Theory]

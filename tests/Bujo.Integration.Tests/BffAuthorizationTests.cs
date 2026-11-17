@@ -158,6 +158,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         var html = await ui.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
         Assert.Contains("proof-input", html);
+        Assert.Contains("<title>Connection proof · Bujo-AI</title>", html);
         Assert.DoesNotContain(token, html);
         using var api = await client.GetAsync("/api/journal");
         Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
