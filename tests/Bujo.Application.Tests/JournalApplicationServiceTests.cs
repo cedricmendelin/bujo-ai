@@ -107,6 +107,40 @@ public sealed class JournalApplicationServiceTests
         Assert.Equal(JournalListState.Open, reopened.Value!.State);
     }
 
+    [Fact]
+    public void PlannedQueriesUseTheInjectedClockAndRejectMissingOrInvalidTimeZones()
+    {
+        var clock = new FrozenTimeProvider(new DateTimeOffset(2026, 11, 17, 0, 30, 0, TimeSpan.Zero));
+        var journal = new JournalService(new InMemoryJournalRepository());
+        var service = new JournalApplicationService(journal, clock);
+        Assert.True(service.CreateList("Future Log", JournalListKind.FutureLog).IsSuccess);
+        var today = service.Capture(
+            "Today",
+            null,
+            null,
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 17)),
+            null);
+        Assert.True(today.IsSuccess, today.Error?.Message);
+
+        var daily = service.GetDailyStart("Europe/Zurich");
+        var upcoming = service.GetUpcoming("Europe/Zurich");
+        var missingZone = service.GetDailyStart(null);
+        var invalidZone = service.GetUpcoming("Not/A_Time_Zone");
+
+        Assert.True(daily.IsSuccess, daily.Error?.Message);
+        Assert.Equal(new DateOnly(2026, 11, 17), daily.Value!.Today);
+        Assert.Equal(today.Value!.Item.Id, Assert.Single(daily.Value.Groups[1].Items).ItemId);
+        Assert.True(upcoming.IsSuccess, upcoming.Error?.Message);
+        Assert.Equal(14, upcoming.Value!.HorizonDays);
+        Assert.Equal(DomainErrorCode.InvalidTimeZone, missingZone.Error!.Code);
+        Assert.Equal(DomainErrorCode.InvalidTimeZone, invalidZone.Error!.Code);
+    }
+
     private static JournalApplicationService CreateService() =>
         new(new JournalService(new InMemoryJournalRepository()));
+
+    private sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }

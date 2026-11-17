@@ -11,6 +11,45 @@ public static class JournalEndpoints
         var api = endpoints.MapGroup("/api");
 
         api.MapGet("/journal", (JournalApplicationService journal) => Results.Ok(journal.GetSnapshot()));
+        api.MapGet("/daily-start", (
+            string? timeZone,
+            JournalApplicationService journal,
+            ILoggerFactory loggerFactory) =>
+        {
+            try
+            {
+                return ToHttpResult(journal.GetDailyStart(timeZone));
+            }
+            catch (Exception exception)
+            {
+                loggerFactory.CreateLogger("JournalEndpoints").LogError(exception, "Daily-start query failed.");
+                return QueryFailure();
+            }
+        });
+        api.MapGet("/planning/upcoming", (
+            string? timeZone,
+            int? horizon,
+            int? page,
+            int? limit,
+            bool? futureLog,
+            JournalApplicationService journal,
+            ILoggerFactory loggerFactory) =>
+        {
+            try
+            {
+                return ToHttpResult(journal.GetUpcoming(
+                    timeZone,
+                    horizon ?? 14,
+                    page ?? 1,
+                    limit ?? 50,
+                    futureLog ?? false));
+            }
+            catch (Exception exception)
+            {
+                loggerFactory.CreateLogger("JournalEndpoints").LogError(exception, "Upcoming-planning query failed.");
+                return QueryFailure();
+            }
+        });
         api.MapPost("/lists", (CreateListRequest request, JournalApplicationService journal) =>
         {
             var weekKey = ParseWeekKey(request.WeekKey);
@@ -70,6 +109,13 @@ public static class JournalEndpoints
             detail: error.Message,
             extensions: new Dictionary<string, object?> { ["code"] = error.Code.ToString() });
     }
+
+    private static IResult QueryFailure() =>
+        Results.Problem(
+            statusCode: StatusCodes.Status500InternalServerError,
+            title: "QueryFailed",
+            detail: "The journal query could not be completed.",
+            extensions: new Dictionary<string, object?> { ["code"] = "QueryFailed" });
 
     private static DomainResult<PlannedPeriod> ParsePeriod(PeriodRequest? request)
     {
