@@ -85,6 +85,12 @@ findings, publishes `Squad Merge Readiness`, and enables native GitHub squash
 auto-merge only when eligible. `workflow_dispatch` with a PR number remains the
 manual recovery/re-evaluation entry point.
 
+When all inputs pass and the required rules are present, the controller keeps
+`Squad Merge Readiness` pending while enabling GitHub squash auto-merge, then
+publishes success. Publishing success first can make the PR clean, in which
+case GitHub rejects the auto-merge request. An arming failure must not publish
+green readiness; no direct-merge fallback is permitted.
+
 An infrastructure failure or approval block in a reviewer pauses once with
 `needs:human` rather than repeatedly invoking the model. Fix the cause, remove
 the label, and re-evaluate. Resolving a blocking inline thread without another

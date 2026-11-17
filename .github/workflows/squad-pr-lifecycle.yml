@@ -462,15 +462,20 @@ jobs:
                   return;
                 }
                 const finalRulesOk = await hasRules(latestPr);
-                await setReadiness(latestPr, sha, decision);
                 if (!finalRulesOk) {
+                  await setReadiness(latestPr, sha, decision);
                   await pauseMerge(latestPr);
                   return core.info(`#${number}: readiness bootstrapped; required-check migration is still an owner action.`);
                 }
+                // GitHub rejects enabling auto-merge on an already clean PR.
+                // Keep our required check pending until native auto-merge is armed.
                 if (!latestPr.auto_merge) {
                   await agent.graphql('mutation($id:ID!,$head:GitObjectID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH,expectedHeadOid:$head}){clientMutationId}}', {
                     id: latestPr.node_id, head: sha,
                   });
+                }
+                await setReadiness(latestPr, sha, decision);
+                if (!latestPr.auto_merge) {
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
                     body: `✅ Squad Merge Readiness passed for \`${sha.slice(0, 7)}\`. GitHub squash auto-merge is enabled and branch protections determine whether the PR can merge.` });
                 }

@@ -182,6 +182,7 @@ async function execute(state, step = 'evaluate') {
     rest,
     graphql: async (query, args) => {
       calls.push({ name: 'mutation', query, args });
+      if (state.fail === 'mutation') throw new Error('API failure: mutation');
       if (query.includes('disablePullRequestAutoMerge')) state.pr.auto_merge = null;
       else if (query.includes('enablePullRequestAutoMerge')) state.pr.auto_merge = { merge_method: 'squash' };
       else if (query.includes('markPullRequestReadyForReview')) state.pr.draft = false;
@@ -296,6 +297,23 @@ test('genuine new-generation checks pass; cosmetic re-evaluation does not redisp
   const second = await execute(state);
   assert.equal(enables(second).length, 0);
   assert.equal(commentsFrom(second).length, 0);
+});
+
+test('required readiness stays pending while native auto-merge is armed', async () => {
+  const state = fixture();
+  const result = await execute(state);
+  const arm = result.calls.findIndex(call => call.query?.includes('enablePullRequestAutoMerge'));
+  const success = result.calls.findIndex(call => ['createCheck', 'updateCheck'].includes(call.name)
+    && call.args.conclusion === 'success');
+  assert.ok(arm >= 0);
+  assert.ok(success > arm, 'Do not make the PR clean before requesting native auto-merge');
+  assert.equal(readinessFrom(state).conclusion, 'success');
+
+  const denied = fixture();
+  denied.fail = 'mutation';
+  await assert.rejects(execute(denied), /API failure: mutation/);
+  assert.equal(readinessFrom(denied).status, 'in_progress');
+  assert.notEqual(readinessFrom(denied).conclusion, 'success');
 });
 
 test('active GitHub-named reviewer runs are not redispatched on completion events', async () => {
