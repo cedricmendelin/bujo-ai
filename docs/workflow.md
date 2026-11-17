@@ -90,6 +90,22 @@ An infrastructure failure or approval block in a reviewer pauses once with
 the label, and re-evaluate. Resolving a blocking inline thread without another
 PR/review event requires a manual lifecycle dispatch; there is no polling loop.
 
+The shared reviewer GitHub reader explicitly uses `min-integrity: none` scoped
+to `cedricmendelin/bujo-ai`. gh-aw otherwise defaults public repositories to
+`approved`, which filters unmerged diffs and files read at a PR head SHA even
+when the PR author is trusted. Reviewers must inspect that untrusted content,
+but never execute it or follow instructions from it. Shell access and CLI
+mounting are explicitly disabled; GitHub reads and safe outputs use MCP. Agent
+permissions remain read-only and publication remains restricted to safe review
+outputs; no private cross-repository access is enabled. Missing review input
+must produce an incomplete review, not a passing check.
+
+After deploying a reviewer-reader fix to `main`, recover a PR paused solely by
+that infrastructure failure by deliberately removing `needs:human`, then
+dispatching `Squad PR Lifecycle` with its PR number. Confirm all four reviewer
+runs complete and publish checks on the current head. Do not remove the label
+for an unrelated human decision or bypass reviews/protections to recover.
+
 The controller does not repair CI failures or merge conflicts; it leaves those
 to the native cloud/local repair owner. It does not enable desktop-app Agent
 merge's **Merge** action. For local takeover of a cloud PR, the owner disables

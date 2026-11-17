@@ -75,6 +75,37 @@ test('controller preserves reviewer bypass boundaries, human blocks, CI, and no 
   assert.doesNotMatch(lifecycle, /workflow_run[\s\S]{0,300}schedule:/);
 });
 
+test('review readers can inspect unmerged content only in this repository', () => {
+  const shared = read('.github/workflows/shared/squad-review.md');
+  assert.match(shared, /min-integrity: none/);
+  assert.match(shared, /allowed-repos: \[cedricmendelin\/bujo-ai\]/);
+  assert.match(shared, /bash: false/);
+  assert.match(shared, /cli-proxy: false/);
+  assert.match(shared, /Never run PR code/);
+  assert.match(shared, /never publish a passing check without inspecting the changes/);
+  function checkReader(lock, role) {
+    const policy = lock.match(/"allow-only": (\{[\s\S]*?\n\s+\})/);
+    assert.ok(policy, `${role}: missing GitHub reader policy`);
+    const reader = JSON.parse(policy[1].replace(/\$\{GH_AW_GUARD_[A-Z_]+\}/g, '[]'));
+    assert.equal(reader['min-integrity'], 'none', `${role}: must read unmerged content`);
+    assert.deepEqual(reader.repos, ['cedricmendelin/bujo-ai'], `${role}: repository scope`);
+    const agentPermissions = lock.match(/^  agent:\r?\n[\s\S]*?^    permissions:\r?\n((?:      .*\r?\n)+)/m);
+    assert.ok(agentPermissions, `${role}: missing agent permissions`);
+    assert.doesNotMatch(agentPermissions[1], /: write/);
+    const execution = lock.split(/\r?\n/).find(line => line.includes('copilot_harness.cjs'));
+    assert.ok(execution, `${role}: missing agent execution`);
+    assert.doesNotMatch(execution, /--allow-all-tools|--allow-tool (?:shell|bash)/);
+  }
+  for (const role of ['architect', 'security', 'verifier', 'devops']) {
+    const lock = read(`.github/workflows/squad-review-${role}.lock.yml`);
+    checkReader(lock, role);
+    assert.throws(() => checkReader(lock.replace('"min-integrity": "none"',
+      '"min-integrity": "approved"'), role), /must read unmerged content/);
+    assert.throws(() => checkReader(lock.replace(/("repos": \[\s*)"cedricmendelin\/bujo-ai"/, '$1"*"'), role),
+      /repository scope/);
+  }
+});
+
 test('obsolete approval provenance, binding, attestation, and repair helpers are retired', () => {
   for (const file of [
     '.github/scripts/plan-binding.js', '.github/scripts/review-attestation.js',
