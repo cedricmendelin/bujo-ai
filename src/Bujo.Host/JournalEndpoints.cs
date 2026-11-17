@@ -1,6 +1,5 @@
 using Bujo.Application;
 using Bujo.Domain;
-using System.Globalization;
 
 namespace Bujo.Host;
 
@@ -52,14 +51,14 @@ public static class JournalEndpoints
         });
         api.MapPost("/lists", (CreateListRequest request, JournalApplicationService journal) =>
         {
-            var weekKey = ParseWeekKey(request.WeekKey);
+            var weekKey = JournalContract.ParseWeekKey(request.WeekKey);
             return weekKey.IsSuccess
                 ? ToHttpResult(journal.CreateList(request.Name, request.Kind, request.GoalText, weekKey.Value))
                 : Error(weekKey.Error!);
         });
         api.MapPost("/items", (CaptureRequest request, JournalApplicationService journal) =>
         {
-            var period = ParsePeriod(request.PlannedPeriod);
+            var period = JournalContract.ParsePeriod(request.PlannedPeriod);
             return period.IsSuccess
                 ? ToHttpResult(journal.Capture(request.Name, request.Description, request.Tags, period.Value, request.ListId))
                 : Error(period.Error!);
@@ -76,7 +75,7 @@ public static class JournalEndpoints
             ToHttpResult(journal.EditItem(itemId, request.Name, request.Description, request.Tags)));
         api.MapPut("/items/{itemId:guid}/planned-period", (Guid itemId, PeriodRequest request, JournalApplicationService journal) =>
         {
-            var period = ParsePeriod(request);
+            var period = JournalContract.ParsePeriod(request);
             return period.IsSuccess
                 ? ToHttpResult(journal.ChangePlannedPeriod(itemId, period.Value!))
                 : Error(period.Error!);
@@ -96,18 +95,11 @@ public static class JournalEndpoints
 
     private static IResult Error(DomainError error)
     {
-        var statusCode = error.Code switch
-        {
-            DomainErrorCode.NotFound => StatusCodes.Status404NotFound,
-            DomainErrorCode.InvalidInput or DomainErrorCode.InvalidTimeZone => StatusCodes.Status400BadRequest,
-            _ => StatusCodes.Status409Conflict
-        };
-
         return Results.Problem(
-            statusCode: statusCode,
-            title: error.Code.ToString(),
+            statusCode: JournalContract.StatusCode(error.Code),
+            title: JournalContract.ErrorCode(error.Code),
             detail: error.Message,
-            extensions: new Dictionary<string, object?> { ["code"] = error.Code.ToString() });
+            extensions: new Dictionary<string, object?> { ["code"] = JournalContract.ErrorCode(error.Code) });
     }
 
     private static IResult QueryFailure() =>
@@ -116,57 +108,6 @@ public static class JournalEndpoints
             title: "QueryFailed",
             detail: "The journal query could not be completed.",
             extensions: new Dictionary<string, object?> { ["code"] = "QueryFailed" });
-
-    private static DomainResult<PlannedPeriod> ParsePeriod(PeriodRequest? request)
-    {
-        if (request is null || string.Equals(request.Kind, "unplanned", StringComparison.OrdinalIgnoreCase))
-        {
-            return DomainResult<PlannedPeriod>.Success(PlannedPeriod.Unplanned);
-        }
-
-        try
-        {
-            var period = request.Kind?.ToLowerInvariant() switch
-            {
-                "day" when DateOnly.TryParseExact(
-                    request.Day,
-                    "yyyy-MM-dd",
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.None,
-                    out var day) => PlannedPeriod.ForDay(day),
-                "week" when request.WeekYear.HasValue && request.Week.HasValue =>
-                    PlannedPeriod.ForWeek(new IsoWeekKey(request.WeekYear.Value, request.Week.Value)),
-                "month" when request.Year.HasValue && request.Month.HasValue =>
-                    PlannedPeriod.ForMonth(request.Year.Value, request.Month.Value),
-                "quarter" when request.Year.HasValue && request.Quarter.HasValue =>
-                    PlannedPeriod.ForQuarter(request.Year.Value, request.Quarter.Value),
-                "year" when request.Year.HasValue => PlannedPeriod.ForYear(request.Year.Value),
-                _ => throw new DomainException(DomainErrorCode.InvalidInput, "The planned period is invalid.")
-            };
-            return DomainResult<PlannedPeriod>.Success(period);
-        }
-        catch (DomainException exception)
-        {
-            return DomainResult<PlannedPeriod>.Failure(exception.ToError());
-        }
-    }
-
-    private static DomainResult<IsoWeekKey?> ParseWeekKey(WeekKeyRequest? request)
-    {
-        if (request is null)
-        {
-            return DomainResult<IsoWeekKey?>.Success(null);
-        }
-
-        try
-        {
-            return DomainResult<IsoWeekKey?>.Success(new IsoWeekKey(request.Year, request.Week));
-        }
-        catch (DomainException exception)
-        {
-            return DomainResult<IsoWeekKey?>.Failure(exception.ToError());
-        }
-    }
 
     public sealed record CreateListRequest(string Name, JournalListKind Kind, string? GoalText, WeekKeyRequest? WeekKey);
 
