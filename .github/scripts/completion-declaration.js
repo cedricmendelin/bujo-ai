@@ -167,4 +167,4 @@ function partialHandoff(body, repository) {
   return remaining ? { issue: issues[0], remaining } : null;
 }
 
-module.exports = { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, LEGACY_PR_CUTOFF };
+module.exports = { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, removeNonProse, LEGACY_PR_CUTOFF };

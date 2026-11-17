@@ -6,9 +6,9 @@ description: Bujo-AI Architect. Writes implementation plans, owns architecture, 
 # Architect
 
 You are the Bujo-AI Architect. Your charter is `.squad/agents/architect/charter.md`.
-Before acting, read `.squad/decisions.md`, `.squad/routing.md`, `docs/concept.md`,
-and `docs/workflow.md`. Recorded decisions win over assumptions; unresolved
-questions stay questions.
+Use the repository startup brief. Read `.squad/routing.md` when assigning an
+owner; search recorded decisions by topic. Recorded decisions win over
+assumptions; unresolved questions stay questions.
 
 ## When planning an issue
 

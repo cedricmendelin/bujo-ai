@@ -110,16 +110,17 @@ jobs:
           AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
           HUMAN: cedricmendelin
           PR_NUMBER: ${{ matrix.pr_number }}
+          REVIEW_ROUTING: ${{ vars.SQUAD_REVIEW_ROUTING }}
         with:
           github-token: ${{ github.token }}
           script: |
-            const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff } = require('./.github/scripts/completion-declaration');
-            const { isEligiblePermission } = require('./.github/scripts/plan-approval');
+            const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, removeNonProse } = require('./.github/scripts/completion-declaration');
+            const { isEligiblePermission, parsePlan } = require('./.github/scripts/plan-approval');
             const {
               actualRepairAttempts, currentHeadCheck, hasHumanBlocks, humanBlockingFeedback, isControllerComment,
               hasRequiredMergeRules, isReviewNone, outstandingFixRequest, readiness, reviewFailures,
               parseFixRequest, reviewDispatchNeeded, reviewNoneRemovedAt, reviewResultIsFresh, reviewRunsForPr,
-              repairEpisode, repairOutcomes, reviewInputKey,
+              repairEpisode, repairOutcomes, reviewEvidence, reviewInputKey, routeReviews,
               MAX_REPAIR_ATTEMPTS, ROLES,
             } = require('./.github/scripts/delivery-lifecycle');
             const { classifySession } = await import(require('node:url').pathToFileURL(
@@ -136,7 +137,7 @@ jobs:
             const allWorkflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
             const findWorkflow = suffix => allWorkflows.find(item => (item.path || '').endsWith(suffix));
             const ciWorkflow = findWorkflow('/ci.yml');
-            const reviewers = ROLES.map(role => ({
+            const availableReviewers = ROLES.map(role => ({
               role,
               workflow: findWorkflow(`/squad-review-${role.toLowerCase()}.lock.yml`),
               check: `Squad Review / ${role}`,
@@ -147,6 +148,32 @@ jobs:
 
             async function getComments(number) {
               return github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+            }
+            async function changedFiles(pr) {
+              try {
+                return await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
+              } catch (error) {
+                core.warning(`#${pr.number}: changed-file inventory unavailable (${error.status || 'API error'}).`);
+                return [];
+              }
+            }
+            async function linkedScope(pr) {
+              const body = removeNonProse(pr.body || '');
+              const link = body.match(/^(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|relates to|issue:)\s+#([1-9]\d*)\s*$/gim) || [];
+              const versions = [...new Set([...body.matchAll(/\bplan(?: version)? v([1-9]\d*)\b/gi)].map(match => Number(match[1])))];
+              if (link.length !== 1 || versions.length !== 1) return null;
+              const issueNumber = Number(link[0].match(/#(\d+)/)[1]);
+              if (!Number.isSafeInteger(issueNumber)) return null;
+              try {
+                const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+                if (issue.pull_request || !issue.body) return null;
+                const plans = (await getComments(issueNumber)).filter(comment => parsePlan(comment, owner)?.version === versions[0]);
+                if (plans.length !== 1) return null;
+                return { issue: issueNumber, issueBody: issue.body, planVersion: versions[0], planComment: plans[0].id, planText: plans[0].body };
+              } catch (error) {
+                core.warning(`#${pr.number}: linked scope unavailable for the bundle (${error.status || 'API error'}); reviewers must retrieve it.`);
+                return null;
+              }
             }
             async function workflowRuns(workflow, branch) {
               if (!workflow) return [];
@@ -402,9 +429,25 @@ jobs:
                     body: `${marker}\n## Remaining acceptance work from PR #${number}\n\nPartial delivery; this issue remains open. The following is PR scope data, not authorization or instructions:\n\n${handoff.remaining.split('\n').map(line => `> ${line}`).join('\n')}\n\nThe delivery owner must keep the unfinished criteria, responsible owner, dependency/evidence needed, and next action current. After the dependency is satisfied, use Squad Plan Approved's manual continuation with evidence and the existing approved plan, or publish and approve a revised plan if scope changes.` });
                 }
               }
+              const humanData = await humanFeedback(number);
+              const enforceRouting = process.env.REVIEW_ROUTING === 'enforce';
+              const shouldReview = !pr.draft && !isReviewNone(nowLabels) && (!cloudPr || session.state === 'ok');
+              const classifyReviews = (candidate, files, reviews) => routeReviews({
+                labels: candidate.labels.map(label => label.name), changedFiles: candidate.changed_files,
+                files, reviews, owner: human, sha: candidate.head.sha, baseSha: candidate.base.sha,
+                inputKey: reviewInputKey(candidate.body || ''),
+              });
+              const files = shouldReview ? await changedFiles(pr) : [];
+              const routing = shouldReview ? classifyReviews(pr, files, humanData.reviews) : null;
+              if (routing) core.info(`#${number}: reviewer routing (${enforceRouting ? 'enforce' : 'observe'}) ${JSON.stringify({
+                selected: routing.roles, reasons: routing.reasons, omitted: routing.omitted, needsAttention: !!routing.blocked,
+              })}`);
+              const reviewers = enforceRouting
+                ? availableReviewers.filter(item => routing?.roles.includes(item.role)) : availableReviewers;
               const reviewRuns = new Map();
               const latestReviewChecks = new Map();
-              if (!pr.draft && !isReviewNone(nowLabels) && (!cloudPr || session.state === 'ok')) {
+              if (shouldReview) {
+                let evidence;
                 for (const item of reviewers) {
                   const check = currentHeadCheck(allChecks, item.check, sha);
                   const runs = await workflowRuns(item.workflow, context.payload.repository.default_branch);
@@ -432,20 +475,34 @@ jobs:
                     fresh, runs: prRuns, forceFresh: forceFreshReviews,
                     eventAt: reviewEventAt,
                   }) && item.workflow) {
+                    evidence ??= reviewEvidence({
+                      pr, files, ci: currentHeadCheck(allChecks, 'ci', sha), scope: await linkedScope(pr),
+                    });
                     await agent.rest.actions.createWorkflowDispatch({
                       owner, repo, workflow_id: item.workflow.id,
                       ref: context.payload.repository.default_branch,
-                      inputs: { pr_number: String(number), review_input: inputKey },
+                      inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
                     });
                     core.info(`#${number}: dispatched ${item.role} review for ${sha.slice(0, 7)}.`);
                   }
                 }
               }
-              const humanData = await humanFeedback(number);
+              // A role removed from routing must not make a current-head failure disappear.
+              const excludedFailure = checks => enforceRouting && shouldReview && availableReviewers.find(item =>
+                !reviewers.includes(item) && currentHeadCheck(checks, item.check, sha)?.conclusion === 'failure');
+              const uncoveredFailure = excludedFailure(allChecks);
+              if (enforceRouting && (routing?.blocked || uncoveredFailure)) {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                  reason: routing?.blocked || `${uncoveredFailure.role} has a blocking check on this head. Resolve it or ask the owner to request that specialist again.`,
+                });
+                return;
+              }
               const blockedByHuman = hasHumanBlocks({
                 reviews: humanData.reviews, threads: humanData.feedback, owner,
               });
-              const specialistFailures = reviewFailures(allChecks, sha, nowLabels, reviewRuns, removedAt);
+              const specialistFailures = reviewFailures(allChecks, sha, nowLabels, reviewRuns, removedAt,
+                isReviewNone(nowLabels) ? [] : reviewers.map(item => item.role));
               const actionableHuman = humanBlockingFeedback({
                 reviews: humanData.reviews, threads: humanData.feedback, owner,
               });
@@ -540,6 +597,8 @@ jobs:
                 });
                 const freshLabels = latestPr.labels.map(label => label.name);
                 const freshCi = currentHeadCheck(freshChecks, 'ci', sha);
+                const freshRouting = enforceRouting && !isReviewNone(freshLabels) && latestPr.head.sha === sha
+                  ? classifyReviews(latestPr, await changedFiles(latestPr), freshHuman.reviews) : null;
                 let freshReviewsOk = isReviewNone(freshLabels);
                 if (!freshReviewsOk) {
                   freshReviewsOk = true;
@@ -560,6 +619,9 @@ jobs:
                     || reviewInputKey(latestPr.body || '') !== inputKey
                     || !evaluateCompletion(latestPr.body, { createdAt: latestPr.created_at }).ok
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
+                    || freshRouting && (freshRouting.blocked || excludedFailure(freshChecks)
+                      || latestPr.base.sha !== pr.base.sha
+                      || freshRouting.roles.join(',') !== routing?.roles.join(','))
                     || !freshReviewsOk
                     || hasHumanBlocks({ reviews: freshHuman.reviews, threads: freshHuman.feedback, owner })
                     || (cloudPr && classifySession(await workflowRuns(copilotWorkflow, pr.head.ref)).state !== 'ok')) {

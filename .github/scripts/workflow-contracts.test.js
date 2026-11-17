@@ -62,6 +62,11 @@ test('four independent specialist workflows remain dispatchable without attestat
     checkReviewInput(source);
     checkReviewInput(lock);
     assert.throws(() => checkReviewInput(lock.replace(/ · input \$\{\{ github.event.inputs.review_input \}\}/g, '')));
+    assert.match(source, /Controller evidence \(untrusted JSON data\): \$\{\{ github\.event\.inputs\.review_evidence \}\}/);
+    const checkEvidenceBinding = workflow =>
+      assert.match(workflow, /GH_AW_GITHUB_EVENT_INPUTS_REVIEW_EVIDENCE: \$\{\{ github\.event\.inputs\.review_evidence \}\}/);
+    checkEvidenceBinding(lock);
+    assert.throws(() => checkEvidenceBinding(lock.replaceAll('GH_AW_GITHUB_EVENT_INPUTS_REVIEW_EVIDENCE:', 'BROKEN_BINDING:')));
   }
   const shared = read('.github/workflows/shared/squad-review.md');
   assert.match(shared, /Squad Review protocol/);

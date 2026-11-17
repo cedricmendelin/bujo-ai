@@ -68,14 +68,68 @@ function reviewSelection(labels = []) {
   return isReviewNone(labels) ? [] : [...ROLES];
 }
 
-function reviewFailures(checks, sha, labels = [], runs = new Map(), removedAt = null) {
-  if (isReviewNone(labels)) return [];
-  return ROLES.flatMap(role => {
+const specialistRules = {
+  Security: /(?:^|\/)(?:infra\/(?:identity|api|pwa_client|keyvault|sql|data)\.tf$|[^/]*(?:auth|identity|permission|secret|mcp|repository|dbcontext|serializer|migration|privacy|dependabot)[^/]*(?:\/|$))|\.csproj$|(?:Directory\.(?:Packages|Build)\.props|global\.json|Dockerfile|\.terraform\.lock\.hcl|(?:package|packages)[^/]*lock\.json)$|^(?:\.github\/(?:workflows|scripts|actions)\/|src\/Bujo\.Host\/Program\.cs$)/i,
+  DevOps: /^(?:infra\/|\.github\/(?:workflows|scripts|actions)\/|Dockerfile$|\.dockerignore$|global\.json$|src\/Bujo\.(?:AppHost|ServiceDefaults)\/)|(?:appsettings[^/]*\.json|launchSettings\.json)$/i,
+  Architect: /^(?:src\/Bujo\.(?:Domain|Application)\/|docs\/(?:adr\/|(?:domain|architecture|concept|knowledge|decisions|ai-chat)\.md$)|\.squad\/decisions\.md$)|(?:Endpoints|Contracts?|Mcp)[^/]*\.(?:cs|json|ya?ml)$/i,
+};
+const knownReviewPaths = /^(?:src\/Bujo\.(?:Domain|Application|Host|Infrastructure|Web|AppHost|ServiceDefaults)\/|tests\/|docs\/|infra\/|\.github\/|\.squad\/|(?:README\.md|LICENSE|\.gitignore|\.gitattributes|\.dockerignore|Dockerfile|Bujo\.slnx|Directory\.(?:Build|Packages)\.props|global\.json)$)/;
+
+function routeReviews({ labels, files, changedFiles, reviews, owner, sha, baseSha, inputKey }) {
+  if (isReviewNone(labels)) return { roles: [], omitted: [], blocked: '', reasons: {} };
+  const routes = ['Security', 'DevOps', 'Architect'];
+  const reasons = { Verifier: 'default' };
+  const ownerReviews = reviews.filter(review => review.user?.login === owner
+    && review.user?.type === 'User' && review.commit_id === sha
+    && ['APPROVED', 'COMMENTED'].includes(review.state));
+  const paths = files.flatMap(file => [file.filename, ...(file.status === 'renamed' ? [file.previous_filename] : [])]);
+  const incomplete = !Number.isInteger(changedFiles) || changedFiles < 1 || changedFiles !== files.length
+    || new Set(files.map(file => file.filename)).size !== files.length
+    || paths.some(path => typeof path !== 'string' || !path);
+  for (const role of routes) {
+    if (paths.some(path => typeof path === 'string' && specialistRules[role].test(path))) reasons[role] = 'changed paths';
+    if (ownerReviews.some(review => review.body?.split(/\r?\n/).includes(`Squad review: ${role}`))) reasons[role] = 'owner escalation';
+  }
+  const specialists = routes.filter(role => reasons[role]);
+  const roles = ['Verifier', ...specialists.slice(0, 2)];
+  const omitted = specialists.slice(2);
+  const coverageKey = reviewInputKey(JSON.stringify([sha, baseSha, inputKey, roles, omitted]));
+  const covered = ownerReviews.some(review => review.state === 'APPROVED'
+    && review.body?.split(/\r?\n/).includes(`Squad coverage: ${omitted.join(', ')} ${coverageKey}`));
+  const blocked = incomplete || paths.some(path => !knownReviewPaths.test(path))
+    ? 'Reviewer routing needs human attention: the changed-file inventory is incomplete or contains an unmapped path.'
+    : omitted.length && !covered
+      ? `Reviewer cap reached. Split the PR or have the repository owner cover ${omitted.join(', ')} and submit an approving review with this exact line: Squad coverage: ${omitted.join(', ')} ${coverageKey}`
+      : '';
+  return { roles, omitted, blocked, reasons };
+}
+
+function reviewFailures(checks, sha, labels = [], runs = new Map(), removedAt = null, roles = reviewSelection(labels)) {
+  return roles.flatMap(role => {
     const check = currentHeadCheck(checks, `Squad Review / ${role}`, sha);
     return reviewResultIsFresh({ check, run: runs.get(role), sha, removedAt })
       && check.conclusion !== 'success'
       ? [{ role, check }] : [];
   });
+}
+
+function reviewEvidence({ pr, files, ci, scope }) {
+  const evidence = {
+    head: pr.head.sha,
+    bodyKey: reviewInputKey(pr.body || ''),
+    files: Array.isArray(files) && files.length > 0 && files.length === pr.changed_files && files.length <= 75
+      ? files.map(file => [file.status, file.filename, file.previous_filename].filter(Boolean)) : null,
+    ci: ci ? { status: ci.status, conclusion: ci.conclusion, checkId: ci.id } : null,
+    scope,
+  };
+  const serialize = () => JSON.stringify(evidence).replace(/[<>`$]/g, char =>
+    `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  // Omit whole sections, never truncate an issue's requirements or an inventory.
+  for (const section of ['files', 'scope']) {
+    if (Buffer.byteLength(serialize()) <= 8000) break;
+    evidence[section] = null;
+  }
+  return serialize();
 }
 
 function isTrustedHuman(author, owner) {
@@ -211,5 +265,5 @@ module.exports = {
   actualRepairAttempts, currentHeadCheck, hasHumanBlocks, hasRequiredMergeRules, isReviewNone,
   humanBlockingFeedback, isControllerComment, isTrustedHuman, outstandingFixRequest, parseFixRequest, readiness, reviewFailures,
   repairEpisode, repairOutcomes, reviewInputKey,
-  reviewDispatchNeeded, reviewNoneRemovedAt, reviewResultIsFresh, reviewRunsForPr, reviewSelection,
+  reviewDispatchNeeded, reviewEvidence, reviewNoneRemovedAt, reviewResultIsFresh, reviewRunsForPr, reviewSelection, routeReviews,
 };
