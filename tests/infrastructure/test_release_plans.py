@@ -141,6 +141,8 @@ class ReleasePlanTests(unittest.TestCase):
 
     def test_first_release_migration_moves_the_placeholder_job_to_the_release(self):
         change = self.resource(self.plan("first_release_migration_plan"), gate.JOB_ADDRESS)["change"]
+        self.assertEqual(change["before"]["workload_profile_name"], "Consumption")
+        self.assertEqual(change["after"]["workload_profile_name"], "Consumption")
         before = change["before"]["template"][0]["container"][0]
         after = change["after"]["template"][0]["container"][0]
         self.assertEqual(before["command"], ["/bootstrap-disabled"])

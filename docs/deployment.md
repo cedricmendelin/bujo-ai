@@ -516,7 +516,8 @@ Steps for a new release:
    only the job's image, command, arguments and environment to the release
    digest, `dotnet Bujo.Host.dll --migrate-only`, `DOTNET_ENVIRONMENT` and the
    trusted SQL target (passwordless managed-identity form). Identity,
-   environment, timeouts, other resources and SQL outputs must be unchanged;
+   environment, the Consumption workload profile, timeouts, other resources and
+   SQL outputs must be unchanged;
    any previous SQL target must equal the trusted one; unknown values are
    rejected. A no-op (job already on the release) is valid.
 3. Recheck, apply that saved plan, record `job-updated`, recheck again and

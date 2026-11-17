@@ -3,6 +3,7 @@ resource "azurerm_container_app_job" "migration" {
   location                     = var.location
   resource_group_name          = data.azurerm_resource_group.prod.name
   container_app_environment_id = module.container_app_environment.resource_id
+  workload_profile_name        = "Consumption"
 
   replica_timeout_in_seconds = 1800
   replica_retry_limit        = 0
