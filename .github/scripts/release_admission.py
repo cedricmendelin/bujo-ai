@@ -1,11 +1,13 @@
 """Admit only immutable images published by this repository's successful main CI."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 
@@ -150,7 +152,37 @@ def admit(run_id, expected_attempt=None):
         return validate_manifest(json.loads(manifest_path.read_text(encoding="utf-8")), run)
 
 
-def publish_manifest(path):
+def tested_config_digest(archive_path):
+    with tarfile.open(archive_path, "r:") as archive:
+        def read_json(name, limit):
+            members = [member for member in archive.getmembers() if member.name == name]
+            if len(members) != 1 or not members[0].isfile() or members[0].size > limit:
+                raise AdmissionError("tested-image-archive", "Tested image archive has invalid metadata.")
+            return archive.extractfile(members[0]).read()
+
+        entries = json.loads(read_json("manifest.json", 1024 * 1024))
+        if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+            raise AdmissionError("tested-image-archive", "Tested image archive must contain exactly one image.")
+        entry = entries[0]
+        if entry.get("RepoTags") != ["bujo-host-test:latest"]:
+            raise AdmissionError("tested-image-archive", "Tested image archive has an unexpected tag.")
+        name = entry.get("Config")
+        if not isinstance(name, str):
+            raise AdmissionError("tested-image-archive", "Tested image configuration is missing.")
+        match = re.fullmatch(r"(?:blobs/sha256/([0-9a-f]{64})|([0-9a-f]{64})\.json)", name)
+        if not match:
+            raise AdmissionError("tested-image-archive", "Tested image configuration path is invalid.")
+        content = read_json(name, 2 * 1024 * 1024)
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != (match[1] or match[2]):
+            raise AdmissionError("tested-image-archive", "Tested image configuration digest does not match.")
+        config = json.loads(content)
+        if not isinstance(config, dict) or config.get("os") != "linux" or config.get("architecture") != "amd64":
+            raise AdmissionError("tested-image-archive", "Tested image must target Linux amd64.")
+        return f"sha256:{digest}"
+
+
+def publish_manifest(path, tested_image):
     run_id = os.environ["GITHUB_RUN_ID"]
     attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
     if not re.fullmatch(r"[1-9][0-9]*", run_id) or attempt < 1:
@@ -168,7 +200,7 @@ def publish_manifest(path):
     manifest = {
         "schema": 1, "repository": REPOSITORY, "sha": os.environ["GITHUB_SHA"],
         "run_id": run_id, "run_attempt": attempt, "image": digests[0],
-        "config_digest": image["Id"],
+        "config_digest": tested_config_digest(tested_image),
     }
     validate_manifest(manifest, {
         "id": int(run_id), "run_attempt": attempt, "head_sha": os.environ["GITHUB_SHA"],
@@ -181,10 +213,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("admit", "recheck", "publish"))
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--tested-image", type=Path)
     args = parser.parse_args()
     try:
         if args.mode == "publish":
-            publish_manifest(args.manifest)
+            if args.tested_image is None:
+                raise AdmissionError("tested-image-archive", "The tested image archive is required.")
+            publish_manifest(args.manifest, args.tested_image)
             return 0
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
         run_id, attempt = validate_event(os.environ["GITHUB_EVENT_NAME"], event, os.environ)
@@ -207,7 +242,7 @@ def main():
     except AdmissionError as error:
         print(f"Release admission failed [{error.category}]: {error}", file=sys.stderr)
         return 1
-    except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, KeyError, TypeError, IndexError, tarfile.TarError, subprocess.TimeoutExpired) as error:
         if isinstance(error, subprocess.TimeoutExpired):
             category = "inspection-timeout"
         elif isinstance(error, OSError):
