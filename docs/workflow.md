@@ -120,6 +120,11 @@ description edit does not re-run model reviews. Results must match the current
 head; after `review:none` is removed, an in-flight pre-removal result cannot
 satisfy the newly selected review generation.
 
+Both check timestamps must fall inside the selected successful workflow run.
+Their relative ordering is not a freshness signal: GitHub can assign an implicit
+`started_at` just after a safe-output publisher's `completed_at`. Such a result
+must neither trigger a duplicate review nor hide genuine blocking findings.
+
 An eligible owner/maintainer can add `review:none` to one PR. It skips pending
 and existing specialist findings for that PR, but never CI, trusted human
 `CHANGES_REQUESTED` reviews, or unresolved trusted human inline threads marked

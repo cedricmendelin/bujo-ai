@@ -308,6 +308,27 @@ test('active GitHub-named reviewer runs are not redispatched on completion event
   assert.notEqual(readinessFrom(state).conclusion, 'success');
 });
 
+test('GitHub-assigned check starts after completion neither rerun reviews nor hide blockers', async () => {
+  for (const conclusion of ['success', 'failure']) {
+    const state = fixture();
+    cloud(state);
+    const check = state.checks.find(item => item.name === 'Squad Review / Verifier');
+    check.started_at = '2026-11-16T12:04:01Z';
+    check.conclusion = conclusion;
+    check.output = { title: 'Review result', summary: 'docs/ai-chat.md: verify the claimed completion.' };
+    const result = await execute(state);
+    assert.equal(result.calls.some(call => call.name === 'dispatch'), false);
+    if (conclusion === 'success') {
+      assert.equal(readinessFrom(state).conclusion, 'success');
+      assert.equal(enables(result).length, 1);
+    } else {
+      assert.notEqual(readinessFrom(state).conclusion, 'success');
+      assert.equal(enables(result).length, 0);
+      assert.match(commentsFrom(result).join('\n'), /docs\/ai-chat.md: verify the claimed completion/);
+    }
+  }
+});
+
 test('re-evaluation creates a new pending readiness check instead of reopening a completed result', async () => {
   for (const conclusion of ['success', 'failure']) {
     const state = fixture();
