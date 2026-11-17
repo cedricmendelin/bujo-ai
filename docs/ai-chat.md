@@ -1,17 +1,19 @@
 # Foundry, AG-UI and Blazor chat discovery
 
 **Status:** Discovery for issue [#6](https://github.com/cedricmendelin/bujo-ai/issues/6).
-This document records evidence and a proposed direction, not an implementation
-decision. The ADR is
-[proposed](adr/0002-foundry-agui-chat.md); owner approval is still required.
+This document records source evidence and integration requirements. The
+[accepted ADR](adr/0002-foundry-agui-chat.md) selects the architecture direction;
+it does not authorize production package adoption, model inference, or Foundry
+resource provisioning.
 
 Research was checked against primary sources on **2026-11-17 UTC**. A row is
 **Verified** only for the specific claim and version stated; a sample does not
 prove production readiness or compatibility with every hosting/render mode.
-Microsoft Learn, NuGet.org and the AG-UI documentation site could not be
-retrieved from this environment. Claims requiring those pages are marked
-**Unverified**, with a reproducible check below. No resources, live models,
-journal data, or paid inference were used.
+Microsoft Learn and upstream GitHub sources were accessible. Azure's dynamic
+Foundry pricing page returned placeholder prices on direct retrieval; an
+illustrative rate from Microsoft's Azure OpenAI pricing page is recorded below,
+but exact model, deployment, region and account pricing remains unselected.
+No resources, live models, journal data, or paid inference were used.
 
 ## Compatibility matrix
 
@@ -19,19 +21,36 @@ journal data, or paid inference were used.
 |---|---|---|
 | AG-UI protocol and event model | [Upstream AG-UI README](https://github.com/ag-ui-protocol/ag-ui/blob/main/README.md) identifies 1.0 as a stable, frozen spec with JSON Schema and lists lifecycle, text, tool, state, reasoning, activity, subagent, and passthrough event families. | **Verified** from the upstream project README. This verifies the protocol description, not every framework implementation. |
 | AG-UI transports | The same [upstream README](https://github.com/ag-ui-protocol/ag-ui/blob/main/README.md) links HTTP + SSE and HTTP + Protobuf bindings and describes an event stream. The Microsoft [AG-UI samples README](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/02-agents/AGUI/README.md) describes HTTP POST requests with SSE responses. | **Verified** for those documented bindings. SSE is server-to-client for a run; it is not a bidirectional connection. Continuations are separate requests. |
-| AG-UI .NET client | Upstream [AG-UI .NET SDK package metadata](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/dotnet/Directory.Build.props) and [client project](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/dotnet/src/AGUI.Client/AGUI.Client.csproj) describe `AGUI.Client` as an HTTP/SSE client implementing `IChatClient`; its default source version is 1.0.1. The Microsoft Agent Framework [central package pins](https://github.com/microsoft/agent-framework/blob/main/dotnet/Directory.Packages.props) and sample project use `AGUI.Client` 1.0.0. | **Verified** as a .NET client and MAF sample dependency. NuGet publication/latest-version metadata could not be retrieved; do not infer registry availability from project files. It is not a Blazor component library. |
+| AG-UI .NET client | Upstream [AG-UI .NET SDK package metadata](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/dotnet/Directory.Build.props) and [client project](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/dotnet/src/AGUI.Client/AGUI.Client.csproj) describe `AGUI.Client` as an HTTP/SSE client implementing `IChatClient`; its default source version is 1.0.1. The Microsoft Agent Framework [central package pins](https://github.com/microsoft/agent-framework/blob/main/dotnet/Directory.Packages.props) and sample project use `AGUI.Client` 1.0.0; the local spike restored 1.0.0. | **Verified** as a .NET client, MAF sample dependency, and published package version 1.0.0. Latest-version metadata was not independently checked. It is not a Blazor component library. |
 | Microsoft Agent Framework AG-UI host | [ASP.NET Core host project](https://github.com/microsoft/agent-framework/blob/main/dotnet/src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj) has `VersionSuffix` `preview`; the MAF [1.28.0 release](https://github.com/microsoft/agent-framework/releases/tag/dotnet-1.28.0) is dated 2026-11-06. The [server sample](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/05-end-to-end/AGUIWebChat/Server/Program.cs) uses `AddAGUIServer()` and `MapAGUIServer()`. | **Verified** for the source and preview marker. This is .NET hosting support, not proof that the host package is GA or that an entire production configuration is ready. |
-| Blazor Interactive Server client | The MAF [AGUIWebChat sample](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/05-end-to-end/AGUIWebChat) has a Blazor Server client; its [client startup](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/05-end-to-end/AGUIWebChat/Client/Program.cs) registers `AGUIChatClient` as an `IChatClient` and enables Interactive Server components. The project targets `net10.0`. | **Verified** as an official .NET/Blazor Server sample without a JavaScript bridge. It is a demonstration, not production authentication, durable replay, or proof against this repository's proposed .NET 11 baseline. |
+| Blazor Interactive Server client | The MAF [AGUIWebChat sample](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/05-end-to-end/AGUIWebChat) has a Blazor Server client; its [client startup](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/05-end-to-end/AGUIWebChat/Client/Program.cs) registers `AGUIChatClient` as an `IChatClient` and enables Interactive Server components. The project targets `net10.0`; a separate local spike targeting `net11.0` is summarized below. | **Verified** as an official .NET/Blazor Server sample without a JavaScript bridge. The local mock path also ran on .NET 11; neither demonstration establishes production authentication or durable replay. |
 | Blazor WebAssembly client | No official WASM-specific sample or browser validation was found in the cited MAF sources. | **Unverified** — do not call it natively supported or unsupported. Test package target compatibility, browser streaming, CORS, auth propagation, cancellation and reconnection on the chosen WASM hosting mode. |
 | JavaScript AG-UI client / bridge | The [upstream README](https://github.com/ag-ui-protocol/ag-ui/blob/main/README.md) lists the TypeScript `@ag-ui/client` SDK. | **Verified** that a JavaScript client exists. Using it from Blazor requires an application-owned JavaScript interop bridge; no evidence here establishes a first-party Blazor component binding. |
-| Foundry model deployment vs. hosted agent | The MAF [AGUIWebChat server sample](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/05-end-to-end/AGUIWebChat/Server/Program.cs) constructs a chat client for a configured Azure OpenAI endpoint and deployment and hosts the agent in ASP.NET Core; it does not use a Foundry-hosted agent. Foundry [overview](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry) and [Agent Service overview](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/overview) were not retrievable here. | **Verified** that an app-owned host can be demonstrated without a hosted agent. **Unverified** here: current Foundry product boundaries, exact model/agent offerings, regional availability and their GA status. Do not assume a hosted agent is required. |
+| Foundry model deployment vs. hosted agent | The Microsoft [Agent Service overview](https://learn.microsoft.com/en-us/azure/foundry/agents/overview) describes prompt, voice-based prompt and hosted agents, and also a direct Responses API path for applications that already host their agent code. [Foundry model deployment documentation](https://learn.microsoft.com/en-us/azure/foundry/concepts/deployments-overview) describes serverless, managed-compute and Foundry Local deployment options. | **Verified** for the documented options. A Foundry-hosted agent is not required for an application-owned runtime. Exact model/version/region availability remains model- and deployment-specific; no model is selected. |
+| Foundry data handling and processing | Microsoft's [Foundry Models privacy guidance](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy) says Models sold by Azure do not share prompts/completions with model providers or use them to train base models without permission; optional stateful features can store content. [Abuse monitoring guidance](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/abuse-monitoring) describes automated review and possible human review of selected prompts/completions. [Agent Service privacy guidance](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/agents/data-privacy-security) describes storage for stateful Agent Service features in the resource geography. | **Verified** for those documented terms. Inference location depends on the selected deployment type; a model name or resource geography alone does not establish Swiss processing or retention behavior. |
 | `IChatClient` / Microsoft.Extensions.AI | MAF's [AG-UI client sample](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/05-end-to-end/AGUIWebChat/Client/Program.cs) consumes `AGUIChatClient` through `IChatClient`; the MAF repo pins `Microsoft.Extensions.AI` 11.0.0. | **Verified** as the sample's abstraction and repo pin. Exact package availability and current provider-specific Foundry adapters should be checked against NuGet and Microsoft Learn before implementation. |
 
 ### Compatibility check before implementation
 
-1. Recheck the Microsoft Learn [Foundry overview](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry), [Agent Service overview](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/overview), [model region availability](https://learn.microsoft.com/en-us/azure/ai-foundry/region-availability-models), and official [Foundry model pricing](https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/) from a network that can retrieve them. Record the exact model, deployment type, region and date; do not infer Switzerland North availability from a global model catalog entry.
-2. Confirm current NuGet versions, target frameworks and package lifecycle for `AGUI.Client`, `AGUI.Server`, `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore` and the selected `Microsoft.Extensions.AI` provider. Build a minimal integration against this repository's .NET 11 baseline.
+1. Before selecting or deploying a model, check the exact model/version and deployment type in Microsoft's [region availability matrix](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability). Record the region and processing scope; do not infer Switzerland North availability or data residency from a global catalog entry.
+2. The separate spike below confirms a minimal `net11.0` Interactive Server build and mock round trip with the tested package versions. Before production, reconfirm package lifecycle/support and validate authorization, caller isolation, cancellation, proxy streaming, and interrupted-run behavior in the actual deployment topology.
 3. If evaluating WASM, run a browser test against the actual deployment topology: authenticated POST, SSE response, tool continuation, cancellation, proxy buffering, CORS where cross-origin, interrupted stream and reconnect. A passing Server sample is not that proof.
+
+### Local .NET 11 spike result
+
+On 2026-11-17, a separate local spike targeting `net11.0` restored and built
+with .NET SDK 11.0.100/runtime 11.0.0. It used
+`Microsoft.Agents.AI.Hosting.AGUI.AspNetCore` 1.28.0-preview.261106.1 and
+`AGUI.Client` 1.0.0; package assets resolved from `net10.0`. The mock endpoint
+emitted lifecycle events, a scripted tool call/result, and 21 text deltas.
+The Blazor Interactive Server client consumed them through `AGUIChatClient`.
+Browser smoke checks verified approval of a fresh versioned proposal and
+rejection of a stale version.
+
+This establishes that the tested mock path builds and runs on .NET 11; it does
+not establish vendor support, GA status, or production readiness. The spike
+used fictional data only and no Foundry resource, paid inference, real journal
+data, authenticated endpoint, persistence, or production application tools.
 
 ## Integration options
 
@@ -42,12 +61,12 @@ journal data, or paid inference were used.
 | **C. Foundry-hosted/persistent agent** | Run agent orchestration in a Foundry-managed agent runtime and call it from the Bujo-AI host/client. | Could be useful if managed agent lifecycle, durable agent sessions or platform tools are needed. | Adds a remote runtime, identity/session boundary, service configuration, cost and operational dependency. The discovery found no requirement that needs it; Foundry feature and region claims remain to be verified before adoption. |
 | **D. JavaScript AG-UI client in Blazor** | Embed a TypeScript AG-UI client (for example `@ag-ui/client`) with JS interop. | Uses the JS ecosystem's client directly; may suit a future WASM-first UI. | Adds JS interop, duplicated client/UI state and another boundary to test. No evidence that it is needed for Interactive Server, for which a .NET sample exists. |
 
-**Proposed selection:** B, limited to the existing ASP.NET Core host and the
-Blazor Interactive Server path already proposed in ADR 0001. It supplies AG-UI
-events without requiring a hosted agent, extra service, or JS bridge. Keep A as
-the fallback if the preview host package or its .NET 11 compatibility fails the
-spike. This is a proposed design, not approval to add packages or start
-inference.
+**Working direction:** B, limited to the existing ASP.NET Core host and the
+owner-selected Blazor Interactive Server path. The owner selected app-owned
+orchestration with an optional Foundry model provider and accepted Preview
+status for the experiment. The local spike established a working mock path on
+.NET 11; it does not authorize production package adoption, Foundry resources
+or inference. Keep A as the fallback if production validation fails.
 
 ## Rendering, streaming and error UX
 
@@ -58,7 +77,7 @@ AG-UI event is supported by every client version.
 
 | Render mode | Streaming and cancellation proposal | Reconnection and recovery |
 |---|---|---|
-| **Interactive Server (ADR 0001 proposal)** | The Blazor server-side .NET client consumes the AG-UI response and updates the UI through its SignalR circuit. A Stop action cancels a per-run `CancellationToken`; propagate it to the HTTP request and the model call. On component disposal, cancel the run. Do not claim that a dropped circuit always cancels server work; verify propagation in the integration test. | A SignalR circuit reconnect only reconnects the UI circuit; it does not resume/replay an AG-UI event stream. Display “response interrupted” with the last completed message and Retry. Do not replay tool calls automatically. |
+| **Interactive Server (ADR 0001 selection)** | The Blazor server-side .NET client consumes the AG-UI response and updates the UI through its SignalR circuit. A Stop action cancels a per-run `CancellationToken`; propagate it to the HTTP request and the model call. On component disposal, cancel the run. Do not claim that a dropped circuit always cancels server work; verify propagation in the integration test. | A SignalR circuit reconnect only reconnects the UI circuit; it does not resume/replay an AG-UI event stream. Display “response interrupted” with the last completed message and Retry. Do not replay tool calls automatically. |
 | **Interactive/standalone WebAssembly (not selected)** | Browser-side client would own the HTTP request and abort it on Stop/disposal. Verify the AG-UI .NET client's browser compatibility; otherwise use a JavaScript fetch/SSE adapter only as a separately reviewed option. A server proxy remains responsible for model-call cancellation. | No Blazor Server circuit for the client component. Resume/retry is application logic. On interruption, show the same explicit retry state; no implicit replay. |
 
 For either mode, show a pending state, stream only user-facing text, and show
@@ -125,37 +144,40 @@ claims that a user approved something are not approval evidence.
   the user's Entra bearer token to Foundry. AG-UI endpoint authorization and
   per-user session isolation are separate controls, as documented in the
   [MAF AG-UI security guidance](https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/02-agents/AGUI/README.md).
-- Microsoft Foundry privacy, abuse monitoring, retention, processing region
-  and Switzerland North availability for the selected deployment were not
-  independently verified in this environment. Re-read the current [Foundry
-  data/privacy guidance](https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/data-privacy)
-  and [abuse monitoring guidance](https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/openai/abuse-monitoring)
-  and record model/deployment-specific terms before sending any journal text.
-  Do not promise Swiss data residency or zero retention based only on the
-  service name.
+- Microsoft documents that Models sold by Azure do not use prompts and
+  completions to train base models without permission, but abuse monitoring can
+  review selected prompts and completions; modified monitoring requires
+  eligibility and approval. Optional stateful APIs can persist content. Record
+  the exact model, deployment type, region and applicable data terms before
+  sending journal text. Do not promise Swiss processing, data residency or zero
+  retention based only on the service name.
 
 ## Cost and operating configuration
 
-Use a small/mini-class model only as a planning scenario; no model is selected.
-Illustrative monthly usage is four weekly planning runs at **12,000 input /
-2,000 output tokens each** plus twenty short chat turns at **2,000 input /
-500 output tokens each**: **88,000 input and 18,000 output tokens/month**.
-This assumes bounded context, no repeated tool loop, and no retries; actual
-usage must be measured and capped.
+No model is selected. For the agreed first in-app feature, assume four weekly
+planning runs at **12,000 input / 2,000 output tokens each**: **48,000 input
+and 8,000 output tokens/month**. Twenty short general-chat turns at **2,000
+input / 500 output tokens each** are a separate, deferred scenario, not part of
+the initial weekly-planning scope. Both estimates assume bounded context, no
+repeated tool loop, and no retries; actual usage must be measured and capped.
 
 Monthly inference estimate:
 
 `(88,000 × verified input USD / 1,000,000) + (18,000 × verified output USD / 1,000,000)`
 
-The official [Foundry model pricing page](https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/)
-and [Azure pricing calculator](https://azure.microsoft.com/en-us/pricing/calculator/)
-could not be retrieved here, so per-model, region/deployment-specific rates and
-a total USD estimate are **Unverified**. Before selecting a model, record the
-official input/output rates for the actual model, deployment type and region,
-recalculate the above scenario, and confirm the combined runtime/database/
-telemetry bill against the existing **USD 50/month target**. The proposed
-architecture does not depend on a particular model or price, and no claim that
-the target is met is made.
+As an **illustration only**, Microsoft's [Azure OpenAI pricing page](https://azure.microsoft.com/en-us/pricing/details/azure-openai/)
+lists GPT-4o-mini-0718 Global at **$0.15 input / $0.60 output per million
+tokens** (cached input is priced separately). At the weekly-planning volume
+above, that is about **$0.012/month**; the deferred general-chat scenario adds
+about **$0.012/month**. These are not a model selection or a Switzerland-region
+quote. The
+Foundry pricing page's direct output rendered dynamic price placeholders in
+this research; before selecting a model, confirm its current rate for the exact
+deployment type and region in the official [Foundry pricing page](https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/)
+and [Azure pricing calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
+Then recalculate the scenario and confirm the combined runtime/database/
+telemetry bill against the **USD 50/month target**. No claim that the target is
+met is made.
 
 | Configuration | Requirement |
 |---|---|
@@ -167,7 +189,9 @@ the target is met is made.
 
 ## Evaluation cases for implementation issue #8
 
-These are planned acceptance tests, not tests run in this discovery.
+These are planned acceptance tests, not tests run in this discovery. Weekly
+planning is the first in-app AI feature; capture, mark-done and broader journal
+chat cases below are guardrails for later expansion, not initial feature scope.
 
 | Case | Expected outcome |
 |---|---|

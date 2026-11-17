@@ -1,15 +1,18 @@
 # ADR 0001: Technology baseline
 
-**Status:** Partially approved for issue #5; UI rendering and SQL free-tier
-choices remain proposed. The owner-approved
+**Status:** Accepted on 2026-11-17 for the selected baseline. The owner selected
+Interactive Server for the initial interactive UI and the General Purpose
+serverless Azure SQL free tier where eligible, with paid continuation at the
+free limit. These choices do not authorize provisioning; implementation,
+eligibility and operational checks below still apply. The owner-approved
 [implementation plan v4](https://github.com/cedricmendelin/bujo-ai/issues/5#issuecomment-6901233646)
 selects .NET 11, EF Core SQL Server, and one modular host for that issue only.
-This does not approve a Blazor render mode, Azure SQL free-tier operating
-behavior, or MCP client compatibility. Evidence retrieved 2026-11-14; links
-below are primary Microsoft sources. Prices, availability and product behavior
-must be rechecked before provisioning.
+MCP client compatibility and Azure SQL configuration availability remain
+unverified. Evidence retrieved 2026-11-14; links below are primary Microsoft
+sources. Prices, availability and product behavior must be rechecked before
+provisioning.
 
-## Context and proposed decisions
+## Context and decisions
 
 The agreed boundary is one modular ASP.NET Core deployment for an installable,
 online-first Blazor PWA, API and remote MCP, with durable journal and knowledge
@@ -19,18 +22,18 @@ direction targets Switzerland North and less than USD 50/month, not a spending
 guarantee. See [concept](../concept.md) and
 [recorded decisions](../../.squad/decisions.md).
 
-| Choice | Recommendation for owner review | Status |
+| Choice | Decision | Status |
 | --- | --- | --- |
-| Runtime | .NET 11, current supported servicing patch | Approved for issue #5 |
-| UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Proposed |
-| Database | Azure SQL Database; General Purpose serverless free tier remains subject to the operational checks below | Provider approved; tier and exhaustion behavior remain proposed |
-| Persistence | EF Core SQL Server provider and reviewed migrations | Approved for issue #5 |
-| Structure | One modular ASP.NET Core host with small in-process modules; no microservices | Approved for issue #5 |
+| Runtime | .NET 11, current supported servicing patch | Owner-approved for issue #5 |
+| UI | Blazor Web App, Interactive Server for interactive UI, static SSR where appropriate; prove installability | Owner-approved 2026-11-17; installability and runtime behavior still require verification |
+| Database | Azure SQL Database; General Purpose serverless free tier where eligible, continue at paid rates when the free allowance is exhausted | Owner-approved 2026-11-17; verify eligibility, region, configuration and cost before provisioning |
+| Persistence | EF Core SQL Server provider and reviewed migrations | Owner-approved for issue #5 |
+| Structure | One modular ASP.NET Core host with small in-process modules; no microservices | Owner-approved for issue #5 |
 
-The issue #5 approval does not make the remaining proposed choices final. A
-failure of a specific Azure SQL configuration triggers review of another Azure
-SQL configuration; changing database provider requires evidence of a blocker and
-separate approval.
+ADR acceptance selects a conditional Azure SQL baseline, not a validated
+configuration or provisioning approval. A failure of the selected Azure SQL
+configuration triggers review of another Azure SQL configuration; changing
+database provider requires evidence of a blocker and separate approval.
 
 ## Runtime
 
@@ -81,16 +84,19 @@ services in one host. Its trade-off is a live connection and server-side circuit
 state. [Microsoft's circuit guidance](https://learn.microsoft.com/en-us/aspnet/core/blazor/state-management/server?view=aspnetcore-10.0)
 describes reconnect and state loss: circuit expiration, host restart or scale-to-zero
 can require a reload; do not assume recovery of unsaved input or replay writes.
-Prove installability, authentication and disconnect/reconnect on target browsers
-before committing to scaffolding. If this fails, bring the WASM alternative back
-for approval rather than claiming that a manifest alone meets the requirement.
+The owner selected Interactive Server for initial interactive components on
+2026-11-17, with static SSR where appropriate. This is an online-first choice,
+not an offline-write or recovery guarantee. Prove installability, authentication
+and disconnect/reconnect on target browsers before committing to production
+scaffolding. If a requirement fails, bring the WASM alternative back for approval
+rather than claiming that a manifest alone meets the requirement.
 
 For later [AG-UI work](https://github.com/cedricmendelin/bujo-ai/issues/6),
 Microsoft's [Interactive Server sample](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/05-end-to-end/AGUIWebChat)
 illustrates streamed updates, not a production authentication or replay
 guarantee. Agent-to-server streaming and the browser-to-server circuit are
-separate hops. No Foundry, AG-UI protocol, stream recovery or auth integration is
-approved here.
+separate hops. AG-UI package compatibility and recovery behavior remain subject
+to the focused .NET 11 spike and production validation.
 
 ## Azure SQL baseline and operations
 
@@ -155,17 +161,19 @@ The free amount has **no SLA** and Microsoft recommends it primarily for
 development and proof-of-concept use. Personal production use therefore carries
 an explicit availability risk.
 
-At the free limit the owner must choose:
+At the monthly free limit:
 
 | Setting | Consequence |
 | --- | --- |
 | Auto-pause until next month | Database inaccessible until the next calendar month; no uninterrupted journal access. |
-| Continue for additional charges | Usage continues at paid rates; this is not a hard budget cap. |
+| Continue for additional charges | Usage continues at paid rates; this is not a hard budget cap. **Owner-selected for the initial design on 2026-11-17.** |
 
-The choice is **open**, not implicitly resolved by recommending the free tier.
-Check storage and backup overage behavior separately; do not assume it matches
-compute exhaustion. Set a budget alert and monitor free amount remaining and
-`app_cpu_billed`, but alerts do not prevent charges.
+The owner selected paid continuation to preserve access and accepts that it is
+not a hard budget cap. This records a policy preference, not approval to provision
+or incur charges. Check eligibility, regional availability, storage and backup
+overage behavior separately; do not assume they match compute exhaustion. Set a
+budget alert and monitor free amount remaining and `app_cpu_billed`, but alerts
+do not prevent charges.
 
 For a concrete sensitivity check, Microsoft's
 [billing example](https://learn.microsoft.com/en-us/azure/azure-sql/database/serverless-tier-billing?view=azuresql)
@@ -235,9 +243,10 @@ deployments.
 
 - Server rendering reduces initial deployment complexity but requires connectivity
   and a custom installability proof; lost circuits and in-flight work need clear UX.
-- Free SQL may be unavailable for the remainder of a month or incur overage; its
-  lack of an SLA, resume latency, restore charges and backup limits need owner
-  acceptance. Full-text/tier and region compatibility remain to be tested.
+- The owner selected paid overage rather than pausing at the free compute limit
+  to preserve database availability. This is not a hard spend cap; the free
+  tier has no SLA, and actual overage, restore, backup and full-text costs and
+  configuration still require verification.
 - Verify local versus Azure SQL parity, language behavior, backup restore,
   permissions, and actual monthly spend before production. Do not copy personal
   journal data into test fixtures.
@@ -246,7 +255,8 @@ deployments.
   authoritative.
 
 **Approval boundary:** issue #5 approves .NET 11, EF Core SQL Server, and one
-modular host with a separate production migration job. Blazor rendering,
-Azure SQL free-tier behavior, MCP client compatibility, actual Azure
-permissions, and provisioning remain unapproved or unverified. No resources
-are provisioned by this ADR.
+modular host with a separate production migration job. The owner selected
+Interactive Server and the conditional Azure SQL free-tier/paid-continuation
+baseline on 2026-11-17. MCP client compatibility, Azure SQL eligibility and
+regional configuration, full-text parity, actual Azure permissions, cost and
+provisioning remain unverified. No resources are provisioned by this ADR.

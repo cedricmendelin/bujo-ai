@@ -355,3 +355,30 @@
   executor; no direct merge or protection bypass.
 - The owner separately coordinates active PRs and performs the ruleset/label
   rollout. Code delivery does not imply live settings have changed.
+
+### 2026-11-17: Interactive Server and conditional Azure SQL baseline
+
+- The owner accepted Blazor Interactive Server for the initial interactive UI,
+  with static SSR where appropriate.
+- The owner selected Azure SQL General Purpose serverless free tier where
+  eligible, with paid continuation at the free compute limit to preserve access.
+  This is not a hard spend cap.
+- Installability, Azure eligibility/region/configuration, permissions, full-text
+  behavior, restore, and actual cost remain verification gates before
+  provisioning. ADR acceptance does not authorize resource creation.
+- See `docs/adr/0001-technology-baseline.md`.
+
+### 2026-11-17: Weekly-planning coach and AG-UI architecture
+
+- The owner selected a weekly-planning coach launched from the weekly view as
+  the first in-app AI experience. It proposes a structured, version-checked
+  plan; no journal changes occur before explicit approval. General journal Q&A
+  and proactive actions are outside this first AI slice.
+- The owner accepted app-owned orchestration, authorization and session state
+  in the existing ASP.NET host, with an optional server-side Foundry model
+  provider. Foundry Agent Service is not a required runtime.
+- The owner accepted AG-UI for the Interactive Server path after a local
+  .NET 11 mock spike. Production package adoption, inference and Foundry
+  provisioning remain subject to ADR 0002's validation gates.
+- Chat transcript persistence and retention remain undecided.
+- See `docs/concept.md` and `docs/adr/0002-foundry-agui-chat.md`.
