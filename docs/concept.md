@@ -194,4 +194,4 @@ unavailable. The system must not silently treat missing evidence as proof.
 4. Create scoped GitHub issues with acceptance criteria and dependencies.
 5. Run every implementation issue through the governed workflow
    ([workflow.md](workflow.md)): owner-approved plan, Copilot implementation,
-   automated Squad Review, auto-merge, and owner-dispatched deployment from `main`.
+   automated Squad Review, auto-merge, and CI-triggered deployment from `main`.

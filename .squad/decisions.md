@@ -382,3 +382,12 @@
   provisioning remain subject to ADR 0002's validation gates.
 - Chat transcript persistence and retention remain undecided.
 - See `docs/concept.md` and `docs/adr/0002-foundry-agui-chat.md`.
+
+### 2026-11-17: Demo infrastructure delivery
+
+- Bujo-AI is a demo for trying agent capabilities and practicing SDLC. Keep
+  PR review and CI; do not add a second approval process for Terraform.
+- Supersedes the separate infrastructure plan/hash approval: successful `main`
+  CI applies pending `infra/` changes. The owner can also dispatch a single
+  plan/apply run to reconcile drift.
+- Keep GitHub OIDC, private state, and migration-before-promotion for app releases.

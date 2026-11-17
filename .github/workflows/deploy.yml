@@ -97,9 +97,6 @@ jobs:
           python3 .github/scripts/release_admission.py admit --manifest "$RUNNER_TEMP/release.json"
           python3 .github/scripts/release_admission.py recheck --manifest "$RUNNER_TEMP/release.json"
 
-      - name: Require explicit owner activation and completed setup
-        run: python3 .github/scripts/deployment_preflight.py
-
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.17.0
@@ -119,7 +116,14 @@ jobs:
             -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" \
             -backend-config="container_name=$TFSTATE_CONTAINER" \
             -backend-config="key=$TFSTATE_KEY" \
-            -backend-config="use_oidc=true"
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Plan and apply pending infra changes
+        run: python3 .github/scripts/apply_infrastructure.py
+
+      - name: Require explicit owner activation and completed setup for app release
+        run: python3 .github/scripts/deployment_preflight.py
 
       - name: Verify live bootstrap and anonymous release-image access
         run: python3 .github/scripts/deployment_preflight.py --live --manifest "$RUNNER_TEMP/release.json"

@@ -42,8 +42,14 @@ variable "container_image" {
 
 variable "bootstrap_only" {
   type        = bool
-  description = "Use an inert placeholder for the migration job during the owner-reviewed bootstrap plan."
+  description = "Use an inert placeholder for a migration job that has not received a release."
   default     = false
+}
+
+variable "retained_app_image" {
+  type        = string
+  description = "Existing app image to retain during infrastructure-only applies; releases use container_image instead."
+  default     = null
 }
 
 variable "deployment_client_id" {
