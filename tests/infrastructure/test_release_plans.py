@@ -22,7 +22,7 @@ RELEASE_A = "ghcr.io/cedricmendelin/bujo-ai@sha256:" + "a" * 64
 RELEASE_B = "ghcr.io/cedricmendelin/bujo-ai@sha256:" + "b" * 64
 RUNS = (
     "release_baseline_apply", "release_migration_plan", "release_migration_apply",
-    "release_migration_rerun_plan", "release_promotion_plan",
+    "release_migration_rerun_plan", "infrastructure_retains_both_images", "release_promotion_plan",
     "first_release_bootstrap_apply", "first_release_migration_plan",
     "first_release_migration_apply", "first_release_promotion_plan",
 )
@@ -113,6 +113,15 @@ class ReleasePlanTests(unittest.TestCase):
         plan = self.plan("release_migration_rerun_plan")
         self.assertEqual(self.changes(plan), {})
         self.assertIn(gate.JOB_ADDRESS, {item["address"] for item in plan["resource_changes"]})
+
+    def test_infrastructure_plan_preserves_live_app_and_job_on_different_releases(self):
+        plan = self.plan("infrastructure_retains_both_images")
+        keeper = self.resource(plan, gate.APP_KEEPER_ADDRESS)["change"]
+        job = self.resource(plan, gate.JOB_ADDRESS)["change"]
+        self.assertEqual(keeper["actions"], ["no-op"])
+        self.assertEqual(keeper["after"]["input"]["containers"][0]["image"], RELEASE_A)
+        self.assertEqual(job["actions"], ["no-op"])
+        self.assertEqual(job["after"]["template"][0]["container"][0]["image"], RELEASE_B)
 
     def test_promotion_plan_replaces_the_avm_patch_action_with_computed_unknowns(self):
         plan = self.plan("release_promotion_plan")

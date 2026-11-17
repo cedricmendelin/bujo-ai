@@ -4,14 +4,15 @@ Organize your thoughts. Plan your tasks. Live mindfully.
 
 An AI-assisted bullet journal for capturing tasks and thoughts, intentional
 planning, and reliable follow-through through a web app or your preferred AI
-assistant.
+assistant. This demo is also a place to try agent capabilities and practice
+software delivery.
 
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
 The journal host/API and SQL persistence are implemented; a usable PWA and MCP
 tools remain separate stories. Production was last verified running the Azure
-quickstart image, not the journal host. The owner-reviewed infrastructure-first
-path provisions API/hosting resources before manual application setup; an
+quickstart image, not the journal host. CI applies merged infrastructure changes
+without a separate approval. Provisioning sets up API/hosting resources before manual application setup; an
 unhealthy app is an accepted intermediate state. Bootstrap and permission
 setup are documented in [the infrastructure guide](docs/infrastructure.md)
 and the [deployment guide](docs/deployment.md). On a prepared baseline, after one-time activation,

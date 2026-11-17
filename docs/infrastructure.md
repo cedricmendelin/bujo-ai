@@ -1,6 +1,6 @@
 # Production infrastructure
 
-> Automatic releases stay disabled until the owner completes
+> Automatic application releases stay disabled until the owner completes
 > [#55](https://github.com/cedricmendelin/bujo-ai/issues/55) and sets
 > `BUJO_OWNER_SETUP_CONFIRMED` and `BUJO_DEPLOYMENT_ENABLED` (see
 > [production deployment](deployment.md#activation-owner-only)). Grants,
@@ -12,7 +12,7 @@ North. It uses pinned Azure Verified Modules, an owner-created resource group,
 Azure Blob remote state, and one GitHub Actions OIDC deployment identity. The
 same identity manages the Entra API registration using a separately consented,
 least-privilege Microsoft Graph application permission. Pull request workflows
-do not authenticate to Azure; the owner runs plans locally.
+do not authenticate to Azure; merged infrastructure changes are applied by CI/CD.
 
 Terraform creates a consumption Container Apps environment and app, a
 user-assigned runtime identity, a separate migration identity and manually
@@ -25,9 +25,8 @@ passwords, or Terraform-managed Key Vault values.
 
 The app resource group `bujo-ai-rg` must be created by the owner before the
 first deployment. Terraform looks it up as data rather than managing it. The
-owner reviews the exact infrastructure-first plan and authorizes its saved hash;
-the owner-only workflow or local helper can then provision the API/hosting baseline
-before application-specific manual setup. Afterwards each routine release first moves
+owner can also dispatch **Provision infrastructure** to establish or reconcile
+the API/hosting baseline before application-specific manual setup. Each routine release first moves
 only the migration job to the release digest, runs one correlated execution,
 and only after it succeeds promotes the app image, then verifies the exact
 revision, the startup database check, `/health/live` and an anonymous 401 (see
@@ -35,7 +34,7 @@ revision, the startup database check, `/health/live` and an anonymous 401 (see
 external ingress forwards to container port 8080, with 0.25 vCPU/0.5 GiB and
 zero to one replica. Releases use only the CI-built
 `ghcr.io/cedricmendelin/bujo-ai@sha256:<digest>` image; `container_image` must
-be such a digest. During the explicitly reviewed `bootstrap_only=true` baseline,
+be such a digest for releases. During the `bootstrap_only=true` baseline,
 the existing app image is read live and retained, and the migration job remains
 inert. No new app placeholder or real-release quickstart fallback is introduced.
 Application health may be incomplete while the owner configures manual setup.
@@ -261,8 +260,8 @@ approving an infrastructure PR, the owner runs a plan locally:
    terraform -chdir=infra plan -lock=false -var-file=prod.tfvars
    ```
 
-Do not post plan files or state blobs in pull requests. The approved PR may be
-merged after the owner has reviewed its local plan.
+Do not post plan files or state blobs in pull requests. Local plans are optional
+for diagnosis or PR review; production applies do not require a separate approval.
 
 ## First deployment and identity configuration
 
@@ -270,11 +269,10 @@ Releases run automatically from `deploy.yml` after a successful CI push run on
 `main`, once activated; a manual dispatch accepts only a previous successful
 main CI run ID for recovery. The workflow admits the exact CI release before
 Azure access, authenticates through the single immutable-subject OIDC identity,
-serializes on `terraform-prod`, and runs `infra/deploy_gate.py`. The gate only
-updates the migration job and the app image; any other pending infrastructure
-change blocks the release and must be applied by the owner first (with the
-currently deployed digest as `container_image`). Live OIDC authorization
-remains untested until the owner's first release.
+serializes on `terraform-prod`, and applies pending `infra/` changes without
+changing deployed images before running `infra/deploy_gate.py`. The release gate
+updates only the migration job and the app image. To reconcile live drift when
+the source tree is unchanged, manually dispatch **Provision infrastructure**.
 
 If SQL cannot resolve a managed identity while creating its database principal,
 the tenant administrator must inspect the required directory lookup permissions.
@@ -286,8 +284,8 @@ This permission is not granted to the runtime, migration, or deployment
 identity. Get the server principal ID from
 `terraform -chdir=infra output -raw sql_server_identity_principal_id`.
 
-The owner-reviewed infrastructure baseline comes first. Follow the
-[infrastructure-first plan and review procedure](deployment.md#infrastructure-first-bootstrap), then these
+The infrastructure baseline comes first. Follow the
+[infrastructure plan and apply procedure](deployment.md#infrastructure-plan-and-apply), then these
 grants and the [application baseline](deployment.md#first-release-baseline); do not
 activate releases until all grants and other prerequisites are complete. Also grant
 the deployment application the Microsoft Graph permission described above.
