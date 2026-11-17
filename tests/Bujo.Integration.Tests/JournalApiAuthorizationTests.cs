@@ -90,7 +90,9 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
             {
                 Content = JsonContent.Create(new { goalText = "Goal" })
             },
-            new HttpRequestMessage(HttpMethod.Get, $"/api/occurrences/{id}/resolution")
+            new HttpRequestMessage(HttpMethod.Get, $"/api/occurrences/{id}/resolution"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/daily-start"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/planning/upcoming")
         };
 
         foreach (var request in requests)
@@ -164,6 +166,47 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         }
     }
 
+    [Fact]
+    public async Task PlannedQueryEndpointsValidateTimeZoneAndReturnStructuredResults()
+    {
+        using var dailyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/daily-start?timeZone=Europe%2FZurich");
+        dailyRequest.Headers.Add("Authorization", "Test allow");
+        using var dailyResponse = await _client.SendAsync(dailyRequest);
+        using var dailyBody = JsonDocument.Parse(await dailyResponse.Content.ReadAsStringAsync());
+        using var upcomingRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/api/planning/upcoming?timeZone=Europe%2FZurich&futureLog=true&limit=5");
+        upcomingRequest.Headers.Add("Authorization", "Test allow");
+        using var upcomingResponse = await _client.SendAsync(upcomingRequest);
+        using var missingZone = AuthenticatedGet("/api/daily-start");
+        using var missingZoneResponse = await _client.SendAsync(missingZone);
+        using var invalidZone = AuthenticatedGet("/api/planning/upcoming?timeZone=Not%2FA_Time_Zone");
+        using var invalidZoneResponse = await _client.SendAsync(invalidZone);
+
+        Assert.Equal(HttpStatusCode.OK, dailyResponse.StatusCode);
+        Assert.Equal(
+            new[] { "Overdue", "Today", "ThisWeek" },
+            dailyBody.RootElement.GetProperty("groups").EnumerateArray()
+                .Select(group => group.GetProperty("code").GetString()));
+        Assert.Equal(HttpStatusCode.OK, upcomingResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, missingZoneResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidZoneResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task PlannedQueryRepositoryFailureReturnsAnExplicitServerError()
+    {
+        using var factory = new JournalApiFactory { FailQueries = true };
+        using var client = factory.CreateClient();
+        using var request = AuthenticatedGet("/api/daily-start?timeZone=Europe%2FZurich");
+
+        using var response = await client.SendAsync(request);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal("QueryFailed", body.RootElement.GetProperty("code").GetString());
+    }
+
     private static HttpRequestMessage AuthenticatedJsonRequest(HttpMethod method, string uri, object body)
     {
         var request = new HttpRequestMessage(method, uri)
@@ -173,10 +216,19 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         request.Headers.Add("Authorization", "Test allow");
         return request;
     }
+
+    private static HttpRequestMessage AuthenticatedGet(string uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Add("Authorization", "Test allow");
+        return request;
+    }
 }
 
 public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHealthCheck>
 {
+    public bool FailQueries { get; set; }
+
     private static readonly string TenantId = "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7";
     private static readonly string AllowedObjectId = "2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72";
 
@@ -204,10 +256,40 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
                 TestAuthenticationHandler.SchemeName,
                 _ => { });
             services.RemoveAll<IJournalRepository>();
-            services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
-                Guid.Parse("00000000-0000-0000-0000-000000000101")));
+                if (FailQueries)
+                {
+                    services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
+                }
+                else
+                {
+                    services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
+                        Guid.Parse("00000000-0000-0000-0000-000000000101")));
+                }
         });
     }
+}
+
+internal sealed class FailingReadJournalRepository : IJournalRepository
+{
+    public JournalSnapshot GetSnapshot() => throw new InvalidOperationException("Simulated repository failure.");
+
+    public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) => throw new NotSupportedException();
+
+    public DomainResult<CaptureResult> Capture(CaptureCommand command) => throw new NotSupportedException();
+
+    public DomainResult<MoveResult> Move(MoveCommand command) => throw new NotSupportedException();
+
+    public DomainResult<OccurrenceSnapshot> Transition(TransitionCommand command) => throw new NotSupportedException();
+
+    public DomainResult<JournalListSnapshot> CloseList(ListVersionCommand command) => throw new NotSupportedException();
+
+    public DomainResult<JournalListSnapshot> ReopenList(ListVersionCommand command) => throw new NotSupportedException();
+
+    public DomainResult<ItemSnapshot> EditItem(EditItemCommand command) => throw new NotSupportedException();
+
+    public DomainResult<ItemSnapshot> ChangePlannedPeriod(ChangePeriodCommand command) => throw new NotSupportedException();
+
+    public DomainResult<JournalListSnapshot> SetListGoal(SetListGoalCommand command) => throw new NotSupportedException();
 }
 
 public sealed class TestAuthenticationHandler(

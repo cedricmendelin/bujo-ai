@@ -106,6 +106,47 @@ the conflict requires an explicit user decision. The plan does not define a
 week-conflict rule for a weekly list without a week key, or for `Month`,
 `Quarter`, `Year`, or `Unplanned`.
 
+## Daily-start and upcoming queries
+
+The caller supplies an IANA time-zone ID for every query; the service has no
+server-local or UTC default. “Today” is the instant from the injected clock
+converted to that zone. Weeks start Monday and use ISO week-year and week
+number. Days, months, calendar quarters (January–March, April–June, July–
+September, October–December), and years use local calendar-date ranges,
+inclusive of both endpoints. Event instants remain UTC; daylight-saving
+transitions do not change period membership.
+
+Daily start considers only items whose current occurrence is `Open`. It groups
+them in this order:
+
+1. `Overdue`: a planned day before today, a planned week ending before the
+   current ISO week's Monday, or a planned month, quarter, or year whose final
+   date is before today. Each reason identifies the planned-period precision.
+2. `Today`: a planned day equal to today.
+3. `ThisWeek`: a planned week equal to the current ISO week, with no specific
+   day.
+
+A month, quarter, or year containing today is not overdue and is not included
+in daily start. Unplanned items, future planned days, and other not-yet-ended
+broader periods are excluded from daily start. Weekly-list conflicts remain
+informational: the item is included in its applicable group with a conflict
+flag, and neither its planned period nor its list is changed.
+
+Each result identifies the canonical item and its current destination. Resolve
+the current occurrence through the existing move chain; never return moved
+historical occurrences as separate actionable entries. Done and abandoned
+current occurrences are excluded without removing history. Missed plans retain
+their original dates and are presented for an explicit user decision.
+
+Upcoming planning queries include open items with future planned periods within
+a bounded local-date horizon (14 days by default, 90 maximum), grouped by
+period and returned with a bounded page size and a truncation indicator. A
+separate paged Future Log query returns its open items, including unplanned
+items. Daily start may report Future Log/unplanned counts, but does not expand
+the backlog into actionable entries. All query ordering and group ordering are
+deterministic. Invalid or missing time zones are explicit errors, not an empty
+successful result.
+
 ## Implementation acceptance
 
 Once issue #2's ADR is approved, implement the persistence-free domain and
