@@ -52,6 +52,29 @@ patched automatically by updating the host.
 
 ## Blazor rendering and installability
 
+### Issue #10 plan v3 proof checkpoint (2026-11-17)
+
+A thin SSR + Interactive Server proof is implemented in the existing modular
+host with a `Bujo.Web` Razor class library. Anonymous home/account states use
+static SSR; the protected `/rendering-proof` page alone opens an authorized
+Interactive Server circuit. Its synthetic text and read-only connection check
+are not journal persistence. Public manifest/icons and a static-asset-only
+service worker supply installation prerequisites without caching HTML, API
+responses, identities or journal data. Offline writes are neither queued nor
+replayed.
+
+The BFF boundary validates server-held delegated tokens and current approved
+identity on requests, circuit start/reconnect and inbound events; APIs remain
+bearer-only. See [authentication checkpoint](../auth.md#issue-10-v3-renderingbff-checkpoint)
+for configuration, single-replica/restart limitations and the human setup gate.
+
+**Decision status remains Proposed.** Test-host rendering and locally signed
+token tests do not establish real Entra sign-in, target-browser installation,
+production proxy behavior, scale-to-zero cost, multi-replica recovery or durable
+journal saves. Owner and Architect must review the proof in the PR before
+further journal UI implementation. Missing live credentials/configuration are a
+human gate, not permission to silently adopt WASM.
+
 [Render modes](https://learn.microsoft.com/en-us/aspnet/core/blazor/components/render-modes?view=aspnetcore-10.0)
 describe where components execute. The matrix compares a Blazor Web App using
 each mode with a standalone WASM client served by the same ASP.NET Core host.

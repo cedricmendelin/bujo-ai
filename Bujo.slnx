@@ -6,10 +6,12 @@
     <Project Path="src/Bujo.Host/Bujo.Host.csproj" />
     <Project Path="src/Bujo.Infrastructure/Bujo.Infrastructure.csproj" />
     <Project Path="src/Bujo.ServiceDefaults/Bujo.ServiceDefaults.csproj" />
+    <Project Path="src/Bujo.Web/Bujo.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Bujo.Application.Tests/Bujo.Application.Tests.csproj" />
     <Project Path="tests/Bujo.Domain.Tests/Bujo.Domain.Tests.csproj" />
     <Project Path="tests/Bujo.Integration.Tests/Bujo.Integration.Tests.csproj" />
+    <Project Path="tests/Bujo.E2E.Tests/Bujo.E2E.Tests.csproj" />
   </Folder>
 </Solution>

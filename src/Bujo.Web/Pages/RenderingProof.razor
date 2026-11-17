@@ -1,0 +1,71 @@
+@page "/rendering-proof"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@implements IDisposable
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+<PageTitle>Connection proof · Bujo-AI</PageTitle>
+
+<h1>Connection proof</h1>
+<p id="proof-help">
+    Use synthetic text only. Checking the connection performs a server roundtrip,
+    not a journal save. Nothing entered here is persisted.
+</p>
+
+<div data-journal-write>
+    <p>
+        <label for="proof-input">Proof text</label>
+        <input id="proof-input" @bind="_text" @bind:event="oninput"
+               aria-describedby="proof-help" maxlength="200" disabled="@(!_ready)" />
+    </p>
+    <button id="proof-action" type="button" @onclick="CheckAsync" disabled="@(!_ready)">
+        Check connection
+    </button>
+</div>
+<p id="proof-result" role="status" aria-live="polite">@_result</p>
+<p>
+    Keep this page open during a brief disconnect to inspect retained text.
+    If reconnection fails, <a href="/rendering-proof" data-enhance-nav="false">reload the proof</a>
+    and sign in again. Reloading loses unsaved text.
+</p>
+
+@code {
+    private DotNetObjectReference<RenderingProof>? _reference;
+    private string _text = string.Empty;
+    private string _result = "No server roundtrip requested.";
+    private int _checks;
+    private bool _ready;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        _reference = DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("bujoPwa.registerCircuitProbe", _reference);
+            _ready = true;
+            StateHasChanged();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The connection banner supplies recovery guidance without replaying an action.
+        }
+    }
+
+    [JSInvokable]
+    public bool CheckConnection() => true;
+
+    private async Task CheckAsync()
+    {
+        if (!await JS.InvokeAsync<bool>("bujoPwa.writesAvailable"))
+            return;
+
+        _checks++;
+        _result = $"Connection confirmed. Check {_checks}. Nothing was saved.";
+    }
+
+    public void Dispose() => _reference?.Dispose();
+}
