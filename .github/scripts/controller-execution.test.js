@@ -58,7 +58,7 @@ function fixture() {
     ],
     runs: {
       ...Object.fromEntries(ROLES.map(role => [role, [{
-        id: role, name: `Squad Review ${role}`, display_title: `Squad Review ${role} · PR #81`,
+        id: role, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81`,
         created_at: stamp(1), updated_at: stamp(5), status: 'completed', conclusion: 'success',
       }]])),
       ci: [],
@@ -101,7 +101,7 @@ async function execute(state, step = 'evaluate') {
         // GitHub makes the new run visible to the next serialized evaluation.
         const role = args.workflow_id;
         if (ROLES.includes(role)) state.runs[role].unshift({
-          id: `new-${role}`, name: `Squad Review ${role}`, display_title: `Squad Review ${role} · PR #81`,
+          id: `new-${role}`, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81`,
           created_at: stamp(20), status: 'queued',
         });
         return { status: 204 };
@@ -120,7 +120,7 @@ async function execute(state, step = 'evaluate') {
         data: { check_runs: state.checks.filter(check => !args.check_name || check.name === args.check_name) },
       })),
       create: endpoint('createCheck', args => {
-        const result = { ...args, id: 1000, head_sha: args.head_sha };
+        const result = { ...args, id: Math.max(999, ...state.checks.map(check => check.id)) + 1, head_sha: args.head_sha };
         state.checks.push(result);
         return { data: result };
       }),
@@ -204,7 +204,8 @@ async function execute(state, step = 'evaluate') {
 }
 
 const commentsFrom = result => result.calls.filter(call => call.name === 'comment').map(call => call.args.body);
-const readinessFrom = state => state.checks.find(check => check.name === 'Squad Merge Readiness');
+const readinessFrom = state => state.checks.filter(check => check.name === 'Squad Merge Readiness')
+  .sort((a, b) => b.id - a.id)[0];
 const enables = result => result.calls.filter(call => call.query?.includes('enablePullRequestAutoMerge'));
 function fixComment(time, login = owner, head = sha) {
   return { id: Date.parse(time), created_at: time, user: { login }, body: `<!-- squad-review-fix:${head}:cloud -->` };
@@ -295,6 +296,30 @@ test('genuine new-generation checks pass; cosmetic re-evaluation does not redisp
   const second = await execute(state);
   assert.equal(enables(second).length, 0);
   assert.equal(commentsFrom(second).length, 0);
+});
+
+test('active GitHub-named reviewer runs are not redispatched on completion events', async () => {
+  const state = fixture();
+  for (const role of ROLES) state.runs[role][0].status = 'in_progress';
+  state.context.eventName = 'workflow_run';
+  state.context.payload.workflow_run = { display_title: 'Squad Review Architect · PR #81' };
+  const result = await execute(state);
+  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 0);
+  assert.notEqual(readinessFrom(state).conclusion, 'success');
+});
+
+test('re-evaluation creates a new pending readiness check instead of reopening a completed result', async () => {
+  for (const conclusion of ['success', 'failure']) {
+    const state = fixture();
+    state.checks.push({ id: 500, name: 'Squad Merge Readiness', head_sha: sha, status: 'completed', conclusion });
+    for (const role of ROLES) state.runs[role][0].status = 'in_progress';
+    const result = await execute(state);
+    const check = readinessFrom(state);
+    assert.equal(result.calls.some(call => call.name === 'updateCheck' && call.args.check_run_id === 500), false);
+    assert.ok(check.id > 500);
+    assert.equal(check.status, 'in_progress');
+    assert.notEqual(check.conclusion, 'success');
+  }
 });
 
 test('reviewer infrastructure failures pause once rather than starting an automatic retry loop', async () => {

@@ -159,7 +159,7 @@ jobs:
                   : decision.conclusion === 'failure' ? 'Merge readiness blocked' : 'Waiting for merge readiness',
                 summary: `${decision.reason}\n\nHead: \`${sha}\`. CI and selected reviewer checks are evaluated on this exact head. GitHub branch protection remains the merge authority.`,
               };
-              if (existing) {
+              if (existing && !(existing.status === 'completed' && decision.status !== 'completed')) {
                 const { data } = await github.rest.checks.update({
                   owner, repo, check_run_id: existing.id,
                   status: decision.status,
