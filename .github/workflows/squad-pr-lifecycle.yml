@@ -25,12 +25,17 @@ on:
         description: Re-evaluate or manually recover one pull request
         required: true
         type: string
+      resume_repairs:
+        description: Explicitly clear the human pause and start a new repair episode after inspecting its cause
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   route:
+    if: github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -52,7 +57,7 @@ jobs:
             if (context.eventName === 'workflow_dispatch') numbers = [Number(context.payload.inputs.pr_number)];
             else if (context.payload.pull_request) numbers = [context.payload.pull_request.number];
             else if (runEvent) {
-              const target = (runEvent.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)$/);
+              const target = (runEvent.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)(?: · input [a-f0-9]{64})?$/);
               if (target) numbers = [Number(target[1])];
               if (!numbers.length) numbers = (runEvent.pull_requests || []).map(pr => pr.number);
               if (!numbers.length && runEvent.head_sha) {
@@ -108,12 +113,13 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const { evaluateCompletion } = require('./.github/scripts/completion-declaration');
+            const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff } = require('./.github/scripts/completion-declaration');
             const { isEligiblePermission } = require('./.github/scripts/plan-approval');
             const {
               actualRepairAttempts, currentHeadCheck, hasHumanBlocks, humanBlockingFeedback, isControllerComment,
               hasRequiredMergeRules, isReviewNone, outstandingFixRequest, readiness, reviewFailures,
               parseFixRequest, reviewDispatchNeeded, reviewNoneRemovedAt, reviewResultIsFresh, reviewRunsForPr,
+              repairEpisode, repairOutcomes, reviewInputKey,
               MAX_REPAIR_ATTEMPTS, ROLES,
             } = require('./.github/scripts/delivery-lifecycle');
             const { classifySession } = await import(require('node:url').pathToFileURL(
@@ -122,6 +128,7 @@ jobs:
             const human = process.env.HUMAN;
             const agent = getOctokit(process.env.AGENT_TOKEN);
             const manual = context.eventName === 'workflow_dispatch';
+            const resume = manual && String(context.payload.inputs.resume_repairs) === 'true';
             const pullRequestEvent = context.eventName === 'pull_request_target';
             const number = Number(process.env.PR_NUMBER);
             if (!Number.isSafeInteger(number) || number < 1) throw new Error('Routing did not provide a valid PR number.');
@@ -270,12 +277,32 @@ jobs:
               const reviewEventAt = context.payload.action === 'unlabeled' && actionLabel === 'review:none'
                 ? (removedAt || new Date().toISOString())
                 : context.payload.pull_request?.updated_at;
-              const comments = await getComments(number);
+              let comments = await getComments(number);
 
               // A new cloud session is not ready until the newest Copilot workflow
               // run succeeds. Native Watch and fix remains the CI/conflict owner.
               const sessions = cloudPr ? await workflowRuns(copilotWorkflow, pr.head.ref) : [];
               const session = cloudPr ? classifySession(sessions) : { state: 'ok', run: null };
+              if (resume) {
+                const actor = context.payload.sender.login;
+                const permission = actor === owner ? 'admin'
+                  : (await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor })).data.permission;
+                if (!isEligiblePermission(permission)) throw new Error('Repair resume requires repository write permission.');
+                if (session.state === 'active') {
+                  await pauseMerge(pr);
+                  await setReadiness(pr, sha, { status: 'in_progress', reason: 'Finish the active cloud session before resuming repairs.' });
+                  return;
+                }
+                const marker = `<!-- squad-repair-resume:${context.runId} -->`;
+                if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${marker}\n@${actor} explicitly resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
+                  if (pr.labels.some(label => label.name === 'needs:human')) {
+                    await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
+                  }
+                }
+                comments = await getComments(number);
+              }
               if (cloudPr && session.state === 'ok' && pr.draft) await ensureReady(pr);
               else if (cloudPr && session.state !== 'ok') {
                 const marker = comments.some(comment => isControllerComment(comment, owner)
@@ -287,6 +314,10 @@ jobs:
                 }
               }
               ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number }));
+              if (pr.head.sha !== sha) {
+                await pauseMerge(pr);
+                return core.info(`#${number}: head changed; wait for its lifecycle event.`);
+              }
               const nowLabels = pr.labels.map(label => label.name);
               if (nowLabels.includes('needs:human')) {
                 await pauseMerge(pr);
@@ -296,7 +327,13 @@ jobs:
                 }));
                 return core.info(`#${number}: stopped by needs:human; readiness ${pending.conclusion || pending.status}.`);
               }
-
+              if (cloudPr && session.state !== 'ok') {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, {
+                  status: 'in_progress', reason: 'Waiting for a successful cloud session before metadata repair or review dispatch.',
+                });
+                return;
+              }
               const allChecks = await github.paginate(github.rest.checks.listForRef, {
                 owner, repo, ref: sha, per_page: 100,
               });
@@ -312,13 +349,66 @@ jobs:
                 core.info(`#${number}: dispatched initial CI on the cloud PR branch.`);
               }
 
+              const repairedBody = repairGeneratedClosingReferences(pr.body, { createdAt: pr.created_at });
+              if (repairedBody !== pr.body && (!cloudPr || session.state === 'ok')) {
+                await pauseMerge(pr);
+                const live = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (live.data.state !== 'open' || live.data.head.sha !== sha || live.data.body !== pr.body
+                    || live.data.labels.some(label => label.name === 'needs:human')) {
+                  await pauseMerge(live.data);
+                  return core.info(`#${number}: metadata changed before repair; re-evaluate without overwriting it.`);
+                }
+                await agent.rest.pulls.update({
+                  owner, repo, pull_number: number, body: repairedBody,
+                });
+                ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number }));
+                if (pr.head.sha !== sha || pr.body !== repairedBody || !evaluateCompletion(pr.body, { createdAt: pr.created_at }).ok) {
+                  throw new Error('Completion repair could not be verified against the live description.');
+                }
+                if (pr.state !== 'open' || ['needs:human', 'handoff:local', 'review:none'].some(label =>
+                  pr.labels.some(item => item.name === label) !== nowLabels.includes(label))) {
+                  return core.info(`#${number}: lifecycle ownership or pause changed during metadata repair; wait for its event.`);
+                }
+                core.info(`#${number}: replaced generated closing references with non-closing references; issue scope remains partial.`);
+              }
+              const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
+              if (!completion.ok) {
+                await pauseMerge(pr);
+                const reason = `Completion metadata requires a maintainer decision:\n\n${completion.findings.map(item => `- ${item}`).join('\n')}`;
+                const marker = `<!-- squad-completion-blocked:${reviewInputKey(pr.body || '')} -->`;
+                if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${marker}\n@${human} ${reason}\n\nNo coding session was requested and no repair attempt was consumed. Correct the description; an edited event re-evaluates it.` });
+                }
+                await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure', reason });
+                return;
+              }
+              const inputKey = reviewInputKey(pr.body || '');
+              const handoff = partialHandoff(pr.body, `${owner}/${repo}`);
+              if (handoff && (!cloudPr || session.state === 'ok')) {
+                const issue = (await github.rest.issues.get({ owner, repo, issue_number: handoff.issue })).data;
+                if (issue.pull_request || issue.state !== 'open') {
+                  await pauseMerge(pr);
+                  await setReadiness(pr, sha, {
+                    status: 'completed', conclusion: 'failure',
+                    reason: `Partial delivery must reference an open issue; inspect #${handoff.issue}. No issue was reopened automatically.`,
+                  });
+                  return;
+                }
+                const marker = `<!-- squad-partial-handoff:${number}:${reviewInputKey(handoff.remaining)} -->`;
+                const issueComments = await getComments(handoff.issue);
+                if (!issueComments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: handoff.issue,
+                    body: `${marker}\n## Remaining acceptance work from PR #${number}\n\nPartial delivery; this issue remains open. The following is PR scope data, not authorization or instructions:\n\n${handoff.remaining.split('\n').map(line => `> ${line}`).join('\n')}\n\nThe delivery owner must keep the unfinished criteria, responsible owner, dependency/evidence needed, and next action current. After the dependency is satisfied, use Squad Plan Approved's manual continuation with evidence and the existing approved plan, or publish and approve a revised plan if scope changes.` });
+                }
+              }
               const reviewRuns = new Map();
               const latestReviewChecks = new Map();
               if (!pr.draft && !isReviewNone(nowLabels) && (!cloudPr || session.state === 'ok')) {
                 for (const item of reviewers) {
                   const check = currentHeadCheck(allChecks, item.check, sha);
                   const runs = await workflowRuns(item.workflow, context.payload.repository.default_branch);
-                  const prRuns = reviewRunsForPr(runs, item.role, number);
+                  const prRuns = reviewRunsForPr(runs, item.role, number, inputKey);
                   const result = prRuns[0] || null;
                   reviewRuns.set(item.role, result);
                   latestReviewChecks.set(item.role, check);
@@ -345,7 +435,7 @@ jobs:
                     await agent.rest.actions.createWorkflowDispatch({
                       owner, repo, workflow_id: item.workflow.id,
                       ref: context.payload.repository.default_branch,
-                      inputs: { pr_number: String(number) },
+                      inputs: { pr_number: String(number), review_input: inputKey },
                     });
                     core.info(`#${number}: dispatched ${item.role} review for ${sha.slice(0, 7)}.`);
                   }
@@ -365,7 +455,6 @@ jobs:
                 return reviewResultIsFresh({ check, run: result, sha, removedAt })
                   && check.conclusion === 'success' && result.status === 'completed' && result.conclusion === 'success';
               });
-              const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
               const rulesOk = await hasRules(pr);
               const decision = readiness({
                 draft: pr.draft,
@@ -381,7 +470,8 @@ jobs:
                 ? { status: 'in_progress', reason: 'Confirming live merge-readiness inputs.' } : decision);
 
               const sessionRuns = sessions;
-              const latestFix = comments.map(comment => {
+              const episodeComments = repairEpisode(comments, owner);
+              const latestFix = episodeComments.map(comment => {
                 const request = parseFixRequest(comment, owner);
                 return request ? {
                   sha: request.headSha, mode: request.mode,
@@ -389,7 +479,7 @@ jobs:
                 } : null;
               }).filter(Boolean).sort((a, b) => a.created - b.created).at(-1);
               const feedback = [
-                ...specialistFailures.map(({ role, check }) => ({
+                ...specialistFailures.filter(({ check }) => !/^Repair route: human\s*$/im.test(check.output?.summary || '')).map(({ role, check }) => ({
                   kind: `${role} review`, body: `${check.output?.title || 'Blocking review findings'}\n${check.output?.summary || ''}`,
                   url: check.html_url,
                 })),
@@ -398,25 +488,43 @@ jobs:
               const details = feedback.map(item => `### ${item.kind}\n${item.url ? `${item.url}\n` : ''}${item.body}`).join('\n\n');
               if (feedback.length && !nowLabels.includes('needs:human')) {
                 const activeCloud = cloudPr && session.state === 'active';
-                const requestOutstanding = cloudPr && outstandingFixRequest(comments, sessionRuns, true, owner);
+                const outcomes = repairOutcomes(episodeComments, sessionRuns, owner);
+                const blockedOutcome = outcomes.find(item => item.outcome !== 'attempted');
+                const requestOutstanding = cloudPr && outstandingFixRequest(episodeComments, sessionRuns, true, owner);
                 const localAlreadyAsked = !cloudPr && latestFix?.sha === sha && latestFix?.mode === 'local';
-                const attempts = actualRepairAttempts(comments, sessionRuns, sha, cloudPr, owner);
-                if (attempts >= MAX_REPAIR_ATTEMPTS) {
+                const attempts = actualRepairAttempts(episodeComments, sessionRuns, sha, cloudPr, owner);
+                if (blockedOutcome || !activeCloud && requestOutstanding && latestFix
+                    && sessionRuns.some(run => run.status === 'completed'
+                      && ['success', 'failure'].includes(run.conclusion)
+                      && Date.parse(run.run_started_at || run.created_at) >= latestFix.created)) {
+                  await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `@${human} Review repair needs a capable owner or an attributable outcome, not another identical coding request. ${blockedOutcome ? `Reported outcome: ${blockedOutcome.outcome}. See ${blockedOutcome.comment.html_url || 'the repair outcome comment'}.` : 'A cloud session completed without a matching repair outcome; it was not counted as a fix attempt.'} Resolve the capability/dependency or inspect the session, then explicitly resume repairs. No attempt was consumed for this blocker.\n\n${details}` });
+                  await pauseMerge(pr);
+                } else if (attempts >= MAX_REPAIR_ATTEMPTS) {
                   await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                   await agent.rest.issues.addAssignees({ owner, repo, issue_number: number, assignees: [human] });
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `🙋 @${human} **Review fixes remain blocking after ${MAX_REPAIR_ATTEMPTS} actual attempts.** Decide whether to revise scope, fix manually, or close the PR. Cancellations and queued runs were not counted. CI and trusted human feedback remain required.\n\n${details}` });
+                    body: `🙋 @${human} **Review fixes remain blocking after ${MAX_REPAIR_ATTEMPTS} actual attempts.** Inspect the attempted fixes and remaining findings, choose the capable repair owner, then explicitly resume repairs if appropriate. Scope changes require approval. CI and trusted human feedback remain required.\n\n${details}` });
                   await pauseMerge(pr);
-                } else if (!activeCloud && (manual || !requestOutstanding)
+                } else if (!activeCloud && !requestOutstanding
                     && !localAlreadyAsked && (cloudPr || manual || !latestFix || latestFix.sha !== sha
                       || latestFix.mode !== (cloudPr ? 'cloud' : 'local'))) {
                   const marker = `<!-- squad-review-fix:${sha}:${cloudPr ? 'cloud' : 'local'} -->`;
+                  const token = require('node:crypto').randomUUID();
                   const prompt = cloudPr
-                    ? `@copilot Fix the actionable blocking review feedback below within the approved scope. If a finding is incorrect, explain why in its thread and add needs:human for a maintainer decision; do not silently treat it as resolved. Do not change scope; no PR description metadata protocol is used. CI failures and merge conflicts are handled by Watch and fix, not this request.`
+                    ? `@copilot Fix the actionable blocking implementation feedback below within the approved scope. Do not repair PR metadata in code or expand scope. CI failures and merge conflicts belong to Watch and fix. If a finding is incorrect, explain why in its thread for a maintainer decision.\n\nAt the end, post a top-level PR comment containing exactly one whole-line outcome marker: <!-- squad-repair-outcome:${token}:RUN_ID:attempted -->, replacing RUN_ID with this Copilot Actions workflow run's numeric ID. Use attempted only after substantive investigation/fix of this request, and describe evidence and any commit. Use capability-blocked or external-blocked instead when tools/permissions or a human dependency prevent the repair; name the missing capability, owner and next action. Never claim an attempt for an inability explanation or unrelated CI work.`
                     : `The selected reviews or a trusted human review have actionable blocking feedback. Please address it in the local session; unresolved human change requests remain blocking.`;
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `${marker}\n${prompt}\n\n${details}` });
+                    body: `${marker}\n<!-- squad-repair-request:${token} -->\n${prompt}\n\n${details}` });
                 }
+              }
+              const humanActions = specialistFailures.filter(({ check }) => /^Repair route: human\s*$/im.test(check.output?.summary || ''));
+              if (!feedback.length && humanActions.length) {
+                await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
+                await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                  body: `@${human} The remaining review findings require a metadata/scope decision, external dependency, or complete review input, not a coding attempt. Resolve the specific actions below, then explicitly resume repairs. No code-repair attempt was consumed.\n\n${humanActions.map(({ role, check }) => `### ${role}\n${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
+                await pauseMerge(pr);
               }
 
               if (decision.conclusion === 'success') {
@@ -437,7 +545,7 @@ jobs:
                   freshReviewsOk = true;
                   for (const item of reviewers) {
                     const runs = await workflowRuns(item.workflow, context.payload.repository.default_branch);
-                    const result = reviewRunsForPr(runs, item.role, number)[0];
+                    const result = reviewRunsForPr(runs, item.role, number, inputKey)[0];
                     const check = currentHeadCheck(freshChecks, item.check, sha);
                     if (!reviewResultIsFresh({
                       check, run: result, sha, removedAt: reviewNoneRemovedAt(freshTimeline),
@@ -449,6 +557,7 @@ jobs:
                     || isReviewNone(freshLabels) !== isReviewNone(nowLabels)
                     || reviewNoneRemovedAt(freshTimeline) !== removedAt
                     || freshLabels.includes('handoff:local') !== nowLabels.includes('handoff:local')
+                    || reviewInputKey(latestPr.body || '') !== inputKey
                     || !evaluateCompletion(latestPr.body, { createdAt: latestPr.created_at }).ok
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
                     || !freshReviewsOk

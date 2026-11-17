@@ -355,3 +355,66 @@
   executor; no direct merge or protection bypass.
 - The owner separately coordinates active PRs and performs the ruleset/label
   rollout. Code delivery does not imply live settings have changed.
+
+### 2026-11-17: Interactive Server and conditional Azure SQL baseline
+
+- The owner accepted Blazor Interactive Server for the initial interactive UI,
+  with static SSR where appropriate.
+- The owner selected Azure SQL General Purpose serverless free tier where
+  eligible, with paid continuation at the free compute limit to preserve access.
+  This is not a hard spend cap.
+- Installability, Azure eligibility/region/configuration, permissions, full-text
+  behavior, restore, and actual cost remain verification gates before
+  provisioning. ADR acceptance does not authorize resource creation.
+- See `docs/adr/0001-technology-baseline.md`.
+
+### 2026-11-17: Weekly-planning coach and AG-UI architecture
+
+- The owner selected a weekly-planning coach launched from the weekly view as
+  the first in-app AI experience. It proposes a structured, version-checked
+  plan; no journal changes occur before explicit approval. General journal Q&A
+  and proactive actions are outside this first AI slice.
+- The owner accepted app-owned orchestration, authorization and session state
+  in the existing ASP.NET host, with an optional server-side Foundry model
+  provider. Foundry Agent Service is not a required runtime.
+- The owner accepted AG-UI for the Interactive Server path after a local
+  .NET 11 mock spike. Production package adoption, inference and Foundry
+  provisioning remain subject to ADR 0002's validation gates.
+- Chat transcript persistence and retention remain undecided.
+- See `docs/concept.md` and `docs/adr/0002-foundry-agui-chat.md`.
+
+### 2026-11-17: Demo infrastructure delivery
+
+- Bujo-AI is a demo for trying agent capabilities and practicing SDLC. Keep
+  PR review and CI; do not add a second approval process for Terraform.
+- Supersedes the separate infrastructure plan/hash approval: successful `main`
+  CI applies pending `infra/` changes. The owner can also dispatch a single
+  plan/apply run to reconcile drift.
+- Keep GitHub OIDC, private state, and migration-before-promotion for app releases.
+
+### 2026-11-17: Capability-aware partial delivery and repair recovery
+
+- Implement the PR completion recovery proposal agreed in the Copilot
+  conversation. This supersedes session-completion-based repair counting and
+  head-only review freshness in the simplified lifecycle decision.
+- Keep honest issue completion separate from an explicitly agreed mergeable
+  milestone. Partial work never closes an unfinished issue or becomes full
+  merely to unblock merging. Preserve unfinished criteria, owner, dependency,
+  evidence needed, and next action on the issue.
+- The trusted controller repairs narrowly recognized generated closing suffixes
+  before specialist review. Other metadata errors receive explicit feedback,
+  not impossible coding requests. Never broaden into arbitrary model-authored
+  metadata patches or revive approval binding/provenance protocols.
+- Key reviews to both head and substantive description input; ignore only
+  whitespace-only cosmetic changes. Reviewers inspect the applicable code even
+  when metadata is wrong; incomplete inspection cannot pass.
+- Count only request-attributed substantive cloud repair outcomes or local code
+  changes. Capability/dependency failures pause once, without consuming three
+  attempts. Missing attribution requires inspection, not optimistic inference.
+- A maintainer's explicit lifecycle resume deliberately clears the human pause
+  and starts a bounded recovery episode; ordinary events never do. A code
+  commit does not reset the budget. Preserve all prior outcomes in history.
+- Manual issue continuation with dependency evidence works after a partial PR
+  merges even if Copilot remains assigned. Keep the approved plan, reject
+  competing open-PR/active-session work, and require a revised approval for
+  changed scope. Settings, live PR recovery, and deployment remain separate.

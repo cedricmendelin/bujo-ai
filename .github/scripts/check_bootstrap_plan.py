@@ -516,9 +516,12 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         or db_properties.get("minCapacity") != 0.5
         or db_properties.get("autoPauseDelay") != 60
         or db_properties.get("useFreeLimit") is not True
-        or db_properties.get("freeLimitExhaustionBehavior") != "AutoPause"
+        or db_properties.get("freeLimitExhaustionBehavior") != "BillOverUsage"
     ):
-        raise ValueError("Baseline SQL database must retain its free offer, size limit, and auto-pause.")
+        raise ValueError(
+            "Baseline SQL database must retain its General Purpose free offer, size/capacity, "
+            "idle auto-pause, and paid continuation at free-limit exhaustion."
+        )
 
     firewall = _value(resources['module.sql_server.azurerm_mssql_firewall_rule.this["azure_services"]'])
     if (

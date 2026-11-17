@@ -36,6 +36,27 @@ class BootstrapPlanTests(unittest.TestCase):
         self.assertIn("module.migration_identity.azurerm_user_assigned_identity.this", addresses)
         self.assertNotIn("module.container_app.azurerm_container_app.this", addresses)
 
+    def test_sql_free_limit_plan_keeps_paid_continuation_and_idle_auto_pause(self):
+        resource = next(
+            item for item in self.plan["resource_changes"]
+            if item["address"] == "azapi_resource.sql_database"
+        )
+        database = resource["change"]["after"]
+        self.assertEqual(
+            database["body"]["sku"],
+            {"name": "GP_S_Gen5", "tier": "GeneralPurpose", "family": "Gen5", "capacity": 2},
+        )
+        self.assertEqual(
+            database["body"]["properties"],
+            {
+                "maxSizeBytes": 34359738368,
+                "minCapacity": 0.5,
+                "autoPauseDelay": 60,
+                "useFreeLimit": True,
+                "freeLimitExhaustionBehavior": "BillOverUsage",
+            },
+        )
+
     def test_rejects_deferred_changes(self):
         plan = copy.deepcopy(self.plan)
         plan["deferred_changes"] = [{"reason": "resource_config_unknown"}]

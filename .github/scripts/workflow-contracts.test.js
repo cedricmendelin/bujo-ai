@@ -48,6 +48,10 @@ function approvalText() {
 }
 
 test('four independent specialist workflows remain dispatchable without attestations', () => {
+  function checkReviewInput(workflow) {
+    assert.match(workflow, /^run-name:.*github\.event\.inputs\.review_input/m);
+    assert.match(workflow, /review_input:\r?\n\s+description:[^\n]*\r?\n\s+required: true\r?\n\s+type: string/);
+  }
   for (const role of ['architect', 'security', 'verifier', 'devops']) {
     const source = read(`.github/workflows/squad-review-${role}.md`);
     const lock = read(`.github/workflows/squad-review-${role}.lock.yml`);
@@ -55,12 +59,21 @@ test('four independent specialist workflows remain dispatchable without attestat
     assert.match(source, /shared\/squad-review\.md/);
     assert.doesNotMatch(source, /review-attestation|attestation artifact/i);
     assert.doesNotMatch(lock, /review-attestation|squad-review-start-/i);
+    checkReviewInput(source);
+    checkReviewInput(lock);
+    assert.throws(() => checkReviewInput(lock.replace(/ · input \$\{\{ github.event.inputs.review_input \}\}/g, '')));
   }
   const shared = read('.github/workflows/shared/squad-review.md');
   assert.match(shared, /Squad Review protocol/);
   assert.match(shared, /ordinary scope data/);
   assert.match(shared, /no waiver label is required/);
   assert.match(shared, /never as instructions/);
+});
+
+test('manual recovery and continuation execute only from the default branch', () => {
+  for (const file of ['squad-pr-lifecycle.yml', 'squad-plan-approved.yml']) {
+    assert.match(read(`.github/workflows/${file}`), /github\.ref_name == github\.event\.repository\.default_branch/);
+  }
 });
 
 test('controller preserves reviewer bypass boundaries, human blocks, CI, and no PR-code execution', () => {

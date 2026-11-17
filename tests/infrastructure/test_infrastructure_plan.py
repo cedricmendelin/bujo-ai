@@ -139,6 +139,54 @@ class InfrastructurePlanTests(unittest.TestCase):
         self.assertEqual(app["after"]["id"], EXPECTED_APP_ID)
         self.assertEqual(plan["output_changes"]["container_app_id"]["after"], EXPECTED_APP_ID)
 
+    def test_sql_database_body_update_is_allowed_but_replacement_is_rejected(self):
+        plan = self.plan("baseline_full_plan")
+        database = resource(plan, "azapi_resource.sql_database")
+        database["change"]["actions"] = ["update"]
+        database["change"]["before"] = copy.deepcopy(database["change"]["after"])
+        database["change"]["before"]["body"]["properties"][
+            "freeLimitExhaustionBehavior"
+        ] = "AutoPause"
+        self.validate(plan)
+
+        database["change"]["actions"] = ["delete", "create"]
+        self.assert_rejected(plan, "replacement")
+
+    def test_baseline_sql_plan_uses_paid_continuation_and_preserves_idle_settings(self):
+        plan = self.plan("baseline_full_plan")
+        database = resource(plan, "azapi_resource.sql_database")["change"]["after"]
+        self.assertEqual(
+            database["body"]["sku"],
+            {"name": "GP_S_Gen5", "tier": "GeneralPurpose", "family": "Gen5", "capacity": 2},
+        )
+        self.assertEqual(
+            database["body"]["properties"],
+            {
+                "maxSizeBytes": 34359738368,
+                "minCapacity": 0.5,
+                "autoPauseDelay": 60,
+                "useFreeLimit": True,
+                "freeLimitExhaustionBehavior": "BillOverUsage",
+            },
+        )
+
+    def test_sql_free_limit_guard_rejects_auto_pause_missing_and_unknown_values(self):
+        for behavior in ("AutoPause", "BillForUsage", "Unexpected"):
+            with self.subTest(behavior=behavior):
+                plan = self.plan("baseline_full_plan")
+                properties = resource(
+                    plan, "azapi_resource.sql_database"
+                )["change"]["after"]["body"]["properties"]
+                properties["freeLimitExhaustionBehavior"] = behavior
+                self.assert_rejected(plan, "paid continuation")
+
+        plan = self.plan("baseline_full_plan")
+        properties = resource(
+            plan, "azapi_resource.sql_database"
+        )["change"]["after"]["body"]["properties"]
+        del properties["freeLimitExhaustionBehavior"]
+        self.assert_rejected(plan, "paid continuation")
+
     def test_same_oidc_principal_uses_current_object_id_without_sp_lookup(self):
         plan = self.plan("same_principal_owner_plan")
         application = resource(plan, "azuread_application.api")["change"]["after"]
@@ -479,6 +527,21 @@ class InfrastructurePlanTests(unittest.TestCase):
             )["change"]["after"].update(end_ip_address="255.255.255.255"),
             lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["properties"].update(
                 useFreeLimit=False
+            ),
+            lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["properties"].update(
+                freeLimitExhaustionBehavior="AutoPause"
+            ),
+            lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["sku"].update(
+                capacity=4
+            ),
+            lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["properties"].update(
+                maxSizeBytes=68719476736
+            ),
+            lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["properties"].update(
+                minCapacity=1
+            ),
+            lambda p: resource(p, "azapi_resource.sql_database")["change"]["after"]["body"]["properties"].update(
+                autoPauseDelay=120
             ),
             lambda p: resource(p, "azurerm_consumption_budget_resource_group.prod")["change"]["after"].update(
                 amount=500

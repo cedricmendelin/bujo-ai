@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { evaluateCompletion, LEGACY_PR_CUTOFF } = require('./completion-declaration');
+const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, LEGACY_PR_CUTOFF } = require('./completion-declaration');
 
 const current = { createdAt: '2026-11-15T12:58:07Z' };
 const legacy = { createdAt: '2026-11-15T12:49:18Z' };
@@ -98,4 +98,36 @@ test('fails closed for malformed input and invalid cutoff dates', () => {
 
 test('an empty description does not close an issue', () => {
   assert.deepEqual(evaluateCompletion('', current), { ok: true, findings: [] });
+});
+
+test('repairs only generated standalone closing links for an unambiguous partial delivery', () => {
+  const body = 'Completion: partial\r\n## Remaining work\r\nOwner: AI; live client proof after access.\r\n'
+    + '<!-- START COPILOT CODING AGENT SUFFIX -->\r\n\r\n- Fixes #11\r\n'
+    + '- Resolves cedricmendelin/bujo-ai#12\r\n<!-- END COPILOT CODING AGENT SUFFIX -->';
+  const repaired = repairGeneratedClosingReferences(body, current);
+  assert.equal(repaired, body.replace('- Fixes #11', '- Refs #11')
+    .replace('- Resolves cedricmendelin/bujo-ai#12', '- Refs cedricmendelin/bujo-ai#12'));
+  assert.equal(evaluateCompletion(repaired, current).ok, true);
+  assert.equal(repairGeneratedClosingReferences(repaired, current), repaired);
+  for (const unsafe of [
+    body.replace('Completion: partial', 'Completion: full'),
+    body.replace('## Remaining work', '## Notes'),
+    body.replace('Completion: partial', 'Completion: partial\nCompletion: full'),
+    body.replace('- Fixes #11', '- Fixes #11 and unrelated prose'),
+    body.replace('## Remaining work', 'Fixes #13\n## Remaining work'),
+    body.replace('- Fixes #11', '```text\n- Fixes #11\n```'),
+    body.replace('- Fixes #11', '<!--\n- Fixes #11\n-->'),
+    body.replace('- Fixes #11', '    - Fixes #11'),
+    body.replace('<!-- START COPILOT CODING AGENT SUFFIX -->', '<!-- END COPILOT CODING AGENT SUFFIX -->\n<!-- START COPILOT CODING AGENT SUFFIX -->'),
+    body.replace('<!-- START COPILOT CODING AGENT SUFFIX -->', ''),
+  ]) assert.equal(repairGeneratedClosingReferences(unsafe, current), unsafe);
+});
+
+test('partial handoff extracts one same-repository issue and stops at the next section', () => {
+  const body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: AI. Test clients after access.\n\n## Needs human\nApprove access.';
+  assert.deepEqual(partialHandoff(body, 'cedricmendelin/bujo-ai'),
+    { issue: 11, remaining: 'Owner: AI. Test clients after access.' });
+  assert.equal(partialHandoff(body.replace('Refs #11', 'Refs other/repo#11'), 'cedricmendelin/bujo-ai'), null);
+  assert.equal(partialHandoff(body.replace('Refs #11', 'Refs #11\nRefs #12'), 'cedricmendelin/bujo-ai'), null);
+  assert.equal(partialHandoff(body.replace('partial', 'full'), 'cedricmendelin/bujo-ai'), null);
 });
