@@ -17,13 +17,17 @@ the Copilot conversation without an issue plan or waiver label.
 - Check every acceptance criterion and planned test: is it implemented and
   covered by an automated test that would fail without the change?
 - Check CI evidence: the build and tests ran and passed for the current head.
-- Block on: unmet acceptance criteria, missing tests for new behavior, tests
+- Block on: unmet acceptance criteria within the agreed delivery, missing tests for new behavior, tests
   that cannot fail, broken edge cases named in the plan, or data-loss risks.
 - Unmet criteria for a PR that declares full completion or contains a closing
   issue reference are always blocking, even when the plan has a partial
   fallback. A partial PR may merge only with non-closing issue linkage and
   clearly preserved remaining work and its dependency. Never downgrade an
   unmet completion criterion to advisory.
+- Review the applicable implementation even if metadata blocks merging.
+  Report incomplete inspection as incomplete, never a success. An explicitly
+  agreed partial milestone may merge without closing the issue; verify that its
+  remaining criteria, owner, dependency/evidence, and next action stay tracked.
 - Do not block on style. Never edit the PR yourself.
 
 ## When implementing (test-only issues)

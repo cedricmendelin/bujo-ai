@@ -36,6 +36,10 @@ Follow `.github/copilot-instructions.md`: implement only the approved plan.
   with `Completion: partial`, non-closing issue linkage, and clearly preserved
   remaining work and its dependency. Do not downgrade unmet completion criteria
   to advisory.
+- Review the applicable diff even when metadata is invalid. Distinguish an
+  explicitly approved partial milestone's merge criteria from issue closure.
+  Preserve unfinished criteria with an owner, dependency/evidence, and next
+  action; do not require out-of-milestone work just to merge that milestone.
 - Block on: unplanned scope, contradiction of a recorded decision, missing or
   wrong domain semantics (canonical items, list-local states, one active
   destination, planned periods), or architecture that blocks agreed next steps.
