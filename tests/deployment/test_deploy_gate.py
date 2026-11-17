@@ -253,6 +253,27 @@ class MigrationPlanTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(DeploymentBlocked):
                 validate_migration_plan(mutate(fn), IMAGE, MIGRATION_SQL)
 
+    def test_unexpected_changes_report_only_resource_types_and_actions(self):
+        plan = migration_plan()
+        plan["resource_changes"].append({
+            "mode": "managed",
+            "address": "module.private_resource.secret_name",
+            "type": "azurerm_mssql_database",
+            "change": {
+                "actions": ["update"],
+                "after": {"administrator_password": "must-not-be-logged"},
+            },
+        })
+
+        with self.assertRaisesRegex(
+            DeploymentBlocked,
+            r"azurerm_mssql_database \(update\)",
+        ) as raised:
+            validate_migration_plan(plan, IMAGE, MIGRATION_SQL)
+
+        self.assertNotIn("secret_name", str(raised.exception))
+        self.assertNotIn("must-not-be-logged", str(raised.exception))
+
     def test_rejects_retarget_from_untrusted_old_connection(self):
         previous = copy.deepcopy(migration_plan()["resource_changes"][0]["change"]["after"]["template"][0]
                                  ["container"][0])
