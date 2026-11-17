@@ -69,6 +69,11 @@ run "migration_job_uses_application_image" {
     condition     = azurerm_container_app_job.migration.template[0].container[0].image == "ghcr.io/cedricmendelin/bujo-ai@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" && azurerm_container_app_job.migration.template[0].container[0].command[0] == "dotnet" && azurerm_container_app_job.migration.template[0].container[0].args[0] == "--migrate-only"
     error_message = "Normal deployment must use the application migration image and command."
   }
+
+  assert {
+    condition     = azurerm_container_app_job.migration.workload_profile_name == "Consumption"
+    error_message = "The migration job must use the Consumption workload profile."
+  }
 }
 
 run "bootstrap_job_is_inert" {
@@ -95,5 +100,10 @@ run "bootstrap_job_is_inert" {
   assert {
     condition     = length(azurerm_container_app_job.migration.manual_trigger_config) == 1
     error_message = "The bootstrap job must be manual, with no schedule or event trigger."
+  }
+
+  assert {
+    condition     = azurerm_container_app_job.migration.workload_profile_name == "Consumption"
+    error_message = "The bootstrap job must use the Consumption workload profile."
   }
 }

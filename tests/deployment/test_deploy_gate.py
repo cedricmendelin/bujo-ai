@@ -144,6 +144,7 @@ def migration_plan(before_container: dict | None = None) -> dict:
                                       "image": "inert", "command": ["/bootstrap-disabled"], "args": [], "env": []}
     before = {"identity": [{"type": "UserAssigned", "identity_ids": ["identity"]}],
               "container_app_environment_id": "environment", "replica_timeout_in_seconds": 1800,
+              "workload_profile_name": "Consumption",
               "template": [{"container": [container], "init_container": []}]}
     after = copy.deepcopy(before)
     after["template"][0]["container"][0].update(
@@ -231,6 +232,7 @@ class MigrationPlanTests(unittest.TestCase):
         cases = {
             "identity": lambda p: job(p)["after"].update(identity=[{"type": "SystemAssigned"}]),
             "environment": lambda p: job(p)["after"].update(container_app_environment_id="other"),
+            "workload profile": lambda p: job(p)["after"].update(workload_profile_name=None),
             "timeout": lambda p: job(p)["after"].update(replica_timeout_in_seconds=10),
             "replace": lambda p: job(p).update(actions=["delete", "create"]),
             "drift": lambda p: p["resource_changes"][1]["change"].update(actions=["update"]),
