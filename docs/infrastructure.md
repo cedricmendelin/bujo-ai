@@ -66,7 +66,7 @@ versions are recorded in `infra/.terraform.lock.hcl`.
 | --- | --- |
 | Resource group lookup | The owner pre-creates the app resource group so deployment needs no subscription-scope Contributor. A Terraform data source references it without managing it. |
 | `azurerm_container_app_job` | The workload needs a separately triggered one-shot job with its own identity and execution lifecycle; it is separate from the Container App module's app resource. |
-| `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = BillForUsage` in one request. |
+| `azapi_resource` for the SQL database | The SQL-server AVM does not expose the database free-offer settings, and AzureRM 4.81.0 has no free-limit attributes. Azure only accepts `useFreeLimit` when a database is created ("Cannot update paid database to free database"), so AzAPI creates the serverless database with `useFreeLimit` and `freeLimitExhaustionBehavior = BillOverUsage` in one request. |
 | `azurerm_consumption_budget_resource_group` | No `avm-res-consumption-budget` module is published in the Terraform Registry. |
 | State storage | The storage account and private state container are owner-bootstrapped (#24), avoiding a bootstrap dependency on Terraform state itself. |
 
@@ -93,7 +93,7 @@ The estimates leave at least $40/month of headroom under the $50 budget only
 while usage stays within the applicable free grants. The SQL estimate assumes
 that monthly free compute is not exhausted; paid compute overage is not included.
 When the monthly SQL free compute allowance is exhausted,
-`freeLimitExhaustionBehavior = BillForUsage` keeps the database online and bills
+`freeLimitExhaustionBehavior = BillOverUsage` keeps the database accessible and bills
 continued compute at paid rates, which can increase costs beyond the estimate,
 as documented by Microsoft's [Create or Update API](https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update?view=rest-sql-2023-08-01-preview).
 This is separate from idle auto-pause: `autoPauseDelay = 60` pauses an otherwise

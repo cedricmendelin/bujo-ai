@@ -53,7 +53,7 @@ class BootstrapPlanTests(unittest.TestCase):
                 "minCapacity": 0.5,
                 "autoPauseDelay": 60,
                 "useFreeLimit": True,
-                "freeLimitExhaustionBehavior": "BillForUsage",
+                "freeLimitExhaustionBehavior": "BillOverUsage",
             },
         )
 
