@@ -27,8 +27,8 @@ module "sql_server" {
   enable_telemetry = false
 }
 
-# AzureRM does not expose the SQL free-offer properties, and Azure only accepts
-# them when the database is created, so AzAPI creates the database directly.
+# AzureRM does not expose the SQL free-offer properties. Azure only accepts
+# useFreeLimit when the database is created, so AzAPI creates the database.
 resource "azapi_resource" "sql_database" {
   type      = "Microsoft.Sql/servers/databases@2023-08-01-preview"
   name      = "bujo"
@@ -47,7 +47,7 @@ resource "azapi_resource" "sql_database" {
       minCapacity                 = 0.5
       autoPauseDelay              = 60
       useFreeLimit                = true
-      freeLimitExhaustionBehavior = "AutoPause"
+      freeLimitExhaustionBehavior = "BillForUsage"
     }
   }
 }
