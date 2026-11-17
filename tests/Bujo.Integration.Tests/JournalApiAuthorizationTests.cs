@@ -244,6 +244,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
         Environment.SetEnvironmentVariable("Auth__TenantId", TenantId);
         Environment.SetEnvironmentVariable("Auth__Audience", "journal-api");
         Environment.SetEnvironmentVariable("Auth__AllowedPrincipals", $"{TenantId}:{AllowedObjectId}");
+        Environment.SetEnvironmentVariable("Mcp__PublicBaseUrl", "http://localhost");
+        Environment.SetEnvironmentVariable("Mcp__AllowedOrigins__0", "https://approved.example");
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__journal",
             "Server=localhost;Database=journal;Integrated Security=true;TrustServerCertificate=true");

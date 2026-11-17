@@ -44,7 +44,7 @@ internal static class McpEndpoints
                 var metadata = AbsoluteUri(context, DiscoveryPath);
                 const char quote = '"';
                 context.Response.Headers.WWWAuthenticate =
-                    string.Concat("Bear", "er ", "resource_", "metadata=", quote, metadata, quote, ", scope=", quote, resource, "/", ScopeName, quote);
+                    string.Concat("Bearer ", "resource_metadata=", quote, metadata, quote, ", scope=", quote, resource, "/", ScopeName, quote);
             }
         });
     }
@@ -109,21 +109,17 @@ internal static class McpEndpoints
     private static string PublicOrigin(HttpContext context)
     {
         var configured = context.RequestServices.GetRequiredService<IConfiguration>()["Mcp:PublicBaseUrl"];
-        if (!string.IsNullOrWhiteSpace(configured))
+        if (string.IsNullOrWhiteSpace(configured) ||
+            !Uri.TryCreate(configured, UriKind.Absolute, out var configuredUri) ||
+            configuredUri.Scheme is not ("http" or "https") ||
+            configuredUri.UserInfo.Length != 0 ||
+            configuredUri.AbsolutePath != "/" ||
+            configuredUri.Query.Length != 0 ||
+            configuredUri.Fragment.Length != 0)
         {
-            if (!Uri.TryCreate(configured, UriKind.Absolute, out var configuredUri) ||
-                configuredUri.Scheme is not ("http" or "https") ||
-                configuredUri.UserInfo.Length != 0 ||
-                configuredUri.AbsolutePath != "/" ||
-                configuredUri.Query.Length != 0 ||
-                configuredUri.Fragment.Length != 0)
-            {
-                throw new InvalidOperationException("Mcp:PublicBaseUrl must be an absolute HTTP or HTTPS origin.");
-            }
-
-            return configuredUri.GetLeftPart(UriPartial.Authority);
+            throw new InvalidOperationException("Mcp:PublicBaseUrl must be configured as an absolute HTTP or HTTPS origin.");
         }
 
-        return $"{context.Request.Scheme}://{context.Request.Host}";
+        return configuredUri.GetLeftPart(UriPartial.Authority);
     }
 }

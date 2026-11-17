@@ -35,6 +35,10 @@ Run the local host and SQL container with Podman:
 ASPIRE_CONTAINER_RUNTIME=podman dotnet run --project src/Bujo.AppHost
 ```
 
+For authenticated MCP setup, the exact-Origin allowlist, and client-specific
+configuration examples, see the [remote MCP guide](mcp.md). Do not put access
+tokens, journal content, or local connection details in client config files.
+
 The AppHost's SQL data volume persists across local runs. Its `--migrate`
 argument applies EF migrations only while the host runs in Development. The
 production host does not run migrations at startup; production deployment uses

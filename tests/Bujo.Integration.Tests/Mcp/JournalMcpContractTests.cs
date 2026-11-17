@@ -37,9 +37,9 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["POST /api/lists/{listId:guid}/close"] =
-                "Deliberately excluded because closing can disposition multiple items; no proposal approval flow exists.",
+                "Deliberately excluded as a list-lifecycle operation until a concrete-proposal approval flow exists.",
             ["POST /api/lists/{listId:guid}/reopen"] =
-                "Deliberately excluded because list reopening accompanies bulk closure workflows; no proposal approval flow exists."
+                "Deliberately excluded as a list-lifecycle operation until a concrete-proposal approval flow exists."
         };
 
     private static readonly string[] ExpectedTools =
@@ -73,7 +73,9 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     public async Task McpEndpointRequiresApprovedPrincipalAndPublishesProtectedResourceMetadata()
     {
         using var client = _factory.CreateClient();
-        using var metadata = await client.GetAsync("/.well-known/oauth-protected-resource/mcp");
+        using var metadataRequest = new HttpRequestMessage(HttpMethod.Get, "/.well-known/oauth-protected-resource/mcp");
+        metadataRequest.Headers.Host = "attacker.example";
+        using var metadata = await client.SendAsync(metadataRequest);
         using var metadataJson = JsonDocument.Parse(await metadata.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, metadata.StatusCode);
@@ -131,6 +133,19 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ConfiguredOriginCanCallMcpEndpoint()
+    {
+        using var client = _factory.CreateClient();
+        using var request = McpPost("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""");
+        request.Headers.Add("Authorization", "Test allow");
+        request.Headers.Add("Origin", "https://approved.example");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

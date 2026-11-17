@@ -34,6 +34,9 @@ changing anything.
   `## Deviations from plan`; do not silently broaden scope.
 - Add focused tests for behavior changes. Run build/tests and `terraform
   fmt`/`validate` when infrastructure changes.
+- Every journal capability ships on both the API and MCP. Plans and PRs name
+  the API endpoint and MCP tool, or cite an explicit, justified, tested
+  exception.
 - Never commit secrets, tenant/subscription IDs, connection strings, or personal
   data. GitHub Actions authenticate to Azure with OIDC only. Do not pull
   later-release scope (such as release 2 AI search/RAG) into a change.

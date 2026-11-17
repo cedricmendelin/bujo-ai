@@ -8,8 +8,10 @@ assistant.
 
 **Status:** Squad configured; product decisions recorded; issues are delivered
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
-The journal host/API and SQL persistence are implemented; a usable PWA and MCP
-tools remain separate stories. Production was last verified running the Azure
+The journal host/API and SQL persistence are implemented; an authenticated
+remote MCP adapter is exposed at `/mcp`, but Copilot and Claude client
+compatibility is not yet live-verified. See the [MCP guide](docs/mcp.md). A
+usable PWA remains a separate story. Production was last verified running the Azure
 quickstart image, not the journal host. The owner-reviewed infrastructure-first
 path provisions API/hosting resources before manual application setup; an
 unhealthy app is an accepted intermediate state. Bootstrap and permission
@@ -40,7 +42,8 @@ The [initial backlog](docs/backlog.md) separates the first usable release,
 AI-assisted planning, and the longer-term vision, with explicit prerequisites.
 
 See [local development](docs/development.md) for the .NET 11, Podman, and Aspire
-setup.
+setup, and the [remote MCP guide](docs/mcp.md) for assistant setup and
+limitations.
 
 ## Working with Squad
 
