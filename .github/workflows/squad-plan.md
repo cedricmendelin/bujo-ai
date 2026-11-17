@@ -102,6 +102,12 @@ stripped, so do not use them):
   non-closing issue linkage, state remaining work and its dependency, and leave
   the issue open. It never satisfies the implementation issue or removes unmet
   acceptance criteria.
+- Name the mergeable milestone separately from full issue completion. For each
+  external gate, name its owner, dependency, required evidence, and exact next
+  action. Preserve that handoff under `Remaining work` and on the issue. After
+  a partial PR merges and its dependency is met, the maintainer can explicitly
+  continue the existing approved scope through Squad Plan Approved's manual
+  continuation; changed scope requires a new numbered approved plan.
 - Unmet criteria required for completion are blocking; they cannot be downgraded
   to advisory merely because a partial fallback was approved.
 - If an open question blocks approval, say so explicitly at the top of

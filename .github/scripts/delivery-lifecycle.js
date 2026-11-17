@@ -5,6 +5,14 @@ const REVIEW_NONE = 'review:none';
 const NEEDS_HUMAN = 'needs:human';
 const MAX_REPAIR_ATTEMPTS = 3;
 
+function reviewInputKey(body = '') {
+  // Ignore only line endings, blank lines, and trailing whitespace. Indentation,
+  // code, scope, and evidence are review inputs, not cosmetic text.
+  const text = body.replace(/\r\n/g, '\n').split('\n')
+    .map(line => line.trimEnd()).filter(line => line.length).join('\n');
+  return require('node:crypto').createHash('sha256').update(text).digest('hex');
+}
+
 function isReviewNone(labels = []) {
   return labels.includes(REVIEW_NONE);
 }
@@ -22,8 +30,8 @@ function currentHeadCheck(checks, name, sha) {
     .sort((a, b) => (b.id || 0) - (a.id || 0))[0] || null;
 }
 
-function reviewRunsForPr(runs, role, number) {
-  const title = `Squad Review ${role} · PR #${number}`;
+function reviewRunsForPr(runs, role, number, inputKey = null) {
+  const title = `Squad Review ${role} · PR #${number}${inputKey ? ` · input ${inputKey}` : ''}`;
   return runs.filter(run => run.display_title === title)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)
       || (b.run_number || 0) - (a.run_number || 0));
@@ -119,31 +127,62 @@ function isControllerComment(comment, owner) {
 function parseFixRequest(comment, owner) {
   if (!isControllerComment(comment, owner)) return null;
   const match = (comment.body || '').match(/^<!-- squad-review-fix:([a-f0-9]{40})(?::(cloud|local))? -->$/m);
-  return match ? { headSha: match[1], mode: match[2] || 'cloud', createdAt: comment.created_at, id: comment.id } : null;
+  return match ? {
+    headSha: match[1], mode: match[2] || 'cloud', createdAt: comment.created_at, id: comment.id,
+    token: (comment.body || '').match(/^<!-- squad-repair-request:([a-f0-9-]{36}) -->$/m)?.[1] || null,
+  } : null;
+}
+
+function repairEpisode(comments, owner) {
+  const resume = comments.filter(comment => isControllerComment(comment, owner)
+    && /^<!-- squad-repair-resume:\d+ -->$/m.test(comment.body || ''))
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id).at(-1);
+  return resume ? comments.filter(comment => Date.parse(comment.created_at) >= Date.parse(resume.created_at)
+    && comment.id > resume.id) : comments;
+}
+
+function repairOutcomes(comments, sessions, owner) {
+  const requests = comments.map(comment => parseFixRequest(comment, owner))
+    .filter(request => request?.mode === 'cloud');
+  const outcomes = [];
+  for (const comment of comments) {
+    if (!['copilot-swe-agent[bot]', 'copilot-swe-agent', 'Copilot'].includes(comment.user?.login)
+        || comment.user?.type !== 'Bot') continue;
+    const match = (comment.body || '').match(
+      /^<!-- squad-repair-outcome:([a-f0-9-]{36}):([1-9]\d*):(attempted|capability-blocked|external-blocked) -->$/m,
+    );
+    if (!match) continue;
+    const request = requests.find(item => item.token === match[1]);
+    const session = sessions.find(run => String(run.id) === match[2]);
+    const requested = Date.parse(request?.createdAt);
+    const started = Date.parse(session?.run_started_at || session?.created_at);
+    const reported = Date.parse(comment.created_at);
+    if (!request || !session || session.status !== 'completed'
+        || !['success', 'failure'].includes(session.conclusion)
+        || ![requested, started, reported].every(Number.isFinite)
+        || started < requested || reported < requested) continue;
+    outcomes.push({ request, session, outcome: match[3], comment });
+  }
+  return outcomes;
 }
 
 function actualRepairAttempts(comments, sessions, currentSha, cloud, owner) {
   const requests = comments.map(comment => parseFixRequest(comment, owner))
-    .filter(request => request && (cloud ? request.mode === 'cloud' : true))
+    .filter(request => request?.mode === (cloud ? 'cloud' : 'local'))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   if (!cloud) return requests.filter(request => request.headSha !== currentSha).length;
 
-  const terminal = [...new Map(sessions.map(run => [run.id || run.run_started_at || run.created_at, run])).values()]
-    .filter(run => run.status === 'completed'
-      && !['cancelled', 'action_required', 'skipped', 'neutral'].includes(run.conclusion))
-    .map(run => Date.parse(run.run_started_at || run.created_at))
-    .filter(Number.isFinite).sort((a, b) => a - b);
-  let attempts = 0;
-  let runIndex = 0;
-  for (const request of requests) {
-    const requested = Date.parse(request.createdAt);
-    while (runIndex < terminal.length && terminal[runIndex] <= requested) runIndex++;
-    if (runIndex < terminal.length) {
-      attempts++;
-      runIndex++;
-    }
+  const outcomes = repairOutcomes(comments, sessions, owner);
+  const blocked = new Set(outcomes.filter(item => item.outcome !== 'attempted').map(item => item.request.token));
+  const countedRuns = new Set();
+  const countedRequests = new Set();
+  for (const item of outcomes) {
+    if (item.outcome !== 'attempted' || blocked.has(item.request.token)
+        || countedRequests.has(item.request.token) || countedRuns.has(item.session.id)) continue;
+    countedRequests.add(item.request.token);
+    countedRuns.add(item.session.id);
   }
-  return attempts;
+  return countedRuns.size;
 }
 
 function outstandingFixRequest(comments, sessions, cloud, owner) {
@@ -153,10 +192,7 @@ function outstandingFixRequest(comments, sessions, cloud, owner) {
   const latestRequest = requests.at(-1);
   if (!latestRequest) return false;
   if (!cloud) return true;
-  const requested = Date.parse(latestRequest.request.createdAt);
-  return !sessions.some(run => run.status === 'completed'
-    && !['cancelled', 'action_required', 'skipped', 'neutral'].includes(run.conclusion)
-    && Date.parse(run.run_started_at || run.created_at) > requested);
+  return !repairOutcomes(comments, sessions, owner).some(item => item.request.id === latestRequest.request.id);
 }
 
 function readiness({ draft, needsHuman, completionOk, sessionOk, ci, reviewsOk, humanBlocks, rulesOk }) {
@@ -174,5 +210,6 @@ module.exports = {
   MAX_REPAIR_ATTEMPTS, NEEDS_HUMAN, REVIEW_NONE, ROLES,
   actualRepairAttempts, currentHeadCheck, hasHumanBlocks, hasRequiredMergeRules, isReviewNone,
   humanBlockingFeedback, isControllerComment, isTrustedHuman, outstandingFixRequest, parseFixRequest, readiness, reviewFailures,
+  repairEpisode, repairOutcomes, reviewInputKey,
   reviewDispatchNeeded, reviewNoneRemovedAt, reviewResultIsFresh, reviewRunsForPr, reviewSelection,
 };

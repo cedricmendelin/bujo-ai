@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
-const { ROLES } = require('./delivery-lifecycle');
+const { ROLES, reviewInputKey } = require('./delivery-lifecycle');
 
 const root = path.resolve(__dirname, '../..');
 const workflowRequire = createRequire(path.join(root, 'workflow-test.cjs'));
@@ -58,7 +58,7 @@ function fixture() {
     ],
     runs: {
       ...Object.fromEntries(ROLES.map(role => [role, [{
-        id: role, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81`,
+        id: role, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81 · input ${reviewInputKey('')}`,
         created_at: stamp(1), updated_at: stamp(5), status: 'completed', conclusion: 'success',
       }]])),
       ci: [],
@@ -71,7 +71,7 @@ function fixture() {
       required_status_checks: [{ context: 'ci' }, { context: 'Squad Merge Readiness' }],
     } }],
     comments: [], reviews: [], threads: [], timeline: [],
-    permission: 'write', issue: { number: 81, labels: [], assignees: [] },
+    permission: 'write', issue: { number: 81, state: 'open', labels: [], assignees: [] },
     context: {
       repo: { owner, repo: 'bujo-ai' }, eventName: 'pull_request_target',
       payload: {
@@ -96,19 +96,25 @@ async function execute(state, step = 'evaluate') {
   const rest = {
     actions: {
       listRepoWorkflows: endpoint('workflows', () => ({ data: { workflows: state.workflows } })),
-      listWorkflowRuns: endpoint('runs', args => ({ data: { workflow_runs: state.runs[args.workflow_id] || [] } })),
+      listWorkflowRuns: endpoint('runs', args => ({ data: {
+        workflow_runs: (state.runs[args.workflow_id] || []).filter(run => !args.status || run.status === args.status),
+      } })),
       createWorkflowDispatch: endpoint('dispatch', args => {
         // GitHub makes the new run visible to the next serialized evaluation.
         const role = args.workflow_id;
         if (ROLES.includes(role)) state.runs[role].unshift({
-          id: `new-${role}`, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81`,
+          id: `new-${role}`, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81 · input ${args.inputs.review_input}`,
           created_at: stamp(20), status: 'queued',
         });
         return { status: 204 };
       }),
     },
     pulls: {
-      get: endpoint('pr', () => ({ data: structuredClone(state.pr) })),
+      get: endpoint('pr', () => ({ data: structuredClone(state.pr), headers: { etag: '"pr-version"' } })),
+      update: endpoint('updatePr', args => {
+        state.pr.body = args.body;
+        return { data: structuredClone(state.pr) };
+      }),
       list: endpoint('pulls', () => ({ data: state.associated || [] })),
       listReviews: endpoint('reviews', () => ({ data: state.reviews })),
     },
@@ -148,6 +154,7 @@ async function execute(state, step = 'evaluate') {
         return { data: {} };
       }),
       addAssignees: endpoint('assignees', () => ({ data: {} })),
+      removeAssignees: endpoint('removeAssignees', () => ({ data: {} })),
     },
   };
   const github = {
@@ -196,9 +203,10 @@ async function execute(state, step = 'evaluate') {
     setOutput: (key, value) => { outputs[key] = value; },
     setFailed: message => errors.push(message),
   };
-  const code = source(...steps[step]);
+  const productionCode = source(...steps[step]);
+  const code = state.mutateSource ? state.mutateSource(productionCode) : productionCode;
   await new AsyncFunction('require', 'github', 'context', 'core', 'getOctokit', 'process', code)(
-    workflowRequire, github, state.context, core, () => agent,
+    workflowRequire, github, { runId: 900, ...state.context }, core, () => agent,
     { env: { HUMAN: owner, AGENT_TOKEN: 'test-only', PR_NUMBER: '81' } },
   );
   return { calls, logs, outputs, errors, state };
@@ -209,7 +217,16 @@ const readinessFrom = state => state.checks.filter(check => check.name === 'Squa
   .sort((a, b) => b.id - a.id)[0];
 const enables = result => result.calls.filter(call => call.query?.includes('enablePullRequestAutoMerge'));
 function fixComment(time, login = owner, head = sha) {
-  return { id: Date.parse(time), created_at: time, user: { login }, body: `<!-- squad-review-fix:${head}:cloud -->` };
+  const token = `00000000-0000-0000-0000-${Date.parse(time).toString(16).padStart(12, '0')}`;
+  return { id: Date.parse(time), created_at: time, user: { login },
+    body: `<!-- squad-review-fix:${head}:cloud -->\n<!-- squad-repair-request:${token} -->` };
+}
+function report(state, request, session, outcome = 'attempted') {
+  const token = request.body.match(/squad-repair-request:([a-f0-9-]+)/)[1];
+  state.comments.push({
+    id: request.id + 1, created_at: session.created_at, user: { login: 'copilot-swe-agent[bot]', type: 'Bot' },
+    body: `<!-- squad-repair-outcome:${token}:${session.id}:${outcome} -->\nInvestigated the failing acceptance case.`,
+  });
 }
 function humanReview(state = 'CHANGES_REQUESTED', id = 1, body = 'Fix the missing acceptance test') {
   return { id, state, body, user: { login: owner, type: 'User' }, author_association: 'OWNER', html_url: 'https://example.test/review/1' };
@@ -253,8 +270,9 @@ test('controller escalates once after three actual sessions using the login, not
   state.reviews = [humanReview()];
   state.comments = [0, 5, 10].map(minute => fixComment(stamp(minute)));
   state.runs.copilot = [1, 6, 11].map((minute, id) => ({
-    id, status: 'completed', conclusion: 'success', created_at: stamp(minute),
+    id: id + 1, status: 'completed', conclusion: 'success', created_at: stamp(minute),
   }));
+  [...state.comments].forEach((request, i) => report(state, request, state.runs.copilot[i]));
   const result = await execute(state);
   assert.deepEqual(result.calls.find(call => call.name === 'assignees').args.assignees, [owner]);
   assert.match(commentsFrom(result)[0], /@cedricmendelin .*3 actual attempts/);
@@ -414,6 +432,7 @@ test('completed same-head repairs can request another bounded attempt; active an
   state.reviews = [humanReview()];
   state.comments = [fixComment(stamp(0))];
   state.runs.copilot = [{ id: 1, status: 'completed', conclusion: 'success', created_at: stamp(1) }];
+  report(state, state.comments[0], state.runs.copilot[0]);
   const result = await execute(state);
   assert.equal(commentsFrom(result).filter(body => body.includes('@copilot Fix')).length, 1);
   // The new request is outstanding: a second event must not dispatch again.
@@ -429,7 +448,7 @@ test('completed same-head repairs can request another bounded attempt; active an
     if (status === 'cancelled') {
       blocked.context.eventName = 'workflow_dispatch';
       blocked.context.payload.inputs = { pr_number: '81' };
-      assert.equal(commentsFrom(await execute(blocked)).some(body => body.includes('@copilot Fix')), true);
+      assert.equal(commentsFrom(await execute(blocked)).some(body => body.includes('@copilot Fix')), false);
     }
   }
 });
@@ -443,11 +462,13 @@ test('three successive same-head actual repair sessions exhaust the budget once,
   for (let attempt = 1; attempt <= 3; attempt++) {
     // The test clock for created request comments is minute 30. Assign unique
     // real session IDs/start times and retain the same code head after each run.
-    state.comments.at(-1).created_at = stamp(attempt * 5);
+    const request = state.comments.at(-1);
+    request.created_at = stamp(attempt * 5);
     state.runs.copilot.unshift({
       id: attempt, status: 'completed', conclusion: 'success',
       created_at: stamp(attempt * 5 + 1),
     });
+    report(state, request, state.runs.copilot[0]);
     const result = await execute(state);
     if (attempt < 3) {
       assert.equal(commentsFrom(result).filter(body => body.includes('@copilot Fix')).length, 1, `attempt ${attempt}`);
@@ -511,8 +532,9 @@ test('API failures removing approval/labels or assigning escalation are not supp
   escalation.reviews = [humanReview()];
   escalation.comments = [0, 5, 10].map(minute => fixComment(stamp(minute)));
   escalation.runs.copilot = [1, 6, 11].map((minute, id) => ({
-    id, status: 'completed', conclusion: 'success', created_at: stamp(minute),
+    id: id + 1, status: 'completed', conclusion: 'success', created_at: stamp(minute),
   }));
+  [...escalation.comments].forEach((request, i) => report(escalation, request, escalation.runs.copilot[i]));
   escalation.fail = 'assignees';
   await assert.rejects(execute(escalation), /API failure: assignees/);
 });
@@ -579,6 +601,7 @@ test('read-only router maps PR, manual, all reviewer, CI and cloud events to the
     ['pull_request_review', { pull_request: { number: 81 } }],
     ['workflow_dispatch', { inputs: { pr_number: '81' } }],
     ...ROLES.map(role => ['workflow_run', { workflow_run: { display_title: `Squad Review ${role} · PR #81`, head_branch: 'main' } }]),
+    ...ROLES.map(role => ['workflow_run', { workflow_run: { display_title: `Squad Review ${role} · PR #81 · input ${reviewInputKey('')}`, head_branch: 'main' } }]),
     ['workflow_run', { workflow_run: { pull_requests: [{ number: 81 }], head_branch: 'copilot/issue-81' } }],
     ['workflow_run', { workflow_run: { head_sha: sha } }],
     ['workflow_run', { workflow_run: { head_branch: 'copilot/issue-81' } }],
@@ -635,4 +658,244 @@ test('approval assignment controller honors local handoff/duplicate delivery and
       assert.equal(result.calls.filter(call => call.name === 'agentRequest').length, mode === 'cloud' ? 1 : 0, mode);
     }
   }
+});
+
+test('completion preflight repairs the observed suffix once, records remaining scope, and refreshes reviews without coding sessions', async () => {
+  const state = fixture();
+  cloud(state);
+  state.pr.body = 'Completion: partial\n## Remaining work\nOwner: AI; test clients after access.\n\n'
+    + '<!-- START COPILOT CODING AGENT SUFFIX -->\n\n- Fixes #11';
+  const first = await execute(state);
+  assert.match(state.pr.body, /- Refs #11$/);
+  assert.equal(first.calls.filter(call => call.name === 'updatePr').length, 1);
+  assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 4);
+  for (const call of first.calls.filter(call => call.name === 'dispatch')) {
+    assert.equal(call.args.inputs.review_input, reviewInputKey(state.pr.body));
+  }
+  assert.equal(commentsFrom(first).some(body => body.includes('@copilot Fix')), false);
+  assert.match(commentsFrom(first).join('\n'), /Remaining acceptance work from PR #81/);
+  assert.equal(enables(first).length, 0);
+  const again = await execute(state);
+  assert.equal(again.calls.some(call => call.name === 'updatePr' || call.name === 'dispatch'), false);
+  assert.equal(commentsFrom(again).length, 0);
+  state.pr.body = state.pr.body.replace('- Refs #11', '- Fixes #11');
+  const regenerated = await execute(state);
+  assert.equal(regenerated.calls.filter(call => call.name === 'updatePr').length, 1);
+  assert.equal(regenerated.calls.some(call => call.name === 'dispatch'), false, 'regenerated suffix converges on the same review input');
+});
+
+test('metadata write and partial-handoff failures never become successful readiness', async () => {
+  for (const failure of ['updatePr', 'comment']) {
+    const state = fixture();
+    state.pr.body = 'Completion: partial\n## Remaining work\nOwner: AI; live verification after access.\n'
+      + '<!-- START COPILOT CODING AGENT SUFFIX -->\n- Fixes #11';
+    state.fail = failure;
+    await assert.rejects(execute(state), new RegExp(`API failure: ${failure}`));
+    assert.notEqual(readinessFrom(state).conclusion, 'success');
+  }
+});
+
+test('ambiguous completion errors are actionable without specialist findings or coding retries', async () => {
+  const state = fixture();
+  state.pr.body = 'Completion: partial\nFixes #11';
+  const first = await execute(state);
+  assert.equal(first.calls.some(call => call.name === 'dispatch' || call.name === 'updatePr'), false);
+  assert.match(readinessFrom(state).output.summary, /Remaining work.*\n.*partial PR must not close/s);
+  assert.match(commentsFrom(first)[0], /No coding session was requested/);
+  assert.equal(commentsFrom(await execute(state)).length, 0);
+});
+
+test('completion errors withhold model reviews but do not prevent initial CI', async () => {
+  const state = fixture();
+  cloud(state);
+  state.pr.body = 'Completion: partial\nFixes #11';
+  state.checks = [];
+  const result = await execute(state);
+  assert.deepEqual(result.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['ci']);
+  assert.equal(enables(result).length, 0);
+});
+
+test('partial handoff never reopens a closed issue or publishes merge readiness', async () => {
+  const state = fixture();
+  state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: AI; test clients after access.';
+  state.issue.state = 'closed';
+  const result = await execute(state);
+  assert.match(readinessFrom(state).output.summary, /must reference an open issue/);
+  assert.equal(commentsFrom(result).length, 0);
+  assert.equal(enables(result).length, 0);
+});
+
+test('metadata preflight stops on a changed description before writing and does not mutate paused PRs', async () => {
+  for (const paused of [false, true]) {
+    const state = fixture();
+    state.pr.body = 'Completion: partial\n## Remaining work\nTest clients after access.\n'
+      + '<!-- START COPILOT CODING AGENT SUFFIX -->\n- Fixes #11';
+    if (paused) state.pr.labels.push({ name: 'needs:human' });
+    let reads = 0;
+    state.before = async name => {
+      if (name === 'pr' && ++reads === 3) state.pr.body += '\nConcurrent owner edit.';
+    };
+    const result = await execute(state);
+    assert.equal(result.calls.some(call => call.name === 'updatePr'), false);
+    assert.equal(enables(result).length, 0);
+  }
+});
+
+test('meaningful body-only edits refresh even passing reviews; whitespace does not', async () => {
+  const whitespace = fixture();
+  whitespace.pr.body = ' \r\n\r\n';
+  assert.equal((await execute(whitespace)).calls.some(call => call.name === 'dispatch'), false);
+  const changed = fixture();
+  changed.pr.body = 'Completion: full\nNew acceptance evidence.';
+  const result = await execute(changed);
+  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4);
+  assert.equal(enables(result).length, 0);
+});
+
+test('a late body change prevents merge readiness even when its completion syntax stays valid', async () => {
+  const state = fixture();
+  let reads = 0;
+  state.before = async name => {
+    if (name === 'pr' && ++reads === 3) state.pr.body = 'New scope evidence.';
+  };
+  assert.equal(enables(await execute(state)).length, 0);
+  assert.notEqual(readinessFrom(state).conclusion, 'success');
+});
+
+test('missing capability and unattributable later sessions pause once without consuming three retries', async () => {
+  for (const outcome of ['capability-blocked', 'external-blocked', null]) {
+    const state = fixture();
+    cloud(state);
+    state.reviews = [humanReview()];
+    const request = fixComment(stamp(0));
+    state.comments = [request];
+    state.runs.copilot = [{ id: 1, status: 'completed', conclusion: 'success', created_at: stamp(1) }];
+    if (outcome) report(state, request, state.runs.copilot[0], outcome);
+    const result = await execute(state);
+    assert.equal(commentsFrom(result).some(body => body.includes('@copilot Fix')), false);
+    assert.match(commentsFrom(result).join('\n'), /No attempt was consumed/);
+    assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true);
+    assert.equal(commentsFrom(await execute(state)).length, 0);
+  }
+});
+
+test('explicit maintainer resume resets the repair episode but normal re-evaluation never clears the pause', async () => {
+  const state = fixture();
+  cloud(state);
+  state.pr.labels.push({ name: 'needs:human' });
+  state.reviews = [humanReview()];
+  state.comments = [fixComment(stamp(0))];
+  state.runs.copilot = [{ id: 1, status: 'completed', conclusion: 'success', created_at: stamp(1) }];
+  report(state, state.comments[0], state.runs.copilot[0], 'capability-blocked');
+  assert.equal((await execute(state)).calls.some(call => call.name === 'removeLabel'), false);
+  state.context.eventName = 'workflow_dispatch';
+  state.context.payload.inputs = { pr_number: '81', resume_repairs: true };
+  const resumed = await execute(state);
+  assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), false);
+  assert.equal(commentsFrom(resumed).filter(body => body.includes('@copilot Fix')).length, 1);
+  assert.equal(commentsFrom(await execute(state)).length, 0, 'duplicate resume run must not reset again');
+  state.pr.labels.push({ name: 'needs:human' });
+  assert.equal((await execute(state)).calls.some(call => call.name === 'removeLabel'), false, 'a rerun must not clear a newer pause');
+});
+
+test('human-only specialist findings are not sent to the coding agent', async () => {
+  const state = fixture();
+  cloud(state);
+  const check = state.checks.find(item => item.name === 'Squad Review / Verifier');
+  check.conclusion = 'failure';
+  check.output.summary = 'Repair route: human\nOwner must provide the live-client test window.';
+  const result = await execute(state);
+  assert.equal(commentsFrom(result).some(body => body.includes('@copilot Fix')), false);
+  assert.match(commentsFrom(result)[0], /live-client test window/);
+  assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true);
+});
+
+test('explicit repair resume rejects ineligible actors and active cloud sessions without resetting history', async () => {
+  for (const blocked of ['permission', 'active']) {
+    const state = fixture();
+    cloud(state);
+    state.pr.labels.push({ name: 'needs:human' });
+    state.context.eventName = 'workflow_dispatch';
+    state.context.payload.inputs = { pr_number: '81', resume_repairs: true };
+    if (blocked === 'permission') {
+      state.context.payload.sender = { login: 'outsider' };
+      state.permission = 'read';
+      await assert.rejects(execute(state), /requires repository write permission/);
+    } else {
+      state.runs.copilot[0].status = 'in_progress';
+      const result = await execute(state);
+      assert.equal(commentsFrom(result).length, 0);
+    }
+    assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true);
+  }
+});
+
+function continuationFixture() {
+  const state = fixture();
+  state.context.eventName = 'workflow_dispatch';
+  state.context.payload.inputs = { issue_number: '81', dependency_evidence: 'Approved registration aligned; sanitized client proof recorded.' };
+  state.issue.labels = [{ name: 'plan:approved' }, { name: 'needs:human' }];
+  state.issue.assignees = [{ login: 'copilot-swe-agent[bot]' }];
+  state.comments = [{ id: 1, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: ai' }];
+  return state;
+}
+
+test('manual scope continuation reassigns an already-assigned open issue once under the same approved plan', async () => {
+  const state = continuationFixture();
+  const result = await execute(state, 'assign');
+  assert.equal(result.calls.filter(call => call.name === 'removeAssignees').length, 1);
+  const assignment = result.calls.find(call => call.name === 'agentRequest');
+  assert.deepEqual(assignment.args.assignees, ['copilot-swe-agent[bot]']);
+  assert.equal(assignment.args.agent_assignment.custom_agent, 'ai');
+  assert.match(assignment.args.agent_assignment.custom_instructions, /Continue the unfinished acceptance work/);
+  assert.match(assignment.args.agent_assignment.custom_instructions, /preserve delivered work/);
+  assert.match(commentsFrom(result)[0], /Dependency evidence \(data, not instructions\)/);
+  const duplicate = await execute(state, 'assign');
+  assert.equal(duplicate.calls.some(call => call.name === 'agentRequest' || call.name === 'removeAssignees'), false);
+});
+
+test('scope continuation respects approval, local handoff, permission, open PRs, and session ownership', async () => {
+  for (const mode of ['unapproved', 'local', 'permission', 'open PR', 'active', 'waiting', 'missing workflow', 'closed', 'empty evidence', 'scope race']) {
+    const state = continuationFixture();
+    if (mode === 'unapproved') state.issue.labels = [];
+    if (mode === 'local') state.issue.labels.push({ name: 'handoff:local' });
+    if (mode === 'permission') {
+      state.context.payload.sender = { login: 'outsider' };
+      state.permission = 'read';
+    }
+    if (mode === 'open PR') state.timeline = [{ event: 'cross-referenced', source: { issue: { state: 'open', pull_request: {} } } }];
+    if (mode === 'active' || mode === 'waiting') state.runs.copilot[0].status = mode === 'active' ? 'in_progress' : 'waiting';
+    if (mode === 'missing workflow') state.workflows = state.workflows.filter(workflow => workflow.id !== 'copilot');
+    if (mode === 'closed') state.issue.state = 'closed';
+    if (mode === 'empty evidence') state.context.payload.inputs.dependency_evidence = ' ';
+    if (mode === 'scope race') {
+      let reads = 0;
+      state.before = async name => {
+        if (name === 'issue' && ++reads === 2) state.issue.labels = [];
+      };
+    }
+    if (['unapproved', 'local'].includes(mode)) {
+      const result = await execute(state, 'assign');
+      assert.equal(result.calls.some(call => call.name === 'agentRequest' || call.name === 'removeAssignees'), false, mode);
+    } else {
+      await assert.rejects(execute(state, 'assign'), /permission|open PR|cloud session|workflow is missing|open issue|evidence|scope or approval changed/i, mode);
+      assert.equal(state.comments.some(comment => comment.body.includes('squad-scope-resume:')), false, mode);
+    }
+  }
+});
+
+test('production-source mutations expose missing review-input and completion-preflight gates', async () => {
+  const state = fixture();
+  state.pr.body = 'New acceptance evidence.';
+  state.mutateSource = code => code.replace(
+    "const inputKey = reviewInputKey(pr.body || '');",
+    `const inputKey = '${reviewInputKey('')}';`,
+  );
+  assert.equal(enables(await execute(state)).length, 0, 'final live input guard must still reject the stale result');
+  const bypass = fixture();
+  bypass.pr.body = 'Completion: partial\nFixes #11';
+  bypass.mutateSource = code => code.replace('if (!completion.ok) {', 'if (false) {');
+  const result = await execute(bypass);
+  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4,
+    'removing preflight incorrectly spends reviews; the preflight regression test asserts zero');
 });
