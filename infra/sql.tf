@@ -47,7 +47,7 @@ resource "azapi_resource" "sql_database" {
       minCapacity                 = 0.5
       autoPauseDelay              = 60
       useFreeLimit                = true
-      freeLimitExhaustionBehavior = "BillForUsage"
+      freeLimitExhaustionBehavior = "BillOverUsage"
     }
   }
 }

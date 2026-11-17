@@ -516,7 +516,7 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         or db_properties.get("minCapacity") != 0.5
         or db_properties.get("autoPauseDelay") != 60
         or db_properties.get("useFreeLimit") is not True
-        or db_properties.get("freeLimitExhaustionBehavior") != "BillForUsage"
+        or db_properties.get("freeLimitExhaustionBehavior") != "BillOverUsage"
     ):
         raise ValueError(
             "Baseline SQL database must retain its General Purpose free offer, size/capacity, "
