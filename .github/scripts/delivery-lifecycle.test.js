@@ -10,7 +10,7 @@ const check = (name, head, conclusion = 'success') => ({
   started_at: '2026-11-16T12:01:00Z', completed_at: '2026-11-16T12:02:00Z',
 });
 const run = (role, pr, created, status = 'completed', conclusion = 'success') => ({
-  name: `Squad Review ${role}`, display_title: `Squad Review ${role} · PR #${pr}`,
+  name: `Squad Review ${role} · PR #${pr}`, display_title: `Squad Review ${role} · PR #${pr}`,
   created_at: created, updated_at: '2026-11-16T12:03:00Z', status, conclusion,
 });
 const fix = (head, created_at, id) => ({
@@ -69,6 +69,13 @@ test('new code heads and review:none removal dispatch a fresh review once withou
   assert.equal(lifecycle.reviewDispatchNeeded({
     fresh: false, runs: dispatchedAfterEvent, forceFresh: false,
   }), false);
+});
+
+test('review run selection matches GitHub run titles exactly for the requested role and PR', () => {
+  const target = run('Architect', 8, '2026-11-16T12:00:00Z', 'in_progress');
+  const otherPr = run('Architect', 80, '2026-11-16T12:01:00Z', 'in_progress');
+  const otherRole = run('Security', 8, '2026-11-16T12:02:00Z', 'in_progress');
+  assert.deepEqual(lifecycle.reviewRunsForPr([otherPr, otherRole, target], 'Architect', 8), [target]);
 });
 
 test('review:none removal time comes from the latest unlabeled event', () => {

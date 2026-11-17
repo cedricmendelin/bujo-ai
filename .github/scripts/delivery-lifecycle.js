@@ -23,9 +23,8 @@ function currentHeadCheck(checks, name, sha) {
 }
 
 function reviewRunsForPr(runs, role, number) {
-  const prefix = `Squad Review ${role} · PR #${number}`;
-  return runs.filter(run => run.name === `Squad Review ${role}`
-      && (run.display_title || '') === prefix)
+  const title = `Squad Review ${role} · PR #${number}`;
+  return runs.filter(run => run.display_title === title)
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)
       || (b.run_number || 0) - (a.run_number || 0));
 }
