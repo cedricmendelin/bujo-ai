@@ -84,9 +84,10 @@ introduce workflows.
 
 ## How we work
 
-Humans decide **what** gets built and **approve plans**; agents build, review,
-fix, and merge. A human (currently @cedricmendelin) is only pulled in when the
-automation cannot continue. Details, commands, and one-time setup are in the
+Humans decide **what** gets built and **approve plans**. Agents implement,
+verify, and fix review findings; GitHub merges only when the required gates
+pass. Ask for human input during planning or when safe recovery is exhausted.
+Details, commands, and one-time setup are in the
 [governed delivery workflow](docs/workflow.md).
 
 ### 1. Agree the scope
@@ -95,9 +96,10 @@ For issue-driven work, use the versioned planning flow below. For a direct local
 PR, agree the scope in the Copilot conversation and record it in the PR; no issue
 or approval/waiver label is required.
 
-1. Write or pick an issue. Comment `/plan` (not `/squad plan`): the Architect
-   posts `## 📋 Implementation plan vN · owner: <member>` and labels
-   `plan:proposed`. No label is needed to draft or revise a plan.
+1. Write or pick an issue and comment `/plan` (not `/squad plan`). The Architect
+   maps each criterion to verification and posts a numbered plan. If a
+   blocking choice remains, it posts `## Planning questions` instead. A
+   question is not an approvable plan.
 2. Iterate with `/plan revise <feedback>` or `/plan route <member>` until it is
    right. Review the latest version before approving it.
 3. Choose **where** the work happens, then apply `plan:approved`
@@ -148,7 +150,11 @@ Cloud Watch and fix does **not** address review comments. Our bounded bridge
 forwards actionable specialist findings and trusted human change requests to
 the implementer. It ignores resolved/outdated threads and duplicate deliveries;
 arbitrary top-level comments do not automatically start work. Review repair
-requests stop while a cloud session is active. The controller repairs recognized
+requests stop while a cloud session is active. Record every blocking finding's
+fix and evidence (or disagreement for the reviewer), then re-review. A
+formal rejection needs a different revision author; the controller does not
+re-dispatch the rejected owner. Transient reviewer startup errors or timeouts
+get one automatic retry. The controller repairs recognized
 generated closing suffixes on partial PRs itself; it never sends those to a
 coding agent. Only request-linked substantive repair outcomes or local code
 changes count toward the three-attempt limit. Capability/dependency failures
@@ -163,8 +169,8 @@ and sanitized dependency evidence. It resumes existing approved scope even if
 Copilot is still assigned; an open related PR or active cloud session blocks
 competing implementation. Changed scope still requires a revised approved plan.
 
-`review:none`, applied by an owner or maintainer, skips pending and existing
-specialist findings for that PR only. It never skips CI or trusted human change
+`review:none`, applied by an owner or maintainer, skips ordinary specialist
+findings for that PR only. A closing scope split cannot use it. It never skips CI or trusted human change
 requests/unresolved blocking threads. Removing it starts fresh reviews, even on
 the same head; code commits also start fresh reviews, while cosmetic PR
 description edits do not.
@@ -188,15 +194,18 @@ issue or issue plan.
 3. Open a **ready (non-draft) PR** with one whole-line
    `Completion: full` or `Completion: partial` declaration and, when linked, the
    referenced plan version.
-   Use `Closes #N` only when every acceptance criterion is delivered with
-   evidence, including code and relevant tests. A partial PR uses `Relates to #N`
-   (or another non-closing reference) and keeps the issue open.
+   Use `Closes #N` only when every criterion is verified unless an audited
+   split explicitly transfers it. For
+   unexpectedly discovered, nonessential work, the delivery owner can record
+   an [audited scope split](docs/workflow.md#audited-scope-splits): open the
+   linked follow-up before merge and get independent acceptance of the
+   transfer. A partial PR uses `Relates to #N` and keeps the original open.
 4. Optionally turn on desktop-app **Agent merge** for local repairs. This is an
    alternative repair controller:
    disable cloud **Watch and fix** on that PR first. Leave *Merge* off:
    GitHub auto-merge remains the single merge executor after gate approval.
-5. Every code push starts fresh CI and default Squad reviews. Description-only
-   edits do not re-run the reviews.
+5. A new head starts fresh CI and Squad reviews. Substantive description edits
+   also refresh Squad reviews; whitespace-only edits do not.
 
 **Taking over a cloud PR locally:** add `handoff:local` to the PR, open it in
 the GitHub Copilot app, disable cloud Watch and fix, and turn on app Agent merge.

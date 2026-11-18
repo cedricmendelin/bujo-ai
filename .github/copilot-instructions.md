@@ -15,6 +15,8 @@ recorded decisions; read history only when prior work is relevant.
 - Plans are append-only issue comments titled
   `## 📋 Implementation plan vN · owner: <member>`. `/plan`, `/plan revise`,
   and `/plan route` preserve history. Chat-authored plans use the same format.
+  If a required decision, dependency, or verification method is unresolved,
+  publish `## Planning questions` with a recommendation, not a numbered plan.
 - Implement exactly the applicable agreed scope. Direct local PRs may use scope
   agreed in the Copilot conversation without an issue link, approved plan, or
   waiver label. When a PR links an issue plan, cite its version; reviewers read
@@ -27,6 +29,10 @@ recorded decisions; read history only when prior work is relevant.
   check off delivered criteria with evidence and leave open or blocked criteria
   unchecked with their owner and next action. Resume the approved plan for
   unchanged scope; revise it only when the agreed scope or design changes.
+- An unexpected, nonessential item can move to a real open same-repo follow-up
+  under the audited split in `docs/workflow.md`. Preserve the original
+  criteria, link the exact deferred records and verify all retained criteria.
+  Never transfer a necessary outcome, safeguard, compatibility contract or test.
 - If a genuinely necessary deviation is made, list it under
   `## Deviations from plan`; do not silently broaden scope.
 - Add focused tests for behavior changes. Run build/tests and `terraform
@@ -47,6 +53,7 @@ recorded decisions; read history only when prior work is relevant.
   skips pending and existing specialist findings; it never skips CI, trusted
   human change requests, unresolved trusted human `[blocking]` threads, or
   partial-delivery tracking.
+  It cannot authorize a closing scope split.
   Removing it starts fresh current-head reviews. No automatic clearing or
   expansion to issues.
 - Required checks are `ci` and `Squad Merge Readiness`. Reviews are tied to the
@@ -57,6 +64,10 @@ recorded decisions; read history only when prior work is relevant.
 - Keep app Agent merge's **Merge** action off. GitHub auto-merge is the only
   merge executor. Read `docs/workflow.md` before local takeover, repair
   reporting, resuming `needs:human`, or continuing partial delivery.
+- Own routine review fixes and delivery metadata before escalating. Record
+  each blocking finding, its fix and evidence or reasoned disagreement.
+  A formally rejected author cannot revise or advise on that artifact; route
+  to a different eligible agent and get independent re-review.
 
 ## Human-only setup
 

@@ -30,14 +30,14 @@ on:
         default: false
         type: boolean
   issues:
-    types: [closed]
+    types: [edited, closed, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
 
 jobs:
   route:
-    if: github.event_name != 'issues' && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
+    if: (github.event_name != 'issues' || contains(github.event.issue.body, 'Split PR: #') || contains(github.event.changes.body.from, 'Split PR: #')) && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -57,6 +57,10 @@ jobs:
             const runEvent = context.payload.workflow_run;
             let numbers = [];
             if (context.eventName === 'workflow_dispatch') numbers = [Number(context.payload.inputs.pr_number)];
+            else if (context.eventName === 'issues') {
+              const bodies = [context.payload.issue?.body, context.payload.changes?.body?.from];
+              numbers = bodies.flatMap(body => [...(body || '').matchAll(/^Split PR: #([1-9]\d*)[ \t]*$/gm)].map(match => Number(match[1])));
+            }
             else if (context.payload.pull_request) numbers = [context.payload.pull_request.number];
             else if (runEvent) {
               const target = (runEvent.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)(?: · input [a-f0-9]{64})?$/);
@@ -174,7 +178,8 @@ jobs:
               acceptanceTracking, evaluateCompletion, hasPartialDeclaration,
               repairGeneratedClosingReferences, partialHandoff, removeNonProse,
             } = require('./.github/scripts/completion-declaration');
-            const { isEligiblePermission, parsePlan } = require('./.github/scripts/plan-approval');
+            const { isEligiblePermission, latestPlan, parsePlan } = require('./.github/scripts/plan-approval');
+            const { readSplit, splitReviewPasses, validateSplit } = require('./.github/scripts/scope-split');
             const {
               actualRepairAttempts, currentHeadCheck, hasHumanBlocks, humanBlockingFeedback, isControllerComment,
               hasRequiredMergeRules, isReviewNone, outstandingFixRequest, readiness, reviewFailures,
@@ -207,6 +212,25 @@ jobs:
 
             async function getComments(number) {
               return github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+            }
+            async function splitInputs(pr) {
+              const split = readSplit(pr.body);
+              if (!split || split.reason) return split;
+              if (isReviewNone(pr.labels.map(label => label.name))) return { reason: 'A closing scope split cannot use review:none.' };
+              try {
+                const issue = async number => (await github.rest.issues.get({ owner, repo, issue_number: number })).data;
+                const [source, followUp, comments] = await Promise.all([
+                  issue(split.source), issue(split.followUp), getComments(split.source),
+                ]);
+                const plan = latestPlan(comments, owner);
+                const reason = validateSplit(split, source, followUp, plan, pr.number);
+                if (reason) return { reason };
+                return { key: reviewInputKey(JSON.stringify([reviewInputKey(pr.body), pr.base.sha,
+                  source.body, followUp.body, plan.plan.comment.id, plan.plan.comment.body])) };
+              } catch (error) {
+                core.warning(`Could not read scope split issues (${error.status || 'API error'}).`);
+                return { reason: 'The scope split could not be verified against live issues and plan.' };
+              }
             }
             async function changedFiles(pr) {
               try {
@@ -322,6 +346,10 @@ jobs:
               let { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
               if (pr.state !== 'open' || pr.head.repo?.full_name !== `${owner}/${repo}`) {
                 return core.info(`#${number}: closed or fork PR; no privileged lifecycle actions.`);
+              }
+              if (context.eventName === 'issues') {
+                const split = readSplit(pr.body);
+                if (!split || ![split.source, split.followUp].includes(context.payload.issue?.number)) return;
               }
               const labels = pr.labels.map(label => label.name);
               // Invalidate any previous success before doing asynchronous reads.
@@ -458,24 +486,25 @@ jobs:
                 core.info(`#${number}: replaced generated closing references with non-closing references; issue scope remains partial.`);
               }
               const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
+              const split = await splitInputs(pr);
               const partial = hasPartialDeclaration(pr.body);
               const handoff = partial ? partialHandoff(pr.body, `${owner}/${repo}`) : null;
               const referenceFinding = partial && !handoff
                 ? '`Completion: partial` requires one unambiguous same-repository issue reference and a nonempty "Remaining work" section.'
                 : null;
-              if (!completion.ok || referenceFinding) {
+              if (!completion.ok || referenceFinding || split?.reason) {
                 await pauseMerge(pr);
-                const findings = [...completion.findings, ...(referenceFinding ? [referenceFinding] : [])];
-                const reason = `Completion metadata requires a maintainer decision:\n\n${findings.map(item => `- ${item}`).join('\n')}`;
+                const findings = [...completion.findings, ...[referenceFinding, split?.reason].filter(Boolean)];
+                const reason = `Delivery owner: correct completion metadata or route the specific decision to its owner:\n\n${findings.map(item => `- ${item}`).join('\n')}`;
                 const marker = `<!-- squad-completion-blocked:${reviewInputKey(pr.body || '')} -->`;
                 if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `${marker}\n@${human} ${reason}\n\nNo coding session was requested and no repair attempt was consumed. Correct the description; an edited event re-evaluates it.` });
+                    body: `${marker}\n${reason}\n\nNo coding session was requested and no repair attempt was consumed. Correct the linked records, then re-evaluate.` });
                 }
                 await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure', reason });
                 return;
               }
-              const inputKey = reviewInputKey(pr.body || '');
+              const inputKey = split?.key || reviewInputKey(pr.body || '');
               if (handoff) {
                 const issue = (await github.rest.issues.get({ owner, repo, issue_number: handoff.issue })).data;
                 const tracking = acceptanceTracking(issue.body);
@@ -498,7 +527,18 @@ jobs:
                 }
               }
               const humanData = await humanFeedback(number);
-              const enforceRouting = process.env.REVIEW_ROUTING === 'enforce';
+              const priorRejection = comments.filter(comment => isControllerComment(comment, owner)
+                && /^<!-- squad-independent-revision:[a-f0-9]{40}:[a-f0-9]{64} -->/m.test(comment.body || ''))
+                .sort((a, b) => b.id - a.id)[0];
+              const revisionAdmitted = (candidate, reviews) => !priorRejection || (
+                !priorRejection.body.startsWith(`<!-- squad-independent-revision:${candidate.head.sha}:`)
+                && !isReviewNone(candidate.labels.map(label => label.name))
+                && reviews.some(review => review.user?.login === owner && review.user?.type === 'User'
+                  && review.state === 'COMMENTED' && review.commit_id === candidate.head.sha
+                  && (review.body || '').split(/\r?\n/).some(line =>
+                    new RegExp(`^Independent revision: ${priorRejection.id} by [A-Za-z0-9][A-Za-z0-9._/-]*$`).test(line)))
+              );
+              const enforceRouting = !split && process.env.REVIEW_ROUTING === 'enforce';
               const shouldReview = !pr.draft && !isReviewNone(nowLabels) && (!cloudPr || session.state === 'ok');
               const classifyReviews = (candidate, files, reviews) => routeReviews({
                 labels: candidate.labels.map(label => label.name), changedFiles: candidate.changed_files,
@@ -525,6 +565,26 @@ jobs:
                   latestReviewChecks.set(item.role, check);
                   const fresh = reviewResultIsFresh({ check, run: result, sha, removedAt });
                   const failureMarker = `<!-- squad-review-run-failed:${result?.id}:${result?.run_attempt || 1} -->`;
+                  const retryPrefix = `<!-- squad-review-retry:${item.role}:${sha}:${inputKey}:`;
+                  const retry = comments.find(comment => isControllerComment(comment, owner)
+                    && (comment.body || '').startsWith(retryPrefix));
+                  if (!fresh && prRuns.length && result.status === 'completed'
+                      && ['timed_out', 'startup_failure'].includes(result.conclusion) && !forceFreshReviews
+                      && !manual && item.workflow && !retry) {
+                    await pauseMerge(pr);
+                    await setReadiness(pr, sha, { status: 'in_progress', reason: `Retrying ${item.role} review once after ${result.conclusion}.` });
+                    await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                      body: `${retryPrefix}${result.id} -->\nRetrying ${item.role} review once after ${result.conclusion}. No code repair was attempted.` });
+                    evidence ??= reviewEvidence({ pr, files, ci, scope: await linkedScope(pr) });
+                    await agent.rest.actions.createWorkflowDispatch({
+                      owner, repo, workflow_id: item.workflow.id, ref: context.payload.repository.default_branch,
+                      inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
+                    });
+                    return;
+                  }
+                  if (!fresh && !manual && !forceFreshReviews && retry?.body.startsWith(`${retryPrefix}${result?.id} -->`)) {
+                    return core.info(`#${number}: waiting for the admitted ${item.role} review retry.`);
+                  }
                   if (!fresh && result?.status === 'completed'
                       && ['failure', 'timed_out', 'startup_failure', 'action_required'].includes(result.conclusion)
                       && !forceFreshReviews && !manual
@@ -578,7 +638,8 @@ jobs:
                 const check = latestReviewChecks.get(item.role);
                 const result = reviewRuns.get(item.role);
                 return reviewResultIsFresh({ check, run: result, sha, removedAt })
-                  && check.conclusion === 'success' && result.status === 'completed' && result.conclusion === 'success';
+                  && check.conclusion === 'success' && result.status === 'completed' && result.conclusion === 'success'
+                  && (!split || splitReviewPasses(item.role, check));
               });
               const rulesOk = await hasRules(pr);
               const decision = readiness({
@@ -587,7 +648,7 @@ jobs:
                 completionOk: completion.ok,
                 sessionOk: session.state === 'ok',
                 ci: ciOk,
-                reviewsOk: latestReviewsOk,
+                reviewsOk: latestReviewsOk && revisionAdmitted(pr, humanData.reviews),
                 humanBlocks: blockedByHuman,
                 rulesOk,
               });
@@ -604,24 +665,59 @@ jobs:
                 } : null;
               }).filter(Boolean).sort((a, b) => a.created - b.created).at(-1);
               const feedback = [
-                ...specialistFailures.filter(({ check }) => !/^Repair route: human\s*$/im.test(check.output?.summary || '')).map(({ role, check }) => ({
+                ...specialistFailures.filter(({ check }) => !/^Repair route: (human|metadata)\s*$/im.test(check.output?.summary || '')).map(({ role, check }) => ({
                   kind: `${role} review`, body: `${check.output?.title || 'Blocking review findings'}\n${check.output?.summary || ''}`,
                   url: check.html_url,
                 })),
                 ...actionableHuman.map(item => ({ kind: 'trusted human review feedback', body: item.body, url: item.url })),
               ];
               const details = feedback.map(item => `### ${item.kind}\n${item.url ? `${item.url}\n` : ''}${item.body}`).join('\n\n');
-              if (feedback.length && !nowLabels.includes('needs:human')) {
+              const independent = specialistFailures.filter(({ check }) => /^Revision: independent\s*$/m.test(check.output?.summary || ''));
+              if (independent.length) {
+                await pauseMerge(pr);
+                const marker = `<!-- squad-independent-revision:${sha}:${inputKey} -->`;
+                if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').startsWith(marker))) {
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${marker}\nFormal rejection: the delivery coordinator must assign a different eligible agent, excluding all authors rejected on this artifact. The original owner must not revise or advise. Ensure no cloud repair is still active and disable Watch and fix before local takeover. Escalate only if no eligible owner exists.\n\n${independent.map(({ role, check }) => `${role}: ${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
+                }
+              } else if (priorRejection && !revisionAdmitted(pr, humanData.reviews)) {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                  reason: `Independent revision pending for rejection comment ${priorRejection.id}. The coordinator must verify a different agent revised this artifact; then the repository owner records the revision as a current-head review comment. Review opt-out is unavailable.` });
+              } else if (feedback.length && !nowLabels.includes('needs:human')) {
                 const activeCloud = cloudPr && session.state === 'active';
                 const outcomes = repairOutcomes(episodeComments, sessionRuns, owner);
-                const blockedOutcome = outcomes.find(item => item.outcome !== 'attempted');
+                const blockedOutcome = outcomes.find(item => item.request.id === latestFix?.comment.id && item.outcome !== 'attempted');
                 const requestOutstanding = cloudPr && outstandingFixRequest(episodeComments, sessionRuns, true, owner);
                 const localAlreadyAsked = !cloudPr && latestFix?.sha === sha && latestFix?.mode === 'local';
                 const attempts = actualRepairAttempts(episodeComments, sessionRuns, sha, cloudPr, owner);
-                if (blockedOutcome || !activeCloud && requestOutstanding && latestFix
+                const missingOutcome = !activeCloud && requestOutstanding && latestFix
                     && sessionRuns.some(run => run.status === 'completed'
                       && ['success', 'failure'].includes(run.conclusion)
-                      && Date.parse(run.run_started_at || run.created_at) >= latestFix.created)) {
+                      && Date.parse(run.run_started_at || run.created_at) >= latestFix.created);
+                if (blockedOutcome || missingOutcome) {
+                  const recoveryMarker = `<!-- squad-repair-recheck:${latestFix.comment.id} -->`;
+                  const recoveryAdmitted = comments.some(comment => isControllerComment(comment, owner)
+                    && (comment.body || '').startsWith(recoveryMarker));
+                  if (missingOutcome && recoveryAdmitted && [...reviewRuns.values()].some(run => run && run.status !== 'completed')) {
+                    return core.info(`#${number}: waiting for the repair outcome recheck.`);
+                  }
+                  const recheck = !actionableHuman.length && !blockedOutcome
+                    && specialistFailures.filter(({ role }) => reviewers.some(item => item.role === role && item.workflow));
+                  if (recheck?.length && !recoveryAdmitted) {
+                    await pauseMerge(pr);
+                    await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                      body: `${recoveryMarker}\nA later coding run did not report an attributable outcome. Rechecking the live artifact once before escalating; no coding request was sent.` });
+                    const evidence = reviewEvidence({ pr, files, ci, scope: await linkedScope(pr) });
+                    for (const { role } of recheck) {
+                      await agent.rest.actions.createWorkflowDispatch({
+                        owner, repo, workflow_id: reviewers.find(item => item.role === role).workflow.id,
+                        ref: context.payload.repository.default_branch,
+                        inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
+                      });
+                    }
+                    return;
+                  }
                   await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
                     body: `@${human} Review repair needs a capable owner or an attributable outcome, not another identical coding request. ${blockedOutcome ? `Reported outcome: ${blockedOutcome.outcome}. See ${blockedOutcome.comment.html_url || 'the repair outcome comment'}.` : 'A cloud session completed without a matching repair outcome; it was not counted as a fix attempt.'} Resolve the capability/dependency or inspect the session, then explicitly resume repairs. No attempt was consumed for this blocker.\n\n${details}` });
@@ -638,14 +734,22 @@ jobs:
                   const marker = `<!-- squad-review-fix:${sha}:${cloudPr ? 'cloud' : 'local'} -->`;
                   const token = require('node:crypto').randomUUID();
                   const prompt = cloudPr
-                    ? `@copilot Fix the actionable blocking implementation feedback below within the approved scope. Do not repair PR metadata in code or expand scope. CI failures and merge conflicts belong to Watch and fix. If a finding is incorrect, explain why in its thread for a maintainer decision.\n\nAt the end, post a top-level PR comment containing exactly one whole-line outcome marker: <!-- squad-repair-outcome:${token}:RUN_ID:attempted -->, replacing RUN_ID with this Copilot Actions workflow run's numeric ID. Use attempted only after substantive investigation/fix of this request, and describe evidence and any commit. Use capability-blocked or external-blocked instead when tools/permissions or a human dependency prevent the repair; name the missing capability, owner and next action. Never claim an attempt for an inability explanation or unrelated CI work.`
-                    : `The selected reviews or a trusted human review have actionable blocking feedback. Please address it in the local session; unresolved human change requests remain blocking.`;
+                    ? `@copilot Fix the actionable blocking implementation feedback below within the approved scope. Do not repair PR metadata in code or expand scope. CI failures and merge conflicts belong to Watch and fix. In the outcome comment list each finding and its fix/test evidence, or reasoned disagreement for the reviewer to decide. Do not resolve a human thread yourself.\n\nAt the end, post a top-level PR comment containing exactly one whole-line outcome marker: <!-- squad-repair-outcome:${token}:RUN_ID:attempted -->, replacing RUN_ID with this Copilot Actions workflow run's numeric ID. Use attempted only after substantive investigation/fix of this request, and describe evidence and any commit. Use capability-blocked or external-blocked instead when tools/permissions or a human dependency prevent the repair; name the missing capability, owner and next action. Never claim an attempt for an inability explanation or unrelated CI work.`
+                    : `Delivery owner: address every finding in the local session. Record each fix and verification evidence or reasoned disagreement for the reviewer; unresolved human change requests remain blocking.`;
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
                     body: `${marker}\n<!-- squad-repair-request:${token} -->\n${prompt}\n\n${details}` });
                 }
               }
+              const metadataActions = specialistFailures.filter(({ check }) => /^Repair route: metadata\s*$/im.test(check.output?.summary || ''));
+              if (metadataActions.length && !independent.length) {
+                const marker = `<!-- squad-metadata-findings:${sha}:${inputKey} -->`;
+                if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').startsWith(marker))) {
+                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${marker}\nDelivery owner: correct these records and request re-evaluation. This is not a code repair or human escalation.\n\n${metadataActions.map(({ role, check }) => `${role}: ${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
+                }
+              }
               const humanActions = specialistFailures.filter(({ check }) => /^Repair route: human\s*$/im.test(check.output?.summary || ''));
-              if (!feedback.length && humanActions.length) {
+              if (!independent.length && !feedback.length && !metadataActions.length && humanActions.length) {
                 await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                 await agent.rest.issues.createComment({ owner, repo, issue_number: number,
                   body: `@${human} The remaining review findings require a metadata/scope decision, external dependency, or complete review input, not a coding attempt. Resolve the specific actions below, then explicitly resume repairs. No code-repair attempt was consumed.\n\n${humanActions.map(({ role, check }) => `### ${role}\n${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
@@ -656,6 +760,7 @@ jobs:
                 // Re-read live state immediately before arming auto-merge. The
                 // branch rules and GitHub itself remain the merge authority.
                 const latestPr = (await github.rest.pulls.get({ owner, repo, pull_number: number })).data;
+                const freshSplit = await splitInputs(latestPr);
                 const freshHuman = await humanFeedback(number);
                 const freshChecks = await github.paginate(github.rest.checks.listForRef, {
                   owner, repo, ref: sha, per_page: 100,
@@ -676,7 +781,7 @@ jobs:
                     const check = currentHeadCheck(freshChecks, item.check, sha);
                     if (!reviewResultIsFresh({
                       check, run: result, sha, removedAt: reviewNoneRemovedAt(freshTimeline),
-                    }) || check.conclusion !== 'success') freshReviewsOk = false;
+                    }) || check.conclusion !== 'success' || split && !splitReviewPasses(item.role, check)) freshReviewsOk = false;
                   }
                 }
                 if (latestPr.state !== 'open' || latestPr.head.sha !== sha
@@ -684,13 +789,14 @@ jobs:
                     || isReviewNone(freshLabels) !== isReviewNone(nowLabels)
                     || reviewNoneRemovedAt(freshTimeline) !== removedAt
                     || freshLabels.includes('handoff:local') !== nowLabels.includes('handoff:local')
-                    || reviewInputKey(latestPr.body || '') !== inputKey
+                    || freshSplit?.reason || (freshSplit?.key || reviewInputKey(latestPr.body || '')) !== inputKey
                     || !evaluateCompletion(latestPr.body, { createdAt: latestPr.created_at }).ok
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
                     || freshRouting && (freshRouting.blocked || excludedFailure(freshChecks)
                       || latestPr.base.sha !== pr.base.sha
                       || freshRouting.roles.join(',') !== routing?.roles.join(','))
                     || !freshReviewsOk
+                    || !revisionAdmitted(latestPr, freshHuman.reviews)
                     || hasHumanBlocks({ reviews: freshHuman.reviews, threads: freshHuman.feedback, owner })
                     || (cloudPr && classifySession(await workflowRuns(copilotWorkflow, pr.head.ref)).state !== 'ok')) {
                   await setReadiness(latestPr, sha, {

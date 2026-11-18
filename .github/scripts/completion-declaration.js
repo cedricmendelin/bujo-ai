@@ -241,5 +241,5 @@ function partialHandoff(body, repository) {
 
 module.exports = {
   acceptanceTracking, evaluateCompletion, hasPartialDeclaration, repairGeneratedClosingReferences,
-  partialHandoff, removeNonProse, LEGACY_PR_CUTOFF,
+  partialHandoff, removeNonProse, stripFencedCode, LEGACY_PR_CUTOFF,
 };

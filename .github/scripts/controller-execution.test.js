@@ -155,7 +155,7 @@ async function execute(state, step = 'evaluate') {
     },
     issues: {
       listComments: endpoint('comments', () => ({ data: state.comments })),
-      get: endpoint('issue', () => ({ data: state.issue })),
+      get: endpoint('issue', args => ({ data: state.issues?.[args.issue_number] || state.issue })),
       createComment: endpoint('comment', args => {
         state.comments.push({ ...args, id: 3000 + state.comments.length,
           user: { login: state.commentLogin || owner }, created_at: stamp(30) });
@@ -1102,14 +1102,142 @@ test('production-source mutations expose missing review-input and completion-pre
   const state = fixture();
   state.pr.body = 'New acceptance evidence.';
   state.mutateSource = code => code.replace(
-    "const inputKey = reviewInputKey(pr.body || '');",
+    "const inputKey = split?.key || reviewInputKey(pr.body || '');",
     `const inputKey = '${reviewInputKey('')}';`,
   );
   assert.equal(enables(await execute(state)).length, 0, 'final live input guard must still reject the stale result');
   const bypass = fixture();
   bypass.pr.body = 'Completion: partial\nFixes #11';
-  bypass.mutateSource = code => code.replace('if (!completion.ok || referenceFinding) {', 'if (false) {');
+  bypass.mutateSource = code => code.replace('if (!completion.ok || referenceFinding || split?.reason) {', 'if (false) {');
   const result = await execute(bypass);
   assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4,
     'removing preflight incorrectly spends reviews; the preflight regression test asserts zero');
+});
+
+test('blocking planning questions revoke approval and prevent assignment under the old plan', async () => {
+ const state = fixture();
+ const plan = { id: 1, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: builder' };
+ const question = { id: 2, user: { login: owner }, body: '## Planning questions\nWhich browser is required?' };
+ state.comments = [plan, question];
+ state.issue.labels = [{ name: 'plan:approved' }];
+ state.context.eventName = 'issue_comment';
+ Object.assign(state.context.payload, { issue: state.issue, comment: question });
+ assert.equal((await execute(state, 'plan')).calls.filter(call => call.name === 'removeLabel').length, 1);
+ state.issue.labels = [{ name: 'plan:approved' }];
+ state.context.eventName = 'issues';
+ const result = await execute(state, 'assign');
+ assert.match(result.errors.join('\n'), /Planning questions are unresolved/);
+ assert.ok(result.calls.some(call => call.name === 'removeLabel'));
+ state.comments.splice(1, 0, { ...question, id: 3, body: '## 📋 Implementation plan v2 · owner: builder\nSafari is required.' });
+ state.issue.labels = [{ name: 'plan:approved' }];
+ assert.equal((await execute(state, 'assign')).errors.length, 0);
+});
+
+function scopeSplitFixture() {
+ const state = fixture();
+ const record = 'Deferred: Add a dark-theme screenshot | reason: Existing help is sufficient | owner: builder | next: Check the updated help';
+ state.pr.body = `Completion: full\nCloses #11\nPlan: v1\nScope split: #22\n${record}`;
+ const source = { ...state.issue, labels: [{ name: 'plan:approved' }],
+   body: `## Acceptance criteria\n- Existing help works\n- Add a dark-theme screenshot\n\nScope split: #22\nSplit PR: #81\n${record}` };
+ const followUp = { number: 22, state: 'open', body: `Split from: #11\nSplit PR: #81\n${record}` };
+ const plan = { id: 5, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: builder\nVerify existing help.' };
+ state.comments = [plan];
+ state.issues = { 11: source, 22: followUp };
+ const key = reviewInputKey(JSON.stringify([reviewInputKey(state.pr.body), state.pr.base.sha,
+   source.body, followUp.body, plan.id, plan.body]));
+ for (const role of ROLES) state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${key}`;
+ for (const check of state.checks.filter(item => /Architect|Verifier/.test(item.name))) {
+   check.output.summary += '\nScope split: verified';
+ }
+ return state;
+}
+
+test('a closing scope split needs live reciprocal records and cannot opt out of review', async () => {
+ assert.equal(enables(await execute(scopeSplitFixture())).length, 1);
+ for (const change of [
+   state => { delete state.issues[22]; },
+   state => { state.issues[22].state = 'closed'; },
+   state => { state.issues[22].body = state.issues[22].body.replace('updated help', 'existing help'); },
+   state => { state.pr.labels.push({ name: 'review:none' }); },
+   state => { state.issues[11].labels = []; },
+   state => { state.issues[11].body += '\n- Another acceptance criterion'; },
+   state => { state.checks.find(check => check.name.endsWith('Verifier')).output.summary = 'Generic approval'; },
+ ]) {
+   const state = scopeSplitFixture();
+   change(state);
+   assert.equal(enables(await execute(state)).length, 0);
+   assert.notEqual(readinessFrom(state).conclusion, 'success');
+ }
+ const state = scopeSplitFixture();
+ let followUpReads = 0;
+ state.before = (name, args) => {
+   if (name === 'issue' && args.issue_number === 22 && ++followUpReads === 2) state.issues[22].state = 'closed';
+ };
+ assert.equal(enables(await execute(state)).length, 0);
+ const bypass = scopeSplitFixture();
+ bypass.issues[22].state = 'closed';
+ bypass.mutateSource = code => code.replace('if (reason) return { reason };', '');
+ assert.equal(enables(await execute(bypass)).length, 1,
+   'removing live split validation wrongly permits closure with a closed follow-up');
+});
+
+test('transient reviewer failures get one retry then escalate if still failing', async () => {
+ const state = fixture();
+ state.runs.Architect[0].conclusion = 'timed_out';
+ const first = await execute(state);
+ assert.deepEqual(first.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['Architect']);
+ assert.equal(first.calls.some(call => call.name === 'addLabels'), false);
+ assert.equal((await execute(state)).calls.some(call => call.name === 'dispatch'), false);
+ Object.assign(state.runs.Architect[0], { status: 'completed', conclusion: 'timed_out' });
+ const last = await execute(state);
+ assert.equal(last.calls.some(call => call.name === 'dispatch'), false);
+ assert.ok(last.calls.some(call => call.name === 'addLabels'));
+});
+
+test('formal rejection and routine metadata findings never re-dispatch the original coding agent', async () => {
+ for (const summary of ['Repair route: implementation\nRevision: independent', 'Repair route: metadata']) {
+   const state = fixture();
+   cloud(state);
+   const check = state.checks.find(item => item.name === 'Squad Review / Verifier');
+   check.conclusion = 'failure';
+   check.output.summary = summary;
+   const first = await execute(state);
+   assert.equal(enables(first).length, 0);
+   assert.equal(first.calls.some(call => call.name === 'addLabels'), false);
+   assert.match(commentsFrom(first).join('\n'), /different eligible agent|correct these records/);
+   assert.doesNotMatch(commentsFrom(first).join('\n'), /@copilot Fix/);
+   assert.equal(commentsFrom(await execute(state)).length, 0);
+ }
+});
+
+test('a later head cannot clear recorded rejection without current owner confirmation and review', async () => {
+ const state = fixture();
+ const rejectedSha = 'c'.repeat(40);
+ state.comments = [{ id: 33, user: { login: owner },
+   body: `<!-- squad-independent-revision:${rejectedSha}:${reviewInputKey('')} -->` }];
+ const result = await execute(state);
+ assert.equal(enables(result).length, 0);
+ assert.match(readinessFrom(state).output.summary, /Independent revision pending/);
+ state.reviews = [{ state: 'COMMENTED', commit_id: sha, user: { login: 'other', type: 'User' },
+   body: 'Independent revision: 33 by builder/replacement' }];
+ assert.equal(enables(await execute(state)).length, 0);
+ state.reviews[0].user.login = owner;
+ assert.equal(enables(await execute(state)).length, 1);
+ state.pr.labels.push({ name: 'review:none' });
+ assert.equal(enables(await execute(state)).length, 0);
+});
+
+test('missing specialist repair report triggers a review, not another coding session', async () => {
+ const state = fixture();
+ cloud(state);
+ state.comments = [fixComment(stamp(0))];
+ state.runs.copilot = [{ id: 1, status: 'completed', conclusion: 'success', created_at: stamp(1) }];
+ const check = state.checks.find(item => item.name === 'Squad Review / Verifier');
+ check.conclusion = 'failure';
+ check.output.summary = 'Repair route: implementation';
+ const first = await execute(state);
+ assert.deepEqual(first.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['Verifier']);
+ assert.equal(first.calls.some(call => call.name === 'addLabels'), false);
+ assert.doesNotMatch(commentsFrom(first).join('\n'), /@copilot Fix/);
+ assert.equal((await execute(state)).calls.some(call => call.name === 'dispatch'), false);
 });

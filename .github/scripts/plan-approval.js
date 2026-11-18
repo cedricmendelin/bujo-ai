@@ -3,6 +3,7 @@
 const PLAN_HEADING = /^## 📋 Implementation plan v([1-9]\d*) · owner: `?(architect|builder|ai|devops)`?\s*$/;
 const PLAN_AUTHORS = new Set(['github-actions[bot]']);
 const COPILOT_ASSIGNEE = 'copilot-swe-agent[bot]';
+const QUESTIONS_HEADING = '## Planning questions';
 
 function isCopilotAssignee(assignee) {
   // REST can return the bot's display name instead of its assignment handle.
@@ -30,6 +31,10 @@ function latestPlan(comments, owner) {
   }
   const candidates = trusted.map(comment => parsePlan(comment, owner)).filter(Boolean)
     .sort((a, b) => a.comment.id - b.comment.id);
+  const questions = trusted.filter(comment => isQuestions(comment) && comment.id > (candidates.at(-1)?.comment.id ?? 0))
+    .sort((a, b) => b.id - a.id)[0];
+  if (questions) return { ok: false, waiting: true, comment: questions,
+    reason: 'Planning questions are unresolved; publish a new numbered plan before approval.' };
   if (!candidates.length) return { ok: false, reason: 'No owner- or workflow-authored versioned plan was found.' };
   if (candidates[0].version !== 1) return { ok: false, reason: 'Plan history must begin with version 1.' };
   for (let i = 1; i < candidates.length; i++) {
@@ -38,6 +43,11 @@ function latestPlan(comments, owner) {
     }
   }
   return { ok: true, plan: candidates.at(-1) };
+}
+
+function isQuestions(comment) {
+  return typeof comment?.body === 'string'
+    && comment.body.trimStart().split(/\r?\n/, 1)[0].trimEnd() === QUESTIONS_HEADING;
 }
 
 function approvalPath({ labels, assignees = [] }) {
@@ -52,5 +62,5 @@ function isEligiblePermission(permission) {
 }
 
 module.exports = {
-  COPILOT_ASSIGNEE, PLAN_HEADING, approvalPath, isCopilotAssignee, isEligiblePermission, latestPlan, parsePlan,
+  COPILOT_ASSIGNEE, PLAN_HEADING, approvalPath, isCopilotAssignee, isEligiblePermission, isQuestions, latestPlan, parsePlan,
 };

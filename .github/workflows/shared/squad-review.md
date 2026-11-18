@@ -43,8 +43,16 @@ ${{ github.repository }}. Follow your custom agent's review rules above.
    not a success or a statement that the diff was not reviewed.
    For Architect and Verifier reviews, compare the PR against every linked
    issue acceptance criterion. Unmet criteria are blocking whenever the PR
-   claims `Completion: full`; they can
-   never be downgraded to advisory. Review all body text, including generated
+   claims `Completion: full` unless an audited scope split validly transfers
+   the work. For a `Scope split: #N`, read the open follow-up and original
+   issue, including the exact Deferred records and cited approved plan.
+   Architect and Verifier must independently block if any transfer removes a
+   required outcome, safeguard, compatibility contract, or necessary
+   verification; if the delivery no longer meets the original intent; or if
+   a transfer is not genuinely unexpected and nonessential. Verify evidence
+   for all retained criteria. Architect and Verifier include the exact
+   line `Scope split: verified` in a successful check only after these
+   validations. Review all body text, including generated
    suffixes,    when checking for closing references. Verifier owns acceptance evidence;
    Architect also checks it when routed, with emphasis on design conformance.
 5. A partial milestone may proceed only with `Completion: partial`, a
@@ -70,10 +78,13 @@ ${{ github.repository }}. Follow your custom agent's review rules above.
      make each blocking finding actionable. Label each finding with its repair
      owner: implementation, metadata/scope decision, or external dependency.
      Do not ask a coding agent to fix missing permissions or a PR suffix in code.
-     Include exactly one whole-line `Repair route: implementation` if any
-     actionable implementation blocker remains, otherwise `Repair route: human`
-     for blocking metadata/scope decisions, external dependencies, or incomplete
-     inspection. Use `Repair route: none` when there are no blocking findings.
+     Include exactly one whole-line route: `Repair route: implementation`
+     for actionable code blockers, `Repair route: metadata` for delivery
+     records the delivery owner can correct, `Repair route: human` for an
+     owner-only decision, access or external unblock, or `Repair route: none`
+     if there are no blockers. If formally rejecting the artifact rather than
+     requesting ordinary changes, add the exact line `Revision: independent`
+     and state the expertise required. Never name the author as revision owner.
 
 The default-branch Squad PR lifecycle controller aggregates the selected
 current-head review checks with CI and trusted human feedback. It forwards
