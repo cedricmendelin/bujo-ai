@@ -150,15 +150,32 @@ public sealed class JournalSnapshot
         }
 
         var items = Items.ToDictionary(item => item.Id);
-        var entries = Occurrences
+        var entries = new List<ListReviewEntry>();
+        foreach (var occurrence in Occurrences
             .Where(occurrence => occurrence.ListId == listId)
             .OrderBy(occurrence => occurrence.Sequence)
-            .ThenBy(occurrence => occurrence.Id)
-            .Select(occurrence => new ListReviewEntry(
-                items[occurrence.ItemId],
-                occurrence,
-                occurrence.State == OccurrenceState.Moved ? Resolve(occurrence.Id).Value : null))
-            .ToArray();
+            .ThenBy(occurrence => occurrence.Id))
+        {
+            ItemResolution? resolution = null;
+            if (occurrence.State == OccurrenceState.Moved)
+            {
+                var resolved = Resolve(occurrence.Id);
+                if (!resolved.IsSuccess)
+                {
+                    return DomainResult<ListReview>.Failure(resolved.Error!);
+                }
+
+                resolution = resolved.Value;
+            }
+
+            if (!items.TryGetValue(occurrence.ItemId, out var item))
+            {
+                return DomainResult<ListReview>.Failure(
+                    new DomainError(DomainErrorCode.InvariantViolation, "Occurrence has no canonical item."));
+            }
+
+            entries.Add(new ListReviewEntry(item, occurrence, resolution));
+        }
 
         return DomainResult<ListReview>.Success(new ListReview(
             list,

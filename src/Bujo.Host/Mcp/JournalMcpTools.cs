@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Security.Claims;
 using Bujo.Application;
 using Bujo.Domain;
+using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -112,13 +114,60 @@ public sealed class JournalMcpTools
         string? goalText) =>
         McpErrors.From(journal.SetListGoal(listId, goalText));
 
-    [McpServerTool(Name = "close_list"), Description("Closes one eligible journal list after its open occurrences are resolved. The Future Log cannot be closed.")]
+    [McpServerTool(Name = "close_list"), Description("Closes a list only when it has no unfinished occurrences. Use get_list_review and an approved review proposal to apply dispositions before closure. The Future Log cannot be closed.")]
     public static CallToolResult CloseList(JournalApplicationService journal, Guid listId) =>
         McpErrors.From(journal.CloseList(listId));
 
-    [McpServerTool(Name = "reopen_list"), Description("Reopens one closed journal list.")]
+    [McpServerTool(Name = "reopen_list"), Description("Reopens one closed journal list. Occurrences on the list remain in their prior states and must be explicitly acted on.")]
     public static CallToolResult ReopenList(JournalApplicationService journal, Guid listId) =>
         McpErrors.From(journal.ReopenList(listId));
+
+    [McpServerTool(Name = "get_list_review", ReadOnly = true, Destructive = false),
+     Description("Returns unfinished occurrences, historical moved links with their resolved destination/state, and resolved history as separate sections.")]
+    public static CallToolResult GetListReview(ReviewApplicationService review, Guid listId) =>
+        McpErrors.From(review.GetListReview(listId));
+
+    [McpServerTool(Name = "create_review_proposal"),
+     Description("Creates an inspectable, immutable list-review proposal. Include exact occurrence and item versions, destinations and whether the list should close. Approval is only available in the PWA.")]
+    public static CallToolResult CreateReviewProposal(
+        ReviewApplicationService review,
+        IHttpContextAccessor httpContextAccessor,
+        ReviewProposalRequest request) =>
+        McpErrors.From(review.CreateProposal(
+            request,
+            Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
+
+    [McpServerTool(Name = "get_review_proposal", ReadOnly = true, Destructive = false),
+     Description("Returns a proposal created by the authenticated user, including its exact changes and digest.")]
+    public static CallToolResult GetReviewProposal(
+        ReviewApplicationService review,
+        IHttpContextAccessor httpContextAccessor,
+        Guid proposalId) =>
+        McpErrors.From(review.GetProposal(proposalId, Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
+
+    [McpServerTool(Name = "cancel_review_proposal"),
+     Description("Cancels a pending or approved proposal created by the authenticated user without changing journal data.")]
+    public static CallToolResult CancelReviewProposal(
+        ReviewApplicationService review,
+        IHttpContextAccessor httpContextAccessor,
+        Guid proposalId) =>
+        McpErrors.From(review.CancelProposal(proposalId, Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
+
+    [McpServerTool(Name = "reject_review_proposal"),
+     Description("Rejects a pending or approved proposal created by the authenticated user without changing journal data.")]
+    public static CallToolResult RejectReviewProposal(
+        ReviewApplicationService review,
+        IHttpContextAccessor httpContextAccessor,
+        Guid proposalId) =>
+        McpErrors.From(review.RejectProposal(proposalId, Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
+
+    [McpServerTool(Name = "apply_review_proposal"),
+     Description("Applies a proposal only after its creator has approved its digest in the authenticated PWA. No approval argument is accepted.")]
+    public static CallToolResult ApplyReviewProposal(
+        ReviewApplicationService review,
+        IHttpContextAccessor httpContextAccessor,
+        Guid proposalId) =>
+        McpErrors.From(review.ApplyProposal(proposalId, Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
 
     [McpServerTool(Name = "move_item", Idempotent = true), Description("Moves one item to a list. Reuse operationId on retries and supply the expected current occurrence ID.")]
     public static CallToolResult MoveItem(
@@ -140,4 +189,7 @@ public sealed class JournalMcpTools
     [McpServerTool(Name = "reopen_occurrence"), Description("Reopens one eligible current occurrence.")]
     public static CallToolResult ReopenOccurrence(JournalApplicationService journal, Guid occurrenceId) =>
         McpErrors.From(journal.Transition(occurrenceId, OccurrenceAction.Reopen));
+
+    private static ReviewActor Actor(IHttpContextAccessor accessor, ReviewProposalSource source) =>
+        ReviewActor.FromPrincipal(accessor.HttpContext?.User ?? new ClaimsPrincipal(), source, interactive: false);
 }

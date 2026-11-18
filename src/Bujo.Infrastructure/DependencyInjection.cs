@@ -21,6 +21,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<JournalService>();
         services.AddScoped<JournalApplicationService>();
+        services.AddScoped<ReviewApplicationService>();
         return services;
     }
 }

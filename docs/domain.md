@@ -87,6 +87,30 @@ occurrence cannot be reopened there. A closed list can itself be explicitly
 reopened. Closure and concurrent writes must be coordinated so that a closed
 list cannot acquire an `Open` occurrence.
 
+## Manual list review proposals
+
+A list review presents unfinished `Open` occurrences separately from historical
+`Moved` links, which include their resolved final destination and state.
+`Done` and `Abandoned` occurrences appear as resolved history. Moved links do
+not block closure; every unfinished occurrence must have an explicit move,
+done, or abandon disposition before a closure proposal can be created.
+
+Bulk, ceremony-generated, destructive, and disposition-plus-closure changes
+are immutable proposals containing exact item/occurrence IDs, expected item and
+list versions, destinations, deterministic operation IDs, a 24-hour expiry, and
+a server-computed SHA-256 digest. The creator approves that digest only from
+their approved interactive PWA session. MCP can create, inspect, cancel, reject,
+and apply proposals, but cannot approve them or claim approval in a tool
+argument. Application verifies the single-use approval and all expected
+versions and applies the changes plus requested closure in one repository
+transaction. A stale proposal is marked conflicted and must be reviewed and
+approved again. Cancelled or rejected proposals do not change journal data.
+
+Reopening a closed list is a direct explicit action. It changes only the list
+state; closed-list occurrences retain their prior states and must be explicitly
+reopened or otherwise acted on before they become active again. New
+occurrences may be created only after the list is reopened.
+
 ## Planned periods and calendar
 
 An item has one planned period: `Day`, `Week`, `Month`, `Quarter`, `Year`, or

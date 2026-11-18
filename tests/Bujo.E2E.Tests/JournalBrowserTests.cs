@@ -134,6 +134,37 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Fact]
+    public async Task ListReviewShowsExplicitDispositionsAndRequiresPwaApprovalBeforeClosure()
+    {
+        await using var context = await fixture.CreateContextAsync(width: 390, height: 844);
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/lists");
+        await CreateList(page, "Review workflow");
+        await Link(page, "Review workflow").ClickAsync();
+        await CaptureAsync(page, "Review disposition", "Review workflow");
+        await Link(page, "Lists").ClickAsync();
+        await Link(page, "Review workflow").ClickAsync();
+        await Link(page, "Start review").ClickAsync();
+
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Unfinished active occurrences" })).ToBeVisibleAsync();
+        await Expect(page.GetByRole(AriaRole.Link, new() { Name = "Review disposition" })).ToBeVisibleAsync();
+        var accessibility = await page.RunAxe();
+        Assert.Empty(accessibility.Violations);
+
+        await page.GetByLabel("Disposition").SelectOptionAsync("Done");
+        await page.GetByLabel("Close this list after applying all dispositions").CheckAsync();
+        await Button(page, "Review proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();
+        Assert.Matches("^[0-9a-f]{64}$", await page.Locator("code").InnerTextAsync());
+        await Button(page, "Approve this proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Approved" })).ToBeVisibleAsync();
+        await Button(page, "Apply approved proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Applied" })).ToBeVisibleAsync();
+        await Link(page, "Back to list").ClickAsync();
+        await Expect(page.GetByText("Closed", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [Fact]
     public async Task InvalidIsoWeekShowsDomainErrorWithoutCreatingAList()
     {
         await using var context = await fixture.CreateContextAsync();

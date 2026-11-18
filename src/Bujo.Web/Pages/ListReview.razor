@@ -1,0 +1,237 @@
+@page "/lists/{ListId:guid}/review"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+
+<PageTitle>Review list · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Review · @(_review?.List.Name ?? "List")</h1>
+    <p><a href="/lists/@ListId">Back to list</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_review is { } review)
+    {
+        <h2>Unfinished active occurrences</h2>
+        @if (review.Unfinished.Count == 0)
+        {
+            <p>No unfinished occurrences.</p>
+        }
+        else
+        {
+            <ul class="journal-rows">
+                @foreach (var entry in review.Unfinished)
+                {
+                    var draft = _drafts[entry.Occurrence.Id];
+                    <li>
+                        <a href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
+                        <span> · item @entry.Item.Id · occurrence @entry.Occurrence.Id · version @entry.Item.Version</span>
+                        <label for="disposition-@entry.Occurrence.Id">Disposition</label>
+                        <select id="disposition-@entry.Occurrence.Id" @bind="draft.Action">
+                            <option value="">Choose one</option>
+                            <option value="Move">Move elsewhere</option>
+                            <option value="Done">Mark done</option>
+                            <option value="Abandon">Abandon</option>
+                        </select>
+                        @if (draft.Action == "Move")
+                        {
+                            <label for="destination-@entry.Occurrence.Id">Destination</label>
+                            <select id="destination-@entry.Occurrence.Id" @bind="draft.DestinationListId">
+                                <option value="">Choose a list</option>
+                                @foreach (var destination in _destinations.Where(candidate => candidate.Id != ListId))
+                                {
+                                    <option value="@destination.Id">@destination.Name (version @destination.Version)</option>
+                                }
+                            </select>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        <h2>Historical moved links</h2>
+        @if (review.Moved.Count == 0)
+        {
+            <p>No moved links.</p>
+        }
+        else
+        {
+            <ul class="journal-rows">
+                @foreach (var entry in review.Moved)
+                {
+                    <li>
+                        @entry.Item.Name · @entry.Occurrence.Id · Moved
+                        @if (entry.Resolution is { } resolution)
+                        {
+                            <span> · resolves to @resolution.CurrentList.Name · @resolution.CurrentOccurrence.State</span>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+
+        <h2>Resolved history</h2>
+        @if (review.Resolved.Count == 0)
+        {
+            <p>No completed or abandoned occurrences.</p>
+        }
+        else
+        {
+            <ul class="journal-rows">
+                @foreach (var entry in review.Resolved)
+                {
+                    <li>@entry.Item.Name · @entry.Occurrence.State</li>
+                }
+            </ul>
+        }
+
+        <fieldset class="journal-form" disabled="@(Busy || !Ready || review.Unfinished.Count == 0)">
+            <label>
+                <input type="checkbox" @bind="_requestClose" />
+                Close this list after applying all dispositions
+            </label>
+            <button type="button" @onclick="CreateProposalAsync">Review proposal</button>
+        </fieldset>
+    }
+
+    @if (_proposal is { } proposal)
+    {
+        <section aria-labelledby="proposal-heading">
+            <h2 id="proposal-heading">Proposal · @proposal.Status</h2>
+            <p>Proposal ID: @proposal.Id</p>
+            <p>List version: @proposal.ExpectedListVersion · digest: <code>@proposal.Digest</code></p>
+            <ul class="journal-rows">
+                @foreach (var change in proposal.Changes)
+                {
+                    <li>
+                        Item @change.ItemId · occurrence @change.OccurrenceId · item version @change.ExpectedItemVersion ·
+                        @change.Action
+                        @if (change.DestinationListId is { } destination)
+                        {
+                            <span> · destination @destination · list version @change.ExpectedDestinationListVersion</span>
+                        }
+                    </li>
+                }
+            </ul>
+            @if (proposal.Status == ReviewProposalStatus.Pending)
+            {
+                <button type="button" disabled="@(Busy || !Ready)" @onclick="ApproveProposalAsync">Approve this proposal</button>
+            }
+            @if (proposal.Status == ReviewProposalStatus.Approved)
+            {
+                <button type="button" disabled="@(Busy || !Ready)" @onclick="ApplyProposalAsync">Apply approved proposal</button>
+            }
+            @if (proposal.Status is ReviewProposalStatus.Pending or ReviewProposalStatus.Approved)
+            {
+                <button type="button" disabled="@(Busy || !Ready)" @onclick="CancelProposalAsync">Cancel proposal</button>
+                <button type="button" disabled="@(Busy || !Ready)" @onclick="RejectProposalAsync">Reject proposal</button>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ListId { get; set; }
+    private Bujo.Domain.ListReview? _review;
+    private JournalListSnapshot[] _destinations = [];
+    private Dictionary<Guid, DispositionDraft> _drafts = [];
+    private ReviewProposalSnapshot? _proposal;
+    private ReviewActor? _actor;
+    private bool _requestClose;
+
+    protected override async Task InitializeAsync() => _actor = await GetReviewActorAsync();
+
+    protected override void Read()
+    {
+        var result = Reviews.GetListReview(ListId);
+        if (!result.IsSuccess)
+            throw new DomainException(result.Error!.Code, result.Error.Message, result.Error.RelatedIds);
+
+        _review = result.Value!;
+        var snapshot = Journal.GetSnapshot();
+        _destinations = snapshot.Lists.Where(list => list.State == JournalListState.Open).ToArray();
+        foreach (var entry in _review.Unfinished)
+            _drafts.TryAdd(entry.Occurrence.Id, new DispositionDraft());
+        foreach (var id in _drafts.Keys.Except(_review.Unfinished.Select(entry => entry.Occurrence.Id)).ToArray())
+            _drafts.Remove(id);
+        if (_proposal is { } proposal)
+        {
+            var current = Reviews.GetProposal(proposal.Id, _actor!);
+            if (current.IsSuccess)
+                _proposal = current.Value;
+        }
+    }
+
+    private Task CreateProposalAsync()
+    {
+        if (_review is null || _actor is null)
+            return Task.CompletedTask;
+
+        var changes = new List<ReviewChangeRequest>();
+        foreach (var entry in _review.Unfinished)
+        {
+            var draft = _drafts[entry.Occurrence.Id];
+            if (!Enum.TryParse<ReviewDisposition>(draft.Action, out var action))
+            {
+                SetError($"Choose a disposition for {entry.Item.Name}.");
+                return Task.CompletedTask;
+            }
+
+            var destination = action == ReviewDisposition.Move
+                ? _destinations.SingleOrDefault(list => list.Id == draft.DestinationListId)
+                : null;
+            if (action == ReviewDisposition.Move && destination is null)
+            {
+                SetError($"Choose a destination for {entry.Item.Name}.");
+                return Task.CompletedTask;
+            }
+
+            changes.Add(new ReviewChangeRequest(
+                entry.Item.Id,
+                entry.Occurrence.Id,
+                entry.Item.Version,
+                action,
+                destination?.Id,
+                destination?.Version));
+        }
+
+        return SaveAsync(
+            () => Reviews.CreateProposal(
+                new ReviewProposalRequest(_review.List.Id, _review.List.Version, _requestClose, changes),
+                _actor),
+            proposal =>
+            {
+                _proposal = proposal;
+                return "Proposal created. Review its exact changes and digest before approving.";
+            });
+    }
+
+    private Task ApproveProposalAsync() => _proposal is null || _actor is null
+        ? Task.CompletedTask
+        : SaveAsync(
+            () => Reviews.ApproveProposal(_proposal.Id, _proposal.Digest, _actor),
+            proposal => { _proposal = proposal; return "Proposal approved."; });
+
+    private Task ApplyProposalAsync() => _proposal is null || _actor is null
+        ? Task.CompletedTask
+        : SaveAsync(
+            () => Reviews.ApplyProposal(_proposal.Id, _actor),
+            proposal => { _proposal = proposal; return "Proposal applied."; });
+
+    private Task CancelProposalAsync() => _proposal is null || _actor is null
+        ? Task.CompletedTask
+        : SaveAsync(
+            () => Reviews.CancelProposal(_proposal.Id, _actor),
+            proposal => { _proposal = proposal; return "Proposal cancelled without journal changes."; });
+
+    private Task RejectProposalAsync() => _proposal is null || _actor is null
+        ? Task.CompletedTask
+        : SaveAsync(
+            () => Reviews.RejectProposal(_proposal.Id, _actor),
+            proposal => { _proposal = proposal; return "Proposal rejected without journal changes."; });
+
+    private sealed class DispositionDraft
+    {
+        public string Action { get; set; } = string.Empty;
+
+        public Guid? DestinationListId { get; set; }
+    }
+}

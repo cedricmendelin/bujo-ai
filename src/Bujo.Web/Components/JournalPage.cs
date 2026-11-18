@@ -11,6 +11,7 @@ namespace Bujo.Web.Components;
 public abstract class JournalPage : ComponentBase, IDisposable
 {
     [Inject] protected JournalApplicationService Journal { get; set; } = null!;
+    [Inject] protected ReviewApplicationService Reviews { get; set; } = null!;
     [Inject] protected IJSRuntime JS { get; set; } = null!;
     [Inject] private AuthenticationStateProvider Authentication { get; set; } = null!;
     [Inject] private IAuthorizationService Authorization { get; set; } = null!;
@@ -39,6 +40,19 @@ public abstract class JournalPage : ComponentBase, IDisposable
     }
 
     protected virtual Task InitializeAsync() => Task.CompletedTask;
+
+    protected async Task<ReviewActor> GetReviewActorAsync()
+    {
+        var principal = (await Authentication.GetAuthenticationStateAsync()).User;
+        if (!(await Authorization.AuthorizeAsync(principal, "ApprovedUi")).Succeeded)
+        {
+            throw new DomainException(DomainErrorCode.ApprovalDenied, "Your journal session is unavailable.");
+        }
+
+        return ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: true);
+    }
+
+    protected void SetError(string message) => Error = message;
 
     [JSInvokable]
     public bool CheckConnection() => true;

@@ -91,6 +91,15 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
                 Content = JsonContent.Create(new { goalText = "Goal" })
             },
             new HttpRequestMessage(HttpMethod.Get, $"/api/occurrences/{id}/resolution"),
+            new HttpRequestMessage(HttpMethod.Get, $"/api/lists/{id}/review"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/review-proposals")
+            {
+                Content = JsonContent.Create(new { listId = id, expectedListVersion = 0, requestCloseList = false, changes = Array.Empty<object>() })
+            },
+            new HttpRequestMessage(HttpMethod.Get, $"/api/review-proposals/{id}"),
+            new HttpRequestMessage(HttpMethod.Post, $"/api/review-proposals/{id}/cancel"),
+            new HttpRequestMessage(HttpMethod.Post, $"/api/review-proposals/{id}/reject"),
+            new HttpRequestMessage(HttpMethod.Post, $"/api/review-proposals/{id}/apply"),
             new HttpRequestMessage(HttpMethod.Get, "/api/daily-start"),
             new HttpRequestMessage(HttpMethod.Get, "/api/planning/upcoming")
         };
@@ -198,6 +207,71 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
 
         Assert.Equal(HttpStatusCode.OK, weekly.StatusCode);
         Assert.Equal(HttpStatusCode.OK, anotherWeeklyList.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListReviewShowsUnfinishedOccurrencesAndBlocksUnapprovedClosure()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        using var listResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = "Review API list", kind = JournalListKind.Custom }));
+        using var listBody = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var listId = listBody.RootElement.GetProperty("id").GetGuid();
+        using var captureResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/items",
+            new { name = "Review API item", listId }));
+        using var captureBody = JsonDocument.Parse(await captureResponse.Content.ReadAsStringAsync());
+        var item = captureBody.RootElement.GetProperty("item");
+        var occurrence = captureBody.RootElement.GetProperty("occurrence");
+        using var reviewResponse = await client.SendAsync(AuthenticatedGet($"/api/lists/{listId}/review"));
+        using var reviewBody = JsonDocument.Parse(await reviewResponse.Content.ReadAsStringAsync());
+        using var closeResponse = await client.SendAsync(
+            AuthenticatedJsonRequest(HttpMethod.Post, $"/api/lists/{listId}/close", new { }));
+        using var closeBody = JsonDocument.Parse(await closeResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, reviewResponse.StatusCode);
+        Assert.Single(reviewBody.RootElement.GetProperty("unfinished").EnumerateArray());
+        Assert.Empty(reviewBody.RootElement.GetProperty("moved").EnumerateArray());
+        Assert.Equal(HttpStatusCode.Conflict, closeResponse.StatusCode);
+        Assert.Equal(nameof(DomainErrorCode.UnresolvedOccurrences), closeBody.RootElement.GetProperty("code").GetString());
+
+        using var proposalResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/review-proposals",
+            new
+            {
+                listId,
+                expectedListVersion = 1,
+                requestCloseList = true,
+                changes = new[]
+                {
+                    new
+                    {
+                        itemId = item.GetProperty("id").GetGuid(),
+                        occurrenceId = occurrence.GetProperty("id").GetGuid(),
+                        expectedItemVersion = item.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Done
+                    }
+                }
+            }));
+        using var proposalBody = JsonDocument.Parse(await proposalResponse.Content.ReadAsStringAsync());
+        var proposalId = proposalBody.RootElement.GetProperty("id").GetGuid();
+        using var unapprovedApply = await client.SendAsync(
+            AuthenticatedJsonRequest(HttpMethod.Post, $"/api/review-proposals/{proposalId}/apply", new { }));
+        using var noApiApproval = await client.SendAsync(
+            AuthenticatedJsonRequest(HttpMethod.Post, $"/api/review-proposals/{proposalId}/approve", new { digest = proposalBody.RootElement.GetProperty("digest").GetString() }));
+        using var afterApply = await client.SendAsync(AuthenticatedGet($"/api/lists/{listId}/review"));
+
+        Assert.Equal(HttpStatusCode.OK, proposalResponse.StatusCode);
+        Assert.Equal(64, proposalBody.RootElement.GetProperty("digest").GetString()!.Length);
+        Assert.Equal(HttpStatusCode.Conflict, unapprovedApply.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, noApiApproval.StatusCode);
+        using var afterApplyBody = JsonDocument.Parse(await afterApply.Content.ReadAsStringAsync());
+        Assert.Single(afterApplyBody.RootElement.GetProperty("unfinished").EnumerateArray());
     }
 
     [Fact]
@@ -350,6 +424,14 @@ internal sealed class FailingReadJournalRepository : IJournalRepository
     public DomainResult<ItemSnapshot> ChangePlannedPeriod(ChangePeriodCommand command) => throw new NotSupportedException();
 
     public DomainResult<JournalListSnapshot> SetListGoal(SetListGoalCommand command) => throw new NotSupportedException();
+
+    public DomainResult<ReviewProposalSnapshot> CreateReviewProposal(CreateReviewProposalCommand command) => throw new NotSupportedException();
+
+    public DomainResult<ReviewProposalSnapshot> GetReviewProposal(Guid id) => throw new NotSupportedException();
+
+    public DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command) => throw new NotSupportedException();
+
+    public DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command) => throw new NotSupportedException();
 }
 
 public sealed class TestAuthenticationHandler(

@@ -10,6 +10,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     private readonly Dictionary<Guid, Occurrence> _occurrences = [];
     private readonly List<JournalEvent> _history = [];
     private readonly Dictionary<Guid, (MoveFingerprint Fingerprint, DomainResult<MoveResult> Result)> _moveResults = [];
+    private readonly Dictionary<Guid, ReviewProposalSnapshot> _reviewProposals = [];
     private long _nextHistorySequence;
 
     public InMemoryJournalRepository()
@@ -26,7 +27,9 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         return repository;
     }
 
-    public InMemoryJournalRepository(JournalSnapshot snapshot)
+    public InMemoryJournalRepository(
+        JournalSnapshot snapshot,
+        IEnumerable<ReviewProposalSnapshot>? reviewProposals = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         foreach (var item in snapshot.Items)
@@ -46,6 +49,13 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
         _history.AddRange(snapshot.History);
         _nextHistorySequence = snapshot.History.Count == 0 ? 0 : snapshot.History.Max(item => item.Sequence);
+        if (reviewProposals is not null)
+        {
+            foreach (var proposal in reviewProposals)
+            {
+                _reviewProposals.Add(proposal.Id, proposal);
+            }
+        }
     }
 
     public JournalSnapshot GetSnapshot()
@@ -349,11 +359,304 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         }
     }
 
+    public DomainResult<ReviewProposalSnapshot> CreateReviewProposal(CreateReviewProposalCommand command)
+    {
+        lock (_gate)
+        {
+            if (command.Id == Guid.Empty || command.Changes.Count == 0 ||
+                _reviewProposals.ContainsKey(command.Id))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.InvalidInput, "The review proposal is invalid."));
+            }
+
+            var proposal = new ReviewProposalSnapshot(
+                command.Id,
+                command.ListId,
+                command.ExpectedListVersion,
+                command.CreatedBy,
+                command.Source,
+                command.CreatedAt,
+                command.ExpiresAt,
+                ReviewProposalStatus.Pending,
+                command.RequestCloseList,
+                command.Changes.ToArray(),
+                command.Digest,
+                null,
+                null,
+                null,
+                null);
+            _reviewProposals.Add(proposal.Id, proposal);
+            return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+        }
+    }
+
+    public DomainResult<ReviewProposalSnapshot> GetReviewProposal(Guid id)
+    {
+        lock (_gate)
+        {
+            return _reviewProposals.TryGetValue(id, out var proposal)
+                ? DomainResult<ReviewProposalSnapshot>.Success(proposal)
+                : DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.NotFound, "The review proposal was not found."));
+        }
+    }
+
+    internal IReadOnlyList<ReviewProposalSnapshot> GetReviewProposals()
+    {
+        lock (_gate)
+        {
+            return _reviewProposals.Values.OrderBy(proposal => proposal.CreatedAt).ToArray();
+        }
+    }
+
+    public DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command)
+    {
+        lock (_gate)
+        {
+            if (!_reviewProposals.TryGetValue(command.Id, out var proposal))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.NotFound, "The review proposal was not found."));
+            }
+
+            if (!StringComparer.Ordinal.Equals(proposal.CreatedBy, command.UserId))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.ApprovalDenied, "The proposal is not available to this principal."));
+            }
+
+            if (command.Status == ReviewProposalStatus.Approved)
+            {
+                if (proposal.Status != ReviewProposalStatus.Pending ||
+                    command.OccurredAt >= proposal.ExpiresAt)
+                {
+                    return DomainResult<ReviewProposalSnapshot>.Failure(
+                        new DomainError(DomainErrorCode.ProposalTerminal, "The proposal is not pending or has expired."));
+                }
+
+                if (!StringComparer.Ordinal.Equals(proposal.Digest, command.Digest))
+                {
+                    return DomainResult<ReviewProposalSnapshot>.Failure(
+                        new DomainError(DomainErrorCode.ProposalDigestMismatch, "The proposal digest does not match."));
+                }
+
+                proposal = proposal with
+                {
+                    Status = ReviewProposalStatus.Approved,
+                    ApprovedBy = command.UserId,
+                    ApprovedAt = command.OccurredAt,
+                    ApprovedDigest = command.Digest
+                };
+            }
+            else if (command.Status == ReviewProposalStatus.Expired)
+            {
+                if (proposal.Status is not (ReviewProposalStatus.Pending or ReviewProposalStatus.Approved))
+                {
+                    return DomainResult<ReviewProposalSnapshot>.Failure(
+                        new DomainError(DomainErrorCode.ProposalTerminal, "The proposal is already terminal."));
+                }
+
+                proposal = proposal with { Status = ReviewProposalStatus.Expired };
+            }
+            else if (command.Status is ReviewProposalStatus.Cancelled or ReviewProposalStatus.Rejected)
+            {
+                if (proposal.Status is not (ReviewProposalStatus.Pending or ReviewProposalStatus.Approved))
+                {
+                    return DomainResult<ReviewProposalSnapshot>.Failure(
+                        new DomainError(DomainErrorCode.ProposalTerminal, "The proposal is already terminal."));
+                }
+
+                proposal = proposal with { Status = command.Status };
+            }
+            else
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.InvalidInput, "The proposal status transition is invalid."));
+            }
+
+            _reviewProposals[proposal.Id] = proposal;
+            return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+        }
+    }
+
+    public DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command)
+    {
+        lock (_gate)
+        {
+            if (!_reviewProposals.TryGetValue(command.Id, out var proposal))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.NotFound, "The review proposal was not found."));
+            }
+
+            if (proposal.Status == ReviewProposalStatus.Applied)
+            {
+                return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+            }
+
+            if (!StringComparer.Ordinal.Equals(proposal.CreatedBy, command.UserId) ||
+                !StringComparer.Ordinal.Equals(proposal.ApprovedBy, command.UserId))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.ApprovalDenied, "The proposal is not available to this principal."));
+            }
+
+            if (proposal.Status != ReviewProposalStatus.Approved ||
+                !StringComparer.Ordinal.Equals(proposal.Digest, command.Digest) ||
+                !StringComparer.Ordinal.Equals(proposal.ApprovedDigest, command.Digest))
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(
+                    new DomainError(DomainErrorCode.ApprovalRequired, "The proposal requires a valid approval."));
+            }
+
+            if (command.OccurredAt >= proposal.ExpiresAt)
+            {
+                proposal = proposal with { Status = ReviewProposalStatus.Expired };
+                _reviewProposals[proposal.Id] = proposal;
+                return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+            }
+
+            var list = _lists.GetValueOrDefault(proposal.ListId);
+            var stale = list is null || list.Version != proposal.ExpectedListVersion ||
+                list.State != JournalListState.Open;
+            foreach (var change in proposal.Changes)
+            {
+                var item = _items.GetValueOrDefault(change.ItemId);
+                var occurrence = _occurrences.GetValueOrDefault(change.OccurrenceId);
+                if (item is null || occurrence is null ||
+                    item.Version != change.ExpectedItemVersion ||
+                    item.CurrentOccurrenceId != occurrence.Id ||
+                    occurrence.ItemId != item.Id ||
+                    occurrence.ListId != proposal.ListId ||
+                    occurrence.State != OccurrenceState.Open)
+                {
+                    stale = true;
+                }
+
+                if (change.Action == ReviewDisposition.Move)
+                {
+                    var destination = change.DestinationListId is { } destinationId
+                        ? _lists.GetValueOrDefault(destinationId)
+                        : null;
+                    if (destination is null ||
+                        destination.State != JournalListState.Open ||
+                        destination.Version != change.ExpectedDestinationListVersion)
+                    {
+                        stale = true;
+                    }
+                }
+            }
+
+            if (stale)
+            {
+                proposal = proposal with { Status = ReviewProposalStatus.Conflicted };
+                _reviewProposals[proposal.Id] = proposal;
+                return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+            }
+
+            var before = SnapshotUnsafe();
+            var priorMoveResults = _moveResults.ToArray();
+            foreach (var change in proposal.Changes)
+            {
+                DomainResult<object> result;
+                if (change.Action == ReviewDisposition.Move)
+                {
+                    var item = RequireItem(change.ItemId);
+                    var destination = RequireList(change.DestinationListId!.Value);
+                    var moved = Move(new MoveCommand(
+                        change.OperationId,
+                        item.Id,
+                        change.OccurrenceId,
+                        destination.Id,
+                        item.Version,
+                        destination.Version,
+                        command.OccurredAt));
+                    result = moved.IsSuccess
+                        ? DomainResult<object>.Success(moved.Value!)
+                        : DomainResult<object>.Failure(moved.Error!);
+                }
+                else
+                {
+                    var occurrence = RequireOccurrence(change.OccurrenceId);
+                    var item = RequireItem(change.ItemId);
+                    var occurrenceList = RequireList(occurrence.ListId);
+                    var transitioned = Transition(new TransitionCommand(
+                        occurrence.Id,
+                        change.Action == ReviewDisposition.Done ? OccurrenceAction.Done : OccurrenceAction.Abandon,
+                        item.Version,
+                        occurrenceList.Version,
+                        command.OccurredAt));
+                    result = transitioned.IsSuccess
+                        ? DomainResult<object>.Success(transitioned.Value!)
+                        : DomainResult<object>.Failure(transitioned.Error!);
+                }
+
+                if (!result.IsSuccess)
+                {
+                    RestoreUnsafe(before, priorMoveResults);
+                    return DomainResult<ReviewProposalSnapshot>.Failure(result.Error!);
+                }
+            }
+
+            if (proposal.RequestCloseList)
+            {
+                var currentList = RequireList(proposal.ListId);
+                var closed = CloseList(new ListVersionCommand(currentList.Id, currentList.Version, command.OccurredAt));
+                if (!closed.IsSuccess)
+                {
+                    RestoreUnsafe(before, priorMoveResults);
+                    return DomainResult<ReviewProposalSnapshot>.Failure(closed.Error!);
+                }
+            }
+
+            proposal = proposal with
+            {
+                Status = ReviewProposalStatus.Applied,
+                AppliedAt = command.OccurredAt
+            };
+            _reviewProposals[proposal.Id] = proposal;
+            return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+        }
+    }
+
     private JournalSnapshot SnapshotUnsafe() => new(
         _items.Values.OrderBy(item => item.Id).Select(ToSnapshot).ToArray(),
         _lists.Values.OrderBy(list => list.Id).Select(ToSnapshot).ToArray(),
         _occurrences.Values.OrderBy(item => item.Sequence).ThenBy(item => item.Id).Select(ToSnapshot).ToArray(),
         _history.ToArray());
+
+    private void RestoreUnsafe(
+        JournalSnapshot snapshot,
+        IReadOnlyList<KeyValuePair<Guid, (MoveFingerprint Fingerprint, DomainResult<MoveResult> Result)>> moveResults)
+    {
+        _items.Clear();
+        foreach (var item in snapshot.Items)
+        {
+            _items.Add(item.Id, Item.FromSnapshot(item));
+        }
+
+        _lists.Clear();
+        foreach (var list in snapshot.Lists)
+        {
+            _lists.Add(list.Id, JournalList.FromSnapshot(list));
+        }
+
+        _occurrences.Clear();
+        foreach (var occurrence in snapshot.Occurrences)
+        {
+            _occurrences.Add(occurrence.Id, Occurrence.FromSnapshot(occurrence));
+        }
+
+        _history.Clear();
+        _history.AddRange(snapshot.History);
+        _nextHistorySequence = snapshot.History.Count == 0 ? 0 : snapshot.History.Max(item => item.Sequence);
+        _moveResults.Clear();
+        foreach (var moveResult in moveResults)
+        {
+            _moveResults.Add(moveResult.Key, moveResult.Value);
+        }
+    }
 
     private JournalEvent AddEvent(
         JournalEventKind kind,
