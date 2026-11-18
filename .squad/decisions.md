@@ -474,3 +474,11 @@
   in PR #133 is a scope deviation required to enforce the owner-requested
   unique-name constraint in SQL. Any retained weekly-key constraint also needs
   to be addressed explicitly in an approved plan revision.
+
+### 2026-11-18: Weekly lists may share a week key
+
+- The owner decided not to enforce uniqueness of weekly-list ISO year/week
+  keys, while retaining globally case-insensitive unique list names. This
+  clarifies the prior proposal in the issue #124 Copilot conversation.
+- Multiple weekly lists may therefore use the same ISO year/week key. Do not
+  add a domain or database uniqueness constraint for the week key.

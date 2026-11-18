@@ -37,9 +37,6 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.HasIndex(item => item.Kind)
                 .IsUnique()
                 .HasFilter("[Kind] = 0");
-            entity.HasIndex(item => new { item.WeekYear, item.WeekNumber })
-                .IsUnique()
-                .HasFilter("[Kind] = 1 AND [WeekYear] IS NOT NULL AND [WeekNumber] IS NOT NULL");
         });
 
         modelBuilder.Entity<ItemEntity>(entity =>

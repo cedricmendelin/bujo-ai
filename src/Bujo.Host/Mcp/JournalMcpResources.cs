@@ -37,8 +37,7 @@ public sealed class JournalMcpResources
         lookup errors. Domain codes: InvalidInput, InvalidTimeZone, NotFound,
         InvalidTransition, ListClosed, StaleOccurrence, ConcurrencyConflict,
         IdempotencyKeyReuse, DuplicateFutureLog, DuplicateListName,
-        DuplicateWeeklyList, InvariantViolation,
-        UnresolvedOccurrences, FutureLogCannotClose.
+        InvariantViolation, UnresolvedOccurrences, FutureLogCannotClose.
         Adapter lookup codes: AmbiguousList.
         """;
 }

@@ -41,10 +41,8 @@ proposal or performs a bulk operation. These tools are implemented in open PR
 owner confirmation of the API-MCP parity contract remains pending.
 
 List names are unique case-insensitively across list kinds, following the
-owner's direction. PR #133 also enforces uniqueness of keyed weekly lists per
-ISO year/week as a proposal pending owner confirmation; while that proposal
-remains in the implementation, duplicate attempts return the shared domain
-error.
+owner's direction. Multiple weekly lists may share the same ISO year/week key.
+The uniqueness rule applies to names, not week keys.
 
 There are no bulk or ceremony-generated tools. Do not interpret a prompt or
 tool description as authorization: only the listed single-operation tools are

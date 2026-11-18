@@ -13,7 +13,6 @@ public enum DomainErrorCode
     IdempotencyKeyReuse,
     DuplicateFutureLog,
     DuplicateListName,
-    DuplicateWeeklyList,
     InvalidTimeZone,
     InvariantViolation
 }

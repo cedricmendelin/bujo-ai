@@ -112,12 +112,6 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
                 DomainErrorCode.DuplicateListName,
                 "A list with this name already exists.");
         }
-        catch (DbUpdateException exception) when (IsUniqueIndexViolation(exception, "IX_JournalLists_WeekYear_WeekNumber"))
-        {
-            return DomainFailure<T>(
-                DomainErrorCode.DuplicateWeeklyList,
-                "A weekly list already exists for this ISO week.");
-        }
         catch (DbUpdateException exception) when (IsConstraintViolation(exception))
         {
             return ConcurrencyFailure<T>();

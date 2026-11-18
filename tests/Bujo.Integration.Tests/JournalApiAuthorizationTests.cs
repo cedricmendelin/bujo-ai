@@ -167,7 +167,7 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
-    public async Task ListCreationRejectsDuplicateNamesAndWeeklyKeys()
+    public async Task ListCreationRejectsDuplicateNamesAndAllowsMultipleWeeklyListsForAWeek()
     {
         using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
         using var client = factory.CreateClient();
@@ -191,15 +191,13 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
             HttpMethod.Post,
             "/api/lists",
             new { name = $"Week 48 {suffix}", kind = JournalListKind.Weekly, weekKey = new { year = 2026, week = 48 } }));
-        using var duplicateWeek = await client.SendAsync(AuthenticatedJsonRequest(
+        using var anotherWeeklyList = await client.SendAsync(AuthenticatedJsonRequest(
             HttpMethod.Post,
             "/api/lists",
             new { name = $"Planning 48 {suffix}", kind = JournalListKind.Weekly, weekKey = new { year = 2026, week = 48 } }));
-        using var duplicateWeekBody = JsonDocument.Parse(await duplicateWeek.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, weekly.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, duplicateWeek.StatusCode);
-        Assert.Equal("DuplicateWeeklyList", duplicateWeekBody.RootElement.GetProperty("code").GetString());
+        Assert.Equal(HttpStatusCode.OK, anotherWeeklyList.StatusCode);
     }
 
     [Fact]

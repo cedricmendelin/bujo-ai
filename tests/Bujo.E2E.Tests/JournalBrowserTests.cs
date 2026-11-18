@@ -150,7 +150,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Fact]
-    public async Task DuplicateListNameAndWeeklyKeyShowDomainErrors()
+    public async Task DuplicateListNameShowsDomainErrorAndWeeklyListsMayShareAWeek()
     {
         await using var context = await fixture.CreateContextAsync();
         var page = await context.NewPageAsync();
@@ -175,9 +175,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await page.GetByLabel("ISO week-year").FillAsync("2026");
         await page.GetByLabel("ISO week number").FillAsync("48");
         await Button(page, "Create list").ClickAsync();
-        await Expect(page.GetByRole(AriaRole.Alert)).ToHaveTextAsync("A weekly list already exists for this ISO week.");
-        await Expect(Link(page, "Planning week 48")).ToHaveCountAsync(0);
-        await Expect(page.GetByLabel("List name")).ToHaveValueAsync("Planning week 48");
+        await Expect(page.GetByText("List created.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(Link(page, "Planning week 48")).ToHaveCountAsync(1);
     }
 
     [Fact]

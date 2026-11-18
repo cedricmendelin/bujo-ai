@@ -43,15 +43,6 @@ public sealed class EnforceJournalListUniqueness : Migration
                 THROW 51000, 'Existing journal list names must be unique before this migration.', 1;
             END;
 
-            IF EXISTS (
-                SELECT [WeekYear], [WeekNumber]
-                FROM [JournalLists]
-                WHERE [Kind] = 1 AND [WeekYear] IS NOT NULL AND [WeekNumber] IS NOT NULL
-                GROUP BY [WeekYear], [WeekNumber]
-                HAVING COUNT(*) > 1)
-            BEGIN
-                THROW 51001, 'Existing weekly lists must have unique ISO week keys before this migration.', 1;
-            END;
             """);
 
         migrationBuilder.CreateIndex(
@@ -60,22 +51,12 @@ public sealed class EnforceJournalListUniqueness : Migration
             column: "NormalizedName",
             unique: true);
 
-        migrationBuilder.CreateIndex(
-            name: "IX_JournalLists_WeekYear_WeekNumber",
-            table: "JournalLists",
-            columns: new[] { "WeekYear", "WeekNumber" },
-            unique: true,
-            filter: "[Kind] = 1 AND [WeekYear] IS NOT NULL AND [WeekNumber] IS NOT NULL");
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.DropIndex(
             name: "IX_JournalLists_NormalizedName",
-            table: "JournalLists");
-
-        migrationBuilder.DropIndex(
-            name: "IX_JournalLists_WeekYear_WeekNumber",
             table: "JournalLists");
 
         migrationBuilder.DropColumn(

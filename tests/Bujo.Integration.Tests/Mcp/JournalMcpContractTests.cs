@@ -241,14 +241,13 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["weekKey"] = new { year = 2026, week = 48 }
         });
         Assert.False(weekly.IsError);
-        var duplicateWeek = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        var anotherWeeklyList = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
         {
             ["name"] = "MCP planning week 48",
             ["kind"] = JournalListKind.Weekly,
             ["weekKey"] = new { year = 2026, week = 48 }
         });
-        Assert.True(duplicateWeek.IsError);
-        Assert.Equal("DuplicateWeeklyList", GetErrorCode(duplicateWeek));
+        Assert.False(anotherWeeklyList.IsError);
 
         var destinationId = destination.StructuredContent!.Value.GetProperty("id").GetGuid();
         var goal = await mcp.CallToolAsync("set_list_goal", new Dictionary<string, object?>
