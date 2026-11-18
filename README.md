@@ -11,8 +11,15 @@ software delivery.
 through the governed, agent-driven workflow described in [How we work](#how-we-work).
 The journal host/API and SQL persistence are implemented; an authenticated
 remote MCP adapter is exposed at `/mcp`, but Copilot and Claude client
-compatibility is not yet live-verified. See the [MCP guide](docs/mcp.md). A
-usable PWA remains a separate story. Production was last verified running the Azure
+compatibility is not yet live-verified. See the [MCP guide](docs/mcp.md). The
+browser currently has the authenticated rendering/BFF proof from partial PR
+[#108](https://github.com/cedricmendelin/bujo-ai/pull/108), not usable journal
+screens. Local startup and PWA configuration fixes were merged in
+[#125](https://github.com/cedricmendelin/bujo-ai/pull/125). Issue
+[#10](https://github.com/cedricmendelin/bujo-ai/issues/10) was closed after
+the partial proof; [#124](https://github.com/cedricmendelin/bujo-ai/issues/124)
+tracks the unmet journal UI and acceptance evidence. See its
+[delivery matrix](docs/delivery-matrix-124.md). Production was last verified running the Azure
 quickstart image, not the journal host. CI applies merged infrastructure changes
 without a separate approval, and provisioning sets up API/hosting resources before manual application setup; an
 unhealthy app is an accepted intermediate state. Bootstrap and permission
@@ -27,9 +34,11 @@ The [product concept](docs/concept.md) preserves the proposed capabilities,
 examples, agreed first-release scope, technology direction, and unresolved
 questions.
 
-The first release is a single-user, Entra ID-protected, online-first journal:
-capture through PWA or MCP, Future Log/custom/weekly lists, list-local migration
-history, optional planned periods, and a daily-start review. A
+The first-release target is a single-user, Entra ID-protected, online-first
+journal: capture through PWA or MCP, Future Log/custom/weekly lists, list-local
+migration history, optional planned periods, and a daily-start review. The
+shared backend/API/MCP capabilities exist, but the PWA journal workflows remain
+unfinished under issue #124. A
 [knowledge library](docs/knowledge.md) stores notes/concepts/quotes with full-text
 search and tags in the same Azure SQL database. No separate deadline or reminder
 timestamps; ceremonies resurface intentions. AI-drafted planning follows later.

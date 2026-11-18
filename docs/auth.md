@@ -9,14 +9,19 @@ synthetic text and connection check never access SQL or save journal items.
 Interactive Server with static SSR where appropriate is Accepted in
 [ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
 provides implementation evidence, not live verification. Owner and Architect
-review of that evidence remains required before journal UI work. Live Entra
-sign-in, target-browser installation, cost and multi-replica recovery remain
-unverified. The original issue #4 MCP/client proposal below remains provisional.
+review of that evidence, required by the [PR #108 handoff](https://github.com/cedricmendelin/bujo-ai/pull/108),
+remains outstanding before journal UI work. Issue #10 was
+closed after this partial proof; [issue #124](https://github.com/cedricmendelin/bujo-ai/issues/124)
+now tracks the unfinished journal UI and proof evidence in the
+[delivery matrix](delivery-matrix-124.md). Live Entra sign-in, target-browser
+installation, cost and multi-replica recovery remain unverified. The original
+issue #4 MCP/client proposal below remains provisional.
 
 ### Implemented boundaries
 
-- UI uses named `Bujo.Cookie` and `ApprovedUi`; APIs and readiness explicitly use
-  JWT bearer. An otherwise-valid UI cookie cannot authorize `/api`.
+- UI uses named `Bujo.Cookie` and `ApprovedUi`; APIs, MCP, and readiness
+  explicitly use JWT bearer. An otherwise-valid UI cookie cannot authorize
+  `/api` or `/mcp`.
 - OIDC `Bujo.Oidc` uses authorization code + PKCE, framework state/nonce
   validation, tenant-specific HTTPS metadata, and the fixed `/signin-oidc`
   callback. The ID-token identity must match the independently validated
@@ -58,6 +63,24 @@ Supply through protected runtime configuration, never committed values:
 | `Auth:Pwa:Scope` | Fully qualified delegated API scope ending in `/journal.access` |
 | `Hosting:KnownProxies` | Exact trusted ingress proxy IPs when TLS terminates outside Kestrel |
 
+The API and browser use distinct Entra registrations. `Auth:Audience` is the
+API registration's Application (client) ID; that registration exposes the
+delegated `journal.access` scope. `Auth:Pwa:ClientId` identifies the separate
+confidential Web client, whose server-only secret is `Auth:Pwa:ClientSecret`.
+`Auth:Pwa:Scope` is the API's fully qualified delegated scope, not an audience.
+Register the exact externally visible HTTPS `/signin-oidc` callback on the Web
+client. Locally, keep these values in AppHost user secrets; PR #125 forwards
+configured PWA settings to `journal-host`. In a deployment, provide them only
+through protected server-side runtime configuration. Neither path authorizes
+changing Entra registrations, granting consent, or deploying.
+
+`Auth:AllowedPrincipals` is a comma-separated list of complete
+`tenant-guid:object-guid` pairs, and the tenant must match `Auth:TenantId`.
+Bare Object IDs are not accepted. The current parser silently ignores malformed
+entries, leaving no matching principals; clear configuration diagnostics and a
+focused bare-ID rejection test remain outstanding in issue #124. Do not change
+the authorization contract by accepting bare IDs.
+
 Register the exact externally visible HTTPS `/signin-oidc` redirect URI.
 Use HTTPS locally (`dotnet dev-certs https --trust` where supported); Secure
 antiforgery cookies intentionally prevent HTTP sign-in. Ensure the approved
@@ -81,7 +104,9 @@ evidence. The proof action is only a connection roundtrip, not persistence.
 client configuration, trusted ingress scheme forwarding and approved account,
 then perform real Entra sign-in/denial/sign-out and target-browser installation.
 Owner and Architect must review the proof before further journal UI work.
-Until then issue #10 remains open and delivery is `Completion: partial`.
+Issue #10 remains closed as a historical partial delivery; issue #124 tracks
+the remaining UI and acceptance work. Do not infer proof-gate completion from
+the PR merge or reported local sign-in.
 
 ---
 
