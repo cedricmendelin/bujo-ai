@@ -139,4 +139,31 @@ public sealed class JournalSnapshot
         return DomainResult<ItemResolution>.Success(
             new ItemResolution(item, source, current, list, chain.AsReadOnly()));
     }
+
+    public DomainResult<ListReview> GetListReview(Guid listId)
+    {
+        var list = Lists.SingleOrDefault(candidate => candidate.Id == listId);
+        if (list is null)
+        {
+            return DomainResult<ListReview>.Failure(
+                new DomainError(DomainErrorCode.NotFound, "The list was not found."));
+        }
+
+        var items = Items.ToDictionary(item => item.Id);
+        var entries = Occurrences
+            .Where(occurrence => occurrence.ListId == listId)
+            .OrderBy(occurrence => occurrence.Sequence)
+            .ThenBy(occurrence => occurrence.Id)
+            .Select(occurrence => new ListReviewEntry(
+                items[occurrence.ItemId],
+                occurrence,
+                occurrence.State == OccurrenceState.Moved ? Resolve(occurrence.Id).Value : null))
+            .ToArray();
+
+        return DomainResult<ListReview>.Success(new ListReview(
+            list,
+            entries.Where(entry => entry.Occurrence.State == OccurrenceState.Open).ToArray(),
+            entries.Where(entry => entry.Occurrence.State == OccurrenceState.Moved).ToArray(),
+            entries.Where(entry => entry.Occurrence.State is OccurrenceState.Done or OccurrenceState.Abandoned).ToArray()));
+    }
 }
