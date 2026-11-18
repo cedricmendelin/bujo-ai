@@ -166,6 +166,13 @@ journal data. `/auth/sign-in`, `/auth/signed-out`, `/auth/denied`, and `/auth/er
 are safe anonymous account pages. API endpoints still require bearer tokens;
 signing into the browser does not authorize an API request.
 
+The local Podman/HTTPS/user-secrets and PWA-setting-forwarding fixes are merged
+in [PR #125](https://github.com/cedricmendelin/bujo-ai/pull/125); they do not
+add journal screens or authorize Entra changes. Issue #10 was closed after the
+partial rendering proof, while [issue #124](https://github.com/cedricmendelin/bujo-ai/issues/124)
+tracks the remaining browser workflows and evidence in the
+[delivery matrix](delivery-matrix-124.md).
+
 The manifest and icons support an installable online-first shell. The service
 worker caches only explicitly listed public static assets, never navigations,
 account pages, journal responses, or API responses. There is no offline capture,
@@ -193,9 +200,10 @@ continue to require the disposable SQL Server described above.
 Interactive Server with static SSR where appropriate is Accepted in
 [ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. The rendering proof
 provides implementation evidence for that decision; it is not a request to
-select a render mode. Plan v3 still requires owner and Architect review of the
-proof evidence before building the capture, lists, history, daily-start, and
-upcoming views. Live Entra sign-in, target-browser installation, cost and
+select a render mode. The PR #108 handoff still requires owner and Architect
+review of the proof evidence before building the capture, lists, history,
+daily-start, and upcoming views; that explicit review is not established by
+the merge. Live Entra sign-in, target-browser installation, cost and
 multi-replica recovery remain open verification gates. Real
 Entra sign-in and target-browser installation cannot be certified by the test
 authentication scheme. Follow the approved proof runbook in [auth.md](auth.md);
