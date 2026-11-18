@@ -27,7 +27,7 @@ public static class AccountEndpoints
                 return Results.BadRequest();
             if (!Guid.TryParse(configuration["Auth:TenantId"], out _) ||
                 !Guid.TryParse(configuration["Auth:Pwa:ClientId"], out _) ||
-                string.IsNullOrWhiteSpace(configuration["Auth:Pwa:ClientSecret"]) ||
+                !BffAuthentication.HasClientCredential(configuration) ||
                 string.IsNullOrWhiteSpace(configuration["Auth:Pwa:Scope"]))
                 return Results.Redirect("/auth/error");
             return Results.Challenge(new AuthenticationProperties { RedirectUri = "/rendering-proof" },

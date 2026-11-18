@@ -1,7 +1,6 @@
 import json
 import re
 import sys
-from urllib.parse import urlsplit
 
 
 PLACEHOLDER = (
@@ -30,6 +29,7 @@ BASELINE_ALLOWED = {
     "azapi_resource.sql_database": "azapi_resource",
     "azuread_application.api": "azuread_application",
     "azuread_application.pwa_client": "azuread_application",
+    "azuread_application_federated_identity_credential.pwa_runtime": "azuread_application_federated_identity_credential",
     "azuread_service_principal.api": "azuread_service_principal",
     "azuread_service_principal.pwa_client": "azuread_service_principal",
     "azurerm_consumption_budget_resource_group.prod": "azurerm_consumption_budget_resource_group",
@@ -74,7 +74,10 @@ BASELINE_UNKNOWN_PATHS = {
         "app_role_ids", "client_id", "disabled_by_microsoft", "feature_tags", "id", "logo_url",
         "oauth2_permission_scope_ids", "object_id", "publisher_domain", "tags",
         "template_id", "required_resource_access[0].resource_access[0].id",
-        "required_resource_access[0].resource_app_id", "web[0].redirect_uris[0]",
+        "required_resource_access[0].resource_app_id", "web[0].redirect_uris[1]",
+    },
+    "azuread_application_federated_identity_credential.pwa_runtime": {
+        "application_id", "credential_id", "id", "subject",
     },
     "azuread_service_principal.api": {
         "app_role_ids", "app_roles", "application_tenant_id", "client_id",
@@ -102,20 +105,25 @@ BASELINE_UNKNOWN_PATHS = {
     "module.container_app.azapi_resource.container_app": {
         "body.properties.environmentId", "body.properties.managedEnvironmentId",
         "body.properties.template.containers[0].env[0].value",
-        "body.properties.template.containers[0].env[3]", "id",
+        "body.properties.template.containers[0].env[3]",
+        "body.properties.template.containers[0].env[5]",
+        "body.properties.template.containers[0].env[7]", "id",
         "identity[0].identity_ids[0]", "identity[0].principal_id",
         "identity[0].tenant_id", "ignore_casing", "ignore_missing_property",
         "output",
     },
     "module.container_app.azapi_resource_action.post_creation_update": {
         "body.properties.template.containers[0].env[0].value",
-        "body.properties.template.containers[0].env[3]", "exist", "id",
+        "body.properties.template.containers[0].env[3]",
+        "body.properties.template.containers[0].env[5]",
+        "body.properties.template.containers[0].env[7]", "exist", "id",
         "output", "resource_id", "retry.max_interval_seconds", "retry.multiplier",
         "retry.randomization_factor", "sensitive_output", "when",
     },
     "module.container_app.terraform_data.update_keeper": {
         "id", "input.containers[0].env[0].value",
-        "input.containers[0].env[3].value", "output",
+        "input.containers[0].env[3].value", "input.containers[0].env[5].value",
+        "input.containers[0].env[7].value", "output",
     },
     "module.container_app_environment.azapi_resource.this": {
         "body.properties.appLogsConfiguration.logAnalyticsConfiguration", "id",
@@ -219,15 +227,22 @@ def _contains_credentials(value):
     return False
 
 
-def _container_app_fqdn(resource):
-    for key in ("after", "before"):
-        output = (_value(resource, key).get("output") or {})
-        properties = output.get("properties") or {}
-        ingress = ((properties.get("configuration") or {}).get("ingress") or {})
-        fqdn = ingress.get("fqdn")
-        if isinstance(fqdn, str) and fqdn:
-            return fqdn
-    return None
+def _require_pwa_binding(actual, expected, is_unknown, relevant, producer, attribute, label):
+    if is_unknown and actual is None:
+        _require_dependency(relevant, producer, (attribute,))
+    elif is_unknown or not isinstance(expected, str) or not expected or actual != expected:
+        raise ValueError(f"Baseline {label} is not bound to the approved value.")
+
+
+def _environment_names(environment, expected_names, unknown, prefix):
+    return [
+        item.get("name") if isinstance(item, dict) else (
+            expected_names[index]
+            if item is None and f"{prefix}[{index}]" in unknown and index < len(expected_names)
+            else None
+        )
+        for index, item in enumerate(environment)
+    ]
 
 
 def _baseline_configuration(plan, expected_image, expected_owner, expected_app_id):
@@ -282,7 +297,8 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         or application.get("sign_in_audience") != "AzureADMyOrg"
         or application.get("prevent_duplicate_names") is not True
         or application.get("required_resource_access") not in (None, [])
-        or application.get("password") not in (None, [])
+        or _contains_credentials(application)
+        or _contains_credentials(service_principal)
     ):
         raise ValueError("API application has unexpected ownership, audience, Graph permissions, or credentials.")
     api = _require_exactly_one(application.get("api"), "API registration")
@@ -379,36 +395,30 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
 
     pwa_web = _require_exactly_one(pwa_application.get("web"), "PWA web configuration")
     redirect_uris = pwa_web.get("redirect_uris")
-    if not isinstance(redirect_uris, list) or len(redirect_uris) != 1:
-        raise ValueError("PWA redirect URI must contain exactly one callback.")
-    redirect_uri = redirect_uris[0]
-    container_app_address = "module.container_app.azapi_resource.container_app"
-    container_fqdn = _container_app_fqdn(resources[container_app_address])
-    if redirect_uri is None:
-        if "web[0].redirect_uris[0]" not in pwa_application_unknown:
-            raise ValueError("PWA redirect URI is not bound to the Container App.")
-        _require_dependency(relevant, container_app_address, ("output",))
+    local_callback = "https://localhost:7168/signin-oidc"
+    if (
+        not isinstance(redirect_uris, list)
+        or len(redirect_uris) != 2
+        or redirect_uris.count(local_callback) != 1
+    ):
+        raise ValueError("PWA redirect URIs must contain exactly the local and public HTTPS callbacks.")
+    environment_address = "module.container_app_environment.azapi_resource.this"
+    app_address = "module.container_app.azapi_resource.container_app"
+    environment_resource = _value(resources[environment_address])
+    environment_output = environment_resource.get("output") or {}
+    default_domain = (environment_output.get("properties") or {}).get("defaultDomain")
+    if "web[0].redirect_uris[1]" in pwa_application_unknown:
+        if redirect_uris != [local_callback, None]:
+            raise ValueError("PWA redirect URI has an invalid computed public callback.")
+        _require_dependency(relevant, environment_address, ("output",))
     else:
-        if not isinstance(redirect_uri, str):
-            raise ValueError("PWA redirect URI must be an exact HTTPS callback.")
-        try:
-            parsed_redirect = urlsplit(redirect_uri)
-        except ValueError as error:
-            raise ValueError("PWA redirect URI must be one exact HTTPS Container App /signin-oidc callback.") from error
-        redirect_host = parsed_redirect.hostname
+        app_name = _value(resources[app_address]).get("name")
         if (
-            parsed_redirect.scheme != "https"
-            or not redirect_host
-            or parsed_redirect.netloc.lower() != redirect_host.lower()
-            or redirect_host.lower() in {"localhost", "127.0.0.1", "::1"}
-            or parsed_redirect.path != "/signin-oidc"
-            or parsed_redirect.query
-            or parsed_redirect.fragment
-            or "*" in redirect_uri
+            not isinstance(default_domain, str)
+            or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", default_domain)
+            or f"https://{app_name}.{default_domain}/signin-oidc" not in redirect_uris
         ):
-            raise ValueError("PWA redirect URI must be one exact HTTPS Container App /signin-oidc callback.")
-        if container_fqdn is None or redirect_host.lower() != container_fqdn.lower():
-            raise ValueError("PWA redirect URI host does not match the Container App FQDN.")
+            raise ValueError("PWA redirect URI must match the Container App name and managed environment default domain.")
     implicit_grant = pwa_web.get("implicit_grant") or []
     if (
         not isinstance(implicit_grant, list)
@@ -480,7 +490,6 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     if {"identity[0].identity_ids", "identity[0].identity_ids[0]"} & job_unknown:
         _require_dependency(relevant, "module.migration_identity.azurerm_user_assigned_identity.this", ("id",))
 
-    app_address = "module.container_app.azapi_resource.container_app"
     app_unknown = set(_unknown_paths((resources[app_address].get("change") or {}).get("after_unknown")))
     if "body.properties.environmentId" in app_unknown or "body.properties.managedEnvironmentId" in app_unknown:
         _require_dependency(relevant, "module.container_app_environment.azapi_resource.this", ("id",))
@@ -531,6 +540,29 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         raise ValueError("Baseline SQL firewall must remain restricted to Azure services.")
     sql_server = _value(resources["module.sql_server.azurerm_mssql_server.this"])
     admin = _require_exactly_one(sql_server.get("azuread_administrator"), "SQL Entra administrator")
+    runtime_identity_address = "module.identity.azurerm_user_assigned_identity.this"
+    runtime_identity = _value(resources[runtime_identity_address])
+    credential_resource = resources["azuread_application_federated_identity_credential.pwa_runtime"]
+    credential = _value(credential_resource)
+    credential_unknown = set(_unknown_paths(credential_resource["change"].get("after_unknown")))
+    tenant = admin.get("tenant_id")
+    if (
+        credential.get("display_name") != "bujo-pwa-runtime"
+        or credential.get("audiences") != ["api://AzureADTokenExchange"]
+        or not isinstance(tenant, str)
+        or not re.fullmatch(r"[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", tenant)
+        or credential.get("issuer") != f"https://login.microsoftonline.com/{tenant}/v2.0"
+        or _contains_credentials(credential)
+    ):
+        raise ValueError("PWA federated credential has an unexpected name, audience, issuer, or credentials.")
+    _require_pwa_binding(
+        credential.get("application_id"), pwa_application.get("id"), "application_id" in credential_unknown,
+        relevant, pwa_application_address, "id", "PWA federated credential application",
+    )
+    _require_pwa_binding(
+        credential.get("subject"), runtime_identity.get("principal_id"), "subject" in credential_unknown,
+        relevant, runtime_identity_address, "principal_id", "PWA federated credential subject",
+    )
     server_before = _value(resources["module.sql_server.azurerm_mssql_server.this"], "before")
     if (
         server_before.get("azuread_administrator")
@@ -583,7 +615,6 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     ):
         raise ValueError("Baseline Key Vault must retain the standard, RBAC-enabled, secret-free configuration.")
 
-    environment_resource = _value(resources["module.container_app_environment.azapi_resource.this"])
     environment_properties = ((environment_resource.get("body") or {}).get("properties") or {})
     vnet = environment_properties.get("vnetConfiguration")
     if (
@@ -679,14 +710,13 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         "Auth__TenantId",
         "Auth__Audience",
         "Auth__AllowedPrincipals",
+        "Auth__Pwa__ClientId",
+        "Auth__Pwa__Scope",
+        "Auth__Pwa__ManagedIdentityClientId",
     ]
-    if len(environment) != len(expected_env_names):
-        raise ValueError("Baseline application environment has unexpected, missing, or reordered settings.")
-    environment_names = [
-        expected_env_names[index] if item is None and index == 3 else item.get("name")
-        for index, item in enumerate(environment)
-    ]
-    if environment_names != expected_env_names:
+    azapi_env_prefix = "body.properties.template.containers[0].env"
+    environment_unknown_paths = set(_unknown_paths(environment_source["change"].get("after_unknown")))
+    if _environment_names(environment, expected_env_names, environment_unknown_paths, azapi_env_prefix) != expected_env_names:
         raise ValueError("Baseline application environment has unexpected, missing, or reordered settings.")
     sql_connection = environment[0].get("value")
     if sql_connection is None and ("module.identity.azurerm_user_assigned_identity.this", ("client_id",)) not in relevant:
@@ -716,7 +746,6 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     if tenant_id and admin.get("tenant_id") and tenant_id.lower() != admin["tenant_id"].lower():
         raise ValueError("Baseline SQL administrator must remain in the application tenant.")
     audience_value = environment[3].get("value") if isinstance(environment[3], dict) else None
-    environment_unknown_paths = set(_unknown_paths((environment_source.get("change") or {}).get("after_unknown")))
     audience_unknown = "body.properties.template.containers[0].env[3]" in environment_unknown_paths
     if audience_value is None and (
         not audience_unknown
@@ -779,11 +808,12 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     ):
         raise ValueError("Baseline AVM update keeper has unexpected sidecars, sizing, or scale settings.")
     keeper_env = keeper_container.get("env") or []
+    keeper_env_prefix = "input.containers[0].env"
     if (
-        [item.get("name") for item in keeper_env if isinstance(item, dict)] != expected_env_names
+        _environment_names(keeper_env, expected_env_names, keeper_unknown, keeper_env_prefix) != expected_env_names
         or keeper_env[1].get("value") != "true"
         or keeper_env[4].get("value") != ""
-        or any(item.get("secret_name") for item in keeper_env if isinstance(item, dict))
+        or any(item.get("secretRef") or item.get("secret_name") for item in keeper_env)
     ):
         raise ValueError("Baseline AVM update keeper has unexpected authentication or secret settings.")
 
@@ -801,12 +831,7 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
     ):
         raise ValueError("Baseline AVM app update must be a PATCH to the exact existing app.")
     patch_resources = patch_container.get("resources") or {}
-    patch_names = [
-        expected_env_names[index] if item is None and index == 3 else (
-            item.get("name") if isinstance(item, dict) else None
-        )
-        for index, item in enumerate(patch_environment)
-    ]
+    patch_names = _environment_names(patch_environment, expected_env_names, patch_unknown, azapi_env_prefix)
     if (
         patch_container.get("name") != "bujo-ai"
         or patch_container.get("image") != expected_image
@@ -832,6 +857,27 @@ def _baseline_configuration(plan, expected_image, expected_owner, expected_app_i
         _require_dependency(relevant, "module.identity.azurerm_user_assigned_identity.this", ("client_id",))
     if "body.properties.template.containers[0].env[3]" in patch_unknown:
         _require_dependency(relevant, "azuread_application.api", ("client_id",))
+
+    for settings, unknown, prefix, value_suffix in (
+        (environment, environment_unknown_paths, azapi_env_prefix, ""),
+        (patch_environment, patch_unknown, azapi_env_prefix, ""),
+        (keeper_env, keeper_unknown, keeper_env_prefix, ".value"),
+    ):
+        for index, expected, producer in (
+            (5, pwa_client_id, pwa_application_address),
+            (7, runtime_identity.get("client_id"), runtime_identity_address),
+        ):
+            item = settings[index]
+            is_unknown = f"{prefix}[{index}]{value_suffix}" in unknown
+            if is_unknown and not value_suffix and item is not None:
+                raise ValueError(f"Baseline {expected_env_names[index]} has an invalid computed setting.")
+            _require_pwa_binding(
+                item.get("value") if isinstance(item, dict) else None,
+                expected, is_unknown,
+                relevant, producer, "client_id", expected_env_names[index],
+            )
+        if settings[6].get("value") != f"{application['identifier_uris'][0]}/journal.access":
+            raise ValueError("Baseline Auth__Pwa__Scope is not bound to the API journal.access scope.")
 
     job = _value(resources["azurerm_container_app_job.migration"])
     templates = job.get("template") or []

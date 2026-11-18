@@ -77,8 +77,8 @@ dotnet user-secrets set "Auth:Pwa:Scope" "<API-application-ID-URI>/journal.acces
 ```
 
 Use the exact delegated scope URI from the API registration's **Expose an API**
-page. Register `https://localhost:7168/signin-oidc` as a **Web** redirect URI on
-the browser-client registration. Restart AppHost after changing secrets.
+page. Terraform registers `https://localhost:7168/signin-oidc` as a **Web**
+redirect URI on the PWA client. Restart AppHost after changing secrets.
 If PWA settings are absent from AppHost, it leaves any host-specific PWA
 configuration untouched. See [the authentication guide](auth.md) for the full
 requirements; local startup does not configure Entra or bypass authentication.

@@ -42,9 +42,14 @@ unverified. The original issue #4 MCP/client proposal below remains provisional.
   assets, never HTML, authenticated responses, API responses, or tokens.
 - CSP restricts scripts, styles and connections to same origin, prohibits
   framing and objects; anti-sniffing, referrer and permissions headers are set.
-  Production enables HSTS. `X-Forwarded-Proto` is honored only from known
-  proxies (one hop); configure exact comma-separated ingress IPs in
-  `Hosting:KnownProxies`. Never enable unrestricted forwarded-header trust.
+  Production enables HSTS. The Azure Container Apps deployment exposes the app
+  port only through HTTP ingress. When the platform sets `CONTAINER_APP_NAME`,
+  the host accepts one `X-Forwarded-Proto` hop because
+  [Container Apps overwrites that header](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview#http-headers).
+  Forwarded host and client IP are not used by this middleware. Do not expose
+  the app port directly, such as through an additional TCP port. For other
+  reverse proxies, configure exact comma-separated ingress IPs in
+  `Hosting:KnownProxies`; an explicit list also overrides the Container Apps default.
 
 ### Runtime configuration and deployment prerequisites
 
@@ -54,9 +59,10 @@ Supply through protected runtime configuration, never committed values:
 | --- | --- |
 | `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant, exact API audience, immutable approved tenant/object pairs |
 | `Auth:Pwa:ClientId` | Single-tenant confidential web-client registration |
-| `Auth:Pwa:ClientSecret` | Server-only client credential, delivered by the owner through secure runtime configuration |
+| `Auth:Pwa:ManagedIdentityClientId` | Production user-assigned managed identity client ID; used to request the federated client assertion |
+| `Auth:Pwa:ClientSecret` | Local-only server-side client credential, used when managed identity is not configured |
 | `Auth:Pwa:Scope` | Fully qualified delegated API scope ending in `/journal.access` |
-| `Hosting:KnownProxies` | Exact trusted ingress proxy IPs when TLS terminates outside Kestrel |
+| `Hosting:KnownProxies` | Exact trusted ingress proxy IPs for other TLS-terminating reverse proxies, or to override the Container Apps default |
 
 Register the exact externally visible HTTPS `/signin-oidc` redirect URI.
 Use HTTPS locally (`dotnet dev-certs https --trust` where supported); Secure

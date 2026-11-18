@@ -63,6 +63,7 @@ override_resource {
 override_resource {
   target = azuread_application.pwa_client
   values = {
+    id        = "/applications/00000000-0000-0000-0000-000000000033"
     client_id = "00000000-0000-0000-0000-000000000032"
   }
 }

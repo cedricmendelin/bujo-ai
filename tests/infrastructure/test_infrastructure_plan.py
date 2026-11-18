@@ -15,6 +15,16 @@ import deploy_gate as gate  # noqa: E402
 
 EXPECTED_IMAGE = "registry.example/legacy/app@sha256:" + "a" * 64
 EXPECTED_OWNER = "00000000-0000-0000-0000-000000000006"
+PWA_APP = "azuread_application.pwa_client"
+PWA_CREDENTIAL = "azuread_application_federated_identity_credential.pwa_runtime"
+RUNTIME_IDENTITY = "module.identity.azurerm_user_assigned_identity.this"
+APP = "module.container_app.azapi_resource.container_app"
+APP_ENVIRONMENT = "module.container_app_environment.azapi_resource.this"
+APP_PATCH = "module.container_app.azapi_resource_action.post_creation_update"
+APP_KEEPER = "module.container_app.terraform_data.update_keeper"
+PUBLIC_CALLBACK = "https://ca-test1234.test.switzerlandnorth.azurecontainerapps.io/signin-oidc"
+LOCAL_CALLBACK = "https://localhost:7168/signin-oidc"
+PWA_ENV_NAMES = ["Auth__Pwa__ClientId", "Auth__Pwa__Scope", "Auth__Pwa__ManagedIdentityClientId"]
 EXPECTED_APP_ID = (
     "/subscriptions/00000000-0000-0000-0000-000000000004/"
     "resourceGroups/test-rg/providers/Microsoft.App/containerApps/ca-test1234"
@@ -44,6 +54,19 @@ def changes(plan):
         for item in plan["resource_changes"]
         if item.get("mode") == "managed" and item["change"]["actions"] != ["no-op"]
     }
+
+
+def container_env(plan, address):
+    after = resource(plan, address)["change"]["after"]
+    template = after["input"] if address == APP_KEEPER else after["body"]["properties"]["template"]
+    return template["containers"][0]["env"]
+
+
+def remove_dependency(plan, address, attribute):
+    plan["relevant_attributes"] = [
+        item for item in plan["relevant_attributes"]
+        if (item.get("resource"), item.get("attribute")) != (address, [attribute])
+    ]
 
 
 def differences(before, after, path=""):
@@ -108,6 +131,7 @@ class InfrastructurePlanTests(unittest.TestCase):
         }
         self.assertEqual(managed, bootstrap.BASELINE_ALLOWED)
         inventory = self.validate(plan)
+        self.assertIn((PWA_CREDENTIAL, "create"), inventory)
         self.assertIn(("azurerm_container_app_job.migration", "create"), inventory)
         self.assertIn(("module.container_app.azapi_resource_action.post_creation_update", "create"), inventory)
         self.assertIn(("module.container_app.terraform_data.update_keeper", "create"), inventory)
@@ -294,9 +318,10 @@ class InfrastructurePlanTests(unittest.TestCase):
         self.validate(full_plan)
         pwa = resource(full_plan, "azuread_application.pwa_client")
         pwa_unknown = set(bootstrap._unknown_paths(pwa["change"]["after_unknown"]))
-        self.assertIn("web[0].redirect_uris[0]", pwa_unknown)
+        self.assertIn("web[0].redirect_uris[1]", pwa_unknown)
+        self.assertEqual(pwa["change"]["after"]["web"][0]["redirect_uris"], [LOCAL_CALLBACK, None])
         self.assertIn("required_resource_access[0].resource_app_id", pwa_unknown)
-        self.assertIn(("module.container_app.azapi_resource.container_app", ("output",)), {
+        self.assertIn((APP_ENVIRONMENT, ("output",)), {
             (item.get("resource"), tuple(item.get("attribute") or []))
             for item in full_plan.get("relevant_attributes", [])
         })
@@ -308,9 +333,9 @@ class InfrastructurePlanTests(unittest.TestCase):
         api_permission = application["required_resource_access"][0]
         self.assertEqual(application["owners"], [EXPECTED_OWNER])
         self.assertEqual(application["display_name"], "app-test1234-pwa")
-        self.assertEqual(
+        self.assertCountEqual(
             application["web"][0]["redirect_uris"],
-            ["https://test-app.test.switzerlandnorth.azurecontainerapps.io/signin-oidc"],
+            [PUBLIC_CALLBACK, LOCAL_CALLBACK],
         )
         self.assertEqual(api_permission["resource_app_id"], "00000000-0000-0000-0000-000000000031")
         self.assertEqual(api_permission["resource_access"][0], {
@@ -319,6 +344,26 @@ class InfrastructurePlanTests(unittest.TestCase):
         })
         self.assertEqual(service_principal["owners"], [EXPECTED_OWNER])
         self.assertEqual(service_principal["client_id"], application["client_id"])
+
+    def test_pwa_runtime_credential_and_app_settings_bind_the_expected_identities(self):
+        plan = self.plan("pwa_client_configuration_plan")
+        self.validate(plan)
+        credential = resource(plan, PWA_CREDENTIAL)["change"]["after"]
+        application = resource(plan, PWA_APP)["change"]["after"]
+        identity = resource(plan, RUNTIME_IDENTITY)["change"]["after"]
+        self.assertEqual(credential["application_id"], application["id"])
+        self.assertEqual(credential["display_name"], "bujo-pwa-runtime")
+        self.assertEqual(credential["audiences"], ["api://AzureADTokenExchange"])
+        self.assertEqual(credential["issuer"], "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000003/v2.0")
+        self.assertEqual(credential["subject"], identity["principal_id"])
+        for address in (APP, APP_PATCH, APP_KEEPER):
+            with self.subTest(address=address):
+                settings = container_env(plan, address)
+                self.assertEqual([item["name"] for item in settings[5:]], PWA_ENV_NAMES)
+                self.assertEqual([item["value"] for item in settings[5:]], [
+                    application["client_id"], "api://bujo-ai-test1234/journal.access", identity["client_id"],
+                ])
+                self.assertFalse(any(item.get("secretRef") or item.get("secret_name") for item in settings[5:]))
 
     def test_rejects_pwa_ownership_name_and_application_configuration_drift(self):
         mutations = (
@@ -358,10 +403,7 @@ class InfrastructurePlanTests(unittest.TestCase):
                 self.assert_rejected(plan, "PWA")
 
     def test_rejects_pwa_redirect_uri_drift(self):
-        known_plan = self.plan("pwa_client_configuration_plan")
-        application = resource(known_plan, "azuread_application.pwa_client")["change"]["after"]
-        redirect_uri = application["web"][0]["redirect_uris"][0]
-        host = redirect_uri.removeprefix("https://").removesuffix("/signin-oidc")
+        host = PUBLIC_CALLBACK.removeprefix("https://").removesuffix("/signin-oidc")
         for invalid_uri in (
             f"http://{host}/signin-oidc",
             f"https://{host}/callback",
@@ -370,24 +412,65 @@ class InfrastructurePlanTests(unittest.TestCase):
             f"https://*.{host}/signin-oidc",
             "https://localhost/signin-oidc",
             "https://other.example.test/signin-oidc",
+            f"https://{host}/signin-oidc#",
         ):
             with self.subTest(uri=invalid_uri):
                 plan = self.plan("pwa_client_configuration_plan")
-                pwa = resource(plan, "azuread_application.pwa_client")["change"]["after"]
-                pwa["web"][0]["redirect_uris"][0] = invalid_uri
+                pwa = resource(plan, PWA_APP)["change"]["after"]
+                pwa["web"][0]["redirect_uris"] = [LOCAL_CALLBACK, invalid_uri]
+                self.assert_rejected(plan, "PWA redirect URI")
+
+        for redirects in (
+            [PUBLIC_CALLBACK], [PUBLIC_CALLBACK, LOCAL_CALLBACK, PUBLIC_CALLBACK],
+            [PUBLIC_CALLBACK, "https://localhost:7169/signin-oidc"],
+        ):
+            with self.subTest(redirects=redirects):
+                plan = self.plan("pwa_client_configuration_plan")
+                resource(plan, PWA_APP)["change"]["after"]["web"][0]["redirect_uris"] = redirects
                 self.assert_rejected(plan, "PWA redirect URI")
 
         plan = self.plan("pwa_client_configuration_plan")
-        pwa = resource(plan, "azuread_application.pwa_client")["change"]["after"]
-        pwa["web"][0]["redirect_uris"].append(redirect_uri)
-        self.assert_rejected(plan, "PWA redirect URI")
+        resource(plan, APP_ENVIRONMENT)["change"]["after"]["output"]["properties"].pop("defaultDomain")
+        self.assert_rejected(plan, "managed environment default domain")
 
-        plan = self.plan("pwa_client_configuration_plan")
-        container_app = resource(plan, "module.container_app.azapi_resource.container_app")["change"]
-        container_app["after"]["output"] = {}
-        if isinstance(container_app.get("before"), dict):
-            container_app["before"]["output"] = {}
-        self.assert_rejected(plan, "Container App FQDN")
+    def test_rejects_pwa_federated_credential_drift(self):
+        for field, value in (
+            ("application_id", "/applications/00000000-0000-0000-0000-000000000099"),
+            ("subject", "00000000-0000-0000-0000-000000000024"),  # migration principal
+            ("issuer", "https://login.microsoftonline.com/common/v2.0"),
+            ("audiences", ["api://AzureADTokenExchange", "unexpected"]),
+            ("display_name", "unexpected"),
+        ):
+            with self.subTest(field=field):
+                plan = self.plan("pwa_client_configuration_plan")
+                resource(plan, PWA_CREDENTIAL)["change"]["after"][field] = value
+                self.assert_rejected(plan, "PWA federated credential")
+        plan = self.plan("baseline_full_plan")
+        plan["resource_changes"].remove(resource(plan, PWA_CREDENTIAL))
+        self.assert_rejected(plan, "missing one or more reviewed resources")
+
+    def test_rejects_pwa_environment_drift_in_each_avm_path(self):
+        for addresses in ((APP, APP_PATCH), (APP_PATCH,), (APP_KEEPER,)):
+            for index, value in ((5, "unexpected"), (6, "api://other/journal.access"), (7, "unexpected")):
+                with self.subTest(addresses=addresses, setting=PWA_ENV_NAMES[index - 5]):
+                    plan = self.plan("pwa_client_configuration_plan")
+                    for address in addresses:
+                        container_env(plan, address)[index]["value"] = value
+                    if addresses == (APP_PATCH,):
+                        # The retained app body may legitimately differ from a pending PATCH.
+                        app = resource(plan, APP)["change"]
+                        app["before"] = copy.deepcopy(app["after"])
+                        resource(plan, APP_PATCH)["change"]["actions"] = ["update"]
+                    self.assert_rejected(plan, PWA_ENV_NAMES[index - 5])
+        for address, secret_key in ((APP_PATCH, "secretRef"), (APP_KEEPER, "secret_name")):
+            with self.subTest(address=address):
+                plan = self.plan("pwa_client_configuration_plan")
+                container_env(plan, address)[5][secret_key] = "unexpected"
+                if address == APP_PATCH:
+                    app = resource(plan, APP)["change"]
+                    app["before"] = copy.deepcopy(app["after"])
+                    resource(plan, APP_PATCH)["change"]["actions"] = ["update"]
+                self.assert_rejected(plan, "must not inject secrets|secret settings")
 
     def test_rejects_pwa_permission_and_credential_drift(self):
         mutations = (
@@ -444,17 +527,33 @@ class InfrastructurePlanTests(unittest.TestCase):
                 self.assert_rejected(plan, "unexpected managed resource")
 
     def test_pwa_unknown_values_require_their_specific_producer_dependencies(self):
+        for address, attribute in (
+            (APP_ENVIRONMENT, "output"),
+            (PWA_APP, "id"),
+            (PWA_APP, "client_id"),
+            (RUNTIME_IDENTITY, "principal_id"),
+            (RUNTIME_IDENTITY, "client_id"),
+        ):
+            with self.subTest(producer=address, attribute=attribute):
+                plan = self.plan("baseline_full_plan")
+                remove_dependency(plan, address, attribute)
+                self.assert_rejected(plan, "computed-value dependency")
+        for field in ("issuer", "audiences", "display_name"):
+            with self.subTest(unknown=field):
+                plan = self.plan("baseline_full_plan")
+                credential = resource(plan, PWA_CREDENTIAL)["change"]
+                credential["after"].pop(field)
+                credential["after_unknown"][field] = True
+                self.assert_rejected(plan, "unknown input values")
+        for address, index in ((APP, 5), (APP_PATCH, 7), (APP_KEEPER, 5)):
+            with self.subTest(address=address, index=index):
+                plan = self.plan("baseline_full_plan")
+                unknown = resource(plan, address)["change"]["after_unknown"]
+                template = unknown["input"] if address == APP_KEEPER else unknown["body"]["properties"]["template"]
+                template["containers"][0]["env"][index] = {}
+                self.assert_rejected(plan, "environment|safe application settings|Auth__Pwa__ClientId")
+
         cases = (
-            (
-                "redirect",
-                "module.container_app.azapi_resource.container_app",
-                ["output"],
-                lambda app: (
-                    app["change"]["after"]["web"][0]["redirect_uris"].__setitem__(0, None),
-                    app["change"].setdefault("after_unknown", {}).setdefault("web", [{}])[0]
-                    .setdefault("redirect_uris", [True]),
-                ),
-            ),
             (
                 "API application",
                 "azuread_application.api",
