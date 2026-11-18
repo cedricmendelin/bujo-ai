@@ -17,6 +17,8 @@ locals {
   key_vault_name              = var.key_vault_name
   sql_server_name             = "sql-${var.name_suffix}"
   sql_server_fqdn             = "${local.sql_server_name}.database.windows.net"
+  foundry_account_name        = "foundry-${var.name_suffix}"
+  foundry_project_name        = "bujo-${var.name_suffix}"
 
   runtime_sql_connection_string   = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.identity.client_id}"
   migration_sql_connection_string = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.migration_identity.client_id}"
