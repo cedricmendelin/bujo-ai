@@ -271,6 +271,63 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         });
         Assert.False(applied.IsError);
         Assert.Equal((int)ReviewProposalStatus.Applied, applied.StructuredContent!.Value.GetProperty("status").GetInt32());
+
+        var staleList = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP stale review",
+            ["kind"] = JournalListKind.Custom
+        });
+        var staleListId = staleList.StructuredContent!.Value.GetProperty("id").GetGuid();
+        var staleItem = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP stale item",
+            ["listId"] = staleListId
+        });
+        var staleItemValue = staleItem.StructuredContent!.Value.GetProperty("item");
+        var staleOccurrenceValue = staleItem.StructuredContent.Value.GetProperty("occurrence");
+        var staleReview = await mcp.CallToolAsync("get_list_review", new Dictionary<string, object?>
+        {
+            ["listId"] = staleListId
+        });
+        var staleProposal = await mcp.CallToolAsync("create_review_proposal", new Dictionary<string, object?>
+        {
+            ["request"] = new
+            {
+                listId = staleListId,
+                expectedListVersion = staleReview.StructuredContent!.Value.GetProperty("list").GetProperty("version").GetInt64(),
+                requestCloseList = true,
+                changes = new[]
+                {
+                    new
+                    {
+                        itemId = staleItemValue.GetProperty("id").GetGuid(),
+                        occurrenceId = staleOccurrenceValue.GetProperty("id").GetGuid(),
+                        expectedItemVersion = staleItemValue.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Done
+                    }
+                }
+            }
+        });
+        var staleProposalId = staleProposal.StructuredContent!.Value.GetProperty("id").GetGuid();
+        Assert.True(reviewService.ApproveProposal(
+            staleProposalId,
+            staleProposal.StructuredContent.Value.GetProperty("digest").GetString()!,
+            ReviewActor.FromPrincipal(claims, ReviewProposalSource.Pwa, interactive: true)).IsSuccess);
+        var concurrentItem = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP concurrent item",
+            ["listId"] = staleListId
+        });
+        Assert.False(concurrentItem.IsError);
+
+        var conflict = await mcp.CallToolAsync("apply_review_proposal", new Dictionary<string, object?>
+        {
+            ["proposalId"] = staleProposalId
+        });
+        Assert.True(conflict.IsError);
+        Assert.Equal("ConcurrencyConflict", GetErrorCode(conflict));
+        Assert.Contains("expected version", conflict.StructuredContent!.Value.GetProperty("message").GetString());
+        Assert.Contains("Unresolved occurrence", conflict.StructuredContent.Value.GetProperty("message").GetString());
     }
 
     [Fact]

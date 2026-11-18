@@ -298,6 +298,72 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task StaleReviewApplyReturnsPerChangeConflictDetails()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        using var listResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = "Stale review API list", kind = JournalListKind.Custom }));
+        using var listBody = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var listId = listBody.RootElement.GetProperty("id").GetGuid();
+        using var captureResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/items",
+            new { name = "Stale review API item", listId }));
+        using var captureBody = JsonDocument.Parse(await captureResponse.Content.ReadAsStringAsync());
+        var item = captureBody.RootElement.GetProperty("item");
+        var occurrence = captureBody.RootElement.GetProperty("occurrence");
+        using var reviewResponse = await client.SendAsync(AuthenticatedGet($"/api/lists/{listId}/review"));
+        using var reviewBody = JsonDocument.Parse(await reviewResponse.Content.ReadAsStringAsync());
+        using var proposalResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/review-proposals",
+            new
+            {
+                listId,
+                expectedListVersion = reviewBody.RootElement.GetProperty("list").GetProperty("version").GetInt64(),
+                requestCloseList = true,
+                changes = new[]
+                {
+                    new
+                    {
+                        itemId = item.GetProperty("id").GetGuid(),
+                        occurrenceId = occurrence.GetProperty("id").GetGuid(),
+                        expectedItemVersion = item.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Done
+                    }
+                }
+            }));
+        using var proposalBody = JsonDocument.Parse(await proposalResponse.Content.ReadAsStringAsync());
+        var proposalId = proposalBody.RootElement.GetProperty("id").GetGuid();
+        var digest = proposalBody.RootElement.GetProperty("digest").GetString()!;
+        await using var scope = factory.Services.CreateAsyncScope();
+        var reviewService = scope.ServiceProvider.GetRequiredService<ReviewApplicationService>();
+        var actor = new ReviewActor(
+            "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7:2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72",
+            ReviewProposalSource.Pwa,
+            Interactive: true);
+        Assert.True(reviewService.ApproveProposal(proposalId, digest, actor).IsSuccess);
+        using var concurrentCapture = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/items",
+            new { name = "Concurrent API item", listId }));
+        Assert.Equal(HttpStatusCode.OK, concurrentCapture.StatusCode);
+
+        using var applyResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            $"/api/review-proposals/{proposalId}/apply",
+            new { }));
+        using var applyBody = JsonDocument.Parse(await applyResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.Conflict, applyResponse.StatusCode);
+        Assert.Contains("expected version", applyBody.RootElement.GetProperty("detail").GetString());
+        Assert.Contains("Unresolved occurrence", applyBody.RootElement.GetProperty("detail").GetString());
+    }
+
+    [Fact]
     public async Task PlannedQueryEndpointsValidateTimeZoneAndReturnStructuredResults()
     {
         using var dailyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/daily-start?timeZone=Europe%2FZurich");
