@@ -57,6 +57,19 @@ test('requires remaining work for declared partial delivery', () => {
   assert.match(result.findings.join(' '), /Remaining work/i);
 });
 
+test('completion and handoff agree on Markdown remaining-work bullets and reject empty or quoted sections', () => {
+  const body = 'Relates to #11\n- **Remaining work:**\r\n  - Builder: add capture after the review.\r\n'
+    + '- **Evidence:** Existing design only.\r\n\r\nCompletion: partial';
+  assert.equal(evaluateCompletion(body, current).ok, true);
+  assert.deepEqual(partialHandoff(body, 'cedricmendelin/bujo-ai'),
+    { issue: 11, remaining: '- Builder: add capture after the review.' });
+  for (const section of ['## Remaining work', '- **Remaining work:**', '> ## Remaining work\n> Not actual scope.']) {
+    const invalid = `Relates to #11\n${section}\n\nCompletion: partial`;
+    assert.equal(evaluateCompletion(invalid, current).ok, false);
+    assert.equal(partialHandoff(invalid, 'cedricmendelin/bujo-ai'), null);
+  }
+});
+
 test('checks closing-reference variants and ignores code and comments', () => {
   const suffix = evaluateCompletion('cOmPlEtIoN: PARTIAL\n## Remaining work\nDone later.\nrEsOlVeS https://github.com/cedricmendelin/bujo-ai/issues/3', current);
   assert.equal(suffix.ok, false);

@@ -2,6 +2,13 @@
 
 const PLAN_HEADING = /^## 📋 Implementation plan v([1-9]\d*) · owner: `?(architect|builder|ai|devops)`?\s*$/;
 const PLAN_AUTHORS = new Set(['github-actions[bot]']);
+const COPILOT_ASSIGNEE = 'copilot-swe-agent[bot]';
+
+function isCopilotAssignee(assignee) {
+  // REST can return the bot's display name instead of its assignment handle.
+  return assignee?.login === COPILOT_ASSIGNEE
+    || (assignee?.login === 'Copilot' && assignee.type === 'Bot');
+}
 
 function parsePlan(comment, owner) {
   if (!comment || typeof comment.body !== 'string'
@@ -36,7 +43,7 @@ function latestPlan(comments, owner) {
 function approvalPath({ labels, assignees = [] }) {
   if (!labels.includes('plan:approved')) return { action: 'none' };
   if (labels.includes('handoff:local')) return { action: 'local' };
-  if (assignees.includes('copilot-swe-agent[bot]')) return { action: 'already-assigned' };
+  if (assignees.some(isCopilotAssignee)) return { action: 'already-assigned' };
   return { action: 'assign-cloud' };
 }
 
@@ -44,4 +51,6 @@ function isEligiblePermission(permission) {
   return ['admin', 'maintain', 'write'].includes(permission);
 }
 
-module.exports = { PLAN_HEADING, approvalPath, isEligiblePermission, latestPlan, parsePlan };
+module.exports = {
+  COPILOT_ASSIGNEE, PLAN_HEADING, approvalPath, isCopilotAssignee, isEligiblePermission, latestPlan, parsePlan,
+};

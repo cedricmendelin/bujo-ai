@@ -30,8 +30,12 @@ test('rejects gaps and duplicate version numbers rather than hiding plan history
 test('approval dispatch is idempotent and local handoff always wins', () => {
   assert.deepEqual(approvalPath({ labels: [] }), { action: 'none' });
   assert.deepEqual(approvalPath({ labels: ['plan:approved', 'handoff:local'] }), { action: 'local' });
-  assert.deepEqual(approvalPath({ labels: ['plan:approved'], assignees: ['copilot-swe-agent[bot]'] }),
+  assert.deepEqual(approvalPath({ labels: ['plan:approved'], assignees: [{ login: 'copilot-swe-agent[bot]' }] }),
     { action: 'already-assigned' });
+  assert.deepEqual(approvalPath({ labels: ['plan:approved'], assignees: [{ login: 'Copilot', type: 'Bot' }] }),
+    { action: 'already-assigned' });
+  assert.deepEqual(approvalPath({ labels: ['plan:approved'], assignees: [{ login: 'Copilot', type: 'User' }] }),
+    { action: 'assign-cloud' });
   assert.deepEqual(approvalPath({ labels: ['plan:approved'] }), { action: 'assign-cloud' });
 });
 

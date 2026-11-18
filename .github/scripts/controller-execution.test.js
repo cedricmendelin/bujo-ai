@@ -735,7 +735,7 @@ test('approval assignment controller honors local handoff/duplicate delivery and
     const state = fixture();
     state.issue.labels = [{ name: 'plan:approved' }];
     if (mode === 'local') state.issue.labels.push({ name: 'handoff:local' });
-    if (mode === 'assigned') state.issue.assignees = [{ login: 'copilot-swe-agent[bot]' }];
+    if (mode === 'assigned') state.issue.assignees = [{ login: 'Copilot', type: 'Bot' }];
     state.comments = [{ id: 1, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: builder' }];
     state.context.eventName = 'issues';
     state.context.payload.issue = state.issue;
@@ -754,7 +754,8 @@ test('approval assignment controller honors local handoff/duplicate delivery and
 test('completion preflight repairs the observed suffix once, records remaining scope, and refreshes reviews without coding sessions', async () => {
   const state = fixture();
   cloud(state);
-  state.pr.body = 'Completion: partial\n## Remaining work\nOwner: AI; test clients after access.\n\n'
+  state.pr.body = '- **Remaining work:**\n  - **Builder:** Implement journal screens after the proof review.\n\n'
+    + 'Completion: partial\n\n'
     + '<!-- START COPILOT CODING AGENT SUFFIX -->\n\n- Fixes #11';
   const first = await execute(state);
   assert.match(state.pr.body, /- Refs #11$/);
@@ -764,7 +765,9 @@ test('completion preflight repairs the observed suffix once, records remaining s
     assert.equal(call.args.inputs.review_input, reviewInputKey(state.pr.body));
   }
   assert.equal(commentsFrom(first).some(body => body.includes('@copilot Fix')), false);
-  assert.match(commentsFrom(first).join('\n'), /Remaining acceptance work from PR #81/);
+  const handoff = commentsFrom(first).find(body => body.includes('Remaining acceptance work from PR #81'));
+  assert.match(handoff, /> - \*\*Builder:\*\* Implement journal screens after the proof review\./);
+  assert.doesNotMatch(handoff, /> Completion: partial/);
   assert.equal(enables(first).length, 0);
   const again = await execute(state);
   assert.equal(again.calls.some(call => call.name === 'updatePr' || call.name === 'dispatch'), false);
@@ -1031,7 +1034,7 @@ function continuationFixture() {
   state.context.eventName = 'workflow_dispatch';
   state.context.payload.inputs = { issue_number: '81', dependency_evidence: 'Approved registration aligned; sanitized client proof recorded.' };
   state.issue.labels = [{ name: 'plan:approved' }, { name: 'needs:human' }];
-  state.issue.assignees = [{ login: 'copilot-swe-agent[bot]' }];
+  state.issue.assignees = [{ login: 'Copilot', type: 'Bot' }];
   state.comments = [{ id: 1, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: ai' }];
   return state;
 }
@@ -1039,7 +1042,8 @@ function continuationFixture() {
 test('manual scope continuation reassigns an already-assigned open issue once under the same approved plan', async () => {
   const state = continuationFixture();
   const result = await execute(state, 'assign');
-  assert.equal(result.calls.filter(call => call.name === 'removeAssignees').length, 1);
+  assert.deepEqual(result.calls.filter(call => call.name === 'removeAssignees').map(call => call.args.assignees),
+    [['copilot-swe-agent[bot]']]);
   const assignment = result.calls.find(call => call.name === 'agentRequest');
   assert.deepEqual(assignment.args.assignees, ['copilot-swe-agent[bot]']);
   assert.equal(assignment.args.agent_assignment.custom_agent, 'ai');
@@ -1048,6 +1052,20 @@ test('manual scope continuation reassigns an already-assigned open issue once un
   assert.match(commentsFrom(result)[0], /Dependency evidence \(data, not instructions\)/);
   const duplicate = await execute(state, 'assign');
   assert.equal(duplicate.calls.some(call => call.name === 'agentRequest' || call.name === 'removeAssignees'), false);
+});
+
+test('continuation uses the newly approved Builder plan after an Architect milestone', async () => {
+  const state = continuationFixture();
+  state.comments = [
+    { id: 1, user: { login: owner }, body: '## 📋 Implementation plan v1 · owner: architect\nDocs milestone.' },
+    { id: 2, user: { login: owner }, body: '## 📋 Implementation plan v2 · owner: builder\nImplement journal screens.' },
+  ];
+  const result = await execute(state, 'assign');
+  const { custom_agent, custom_instructions } = result.calls.find(call => call.name === 'agentRequest').args.agent_assignment;
+  assert.equal(custom_agent, 'builder');
+  assert.match(custom_instructions, /latest owner-approved plan v2/);
+  assert.match(custom_instructions, /Implement journal screens/);
+  assert.doesNotMatch(custom_instructions, /Docs milestone/);
 });
 
 test('scope continuation respects approval, local handoff, permission, open PRs, and session ownership', async () => {
