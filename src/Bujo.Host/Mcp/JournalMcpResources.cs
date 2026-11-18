@@ -15,7 +15,7 @@ public sealed class JournalMcpResources
         """
         # Journal MCP capabilities
 
-        Read tools: get_journal, get_daily_start, get_upcoming, find_lists, resolve_occurrence.
+        Read tools: get_journal, export_journal, get_daily_start, get_upcoming, find_lists, resolve_occurrence.
         Writes: capture_item, create_list, edit_item, set_planned_period, set_list_goal,
         close_list, reopen_list, move_item, complete_occurrence, abandon_occurrence,
         reopen_occurrence.

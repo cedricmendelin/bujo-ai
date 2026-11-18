@@ -14,7 +14,8 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol.Client;
 
 namespace Bujo.Integration.Tests;
 
@@ -27,18 +28,27 @@ public sealed class SqlDurabilityTests
         var adminConnectionString = Environment.GetEnvironmentVariable("BUJO_SQL_DURABILITY_CONNECTION")!;
         var databaseName = $"BujoDurability_{Guid.NewGuid():N}";
         var restoreDatabaseName = $"BujoRestore_{Guid.NewGuid():N}";
-        var databaseConnectionString = await CreateDatabaseAsync(adminConnectionString, databaseName);
-        var restoreConnectionString = await CreateDatabaseAsync(adminConnectionString, restoreDatabaseName);
+        var databaseCreated = false;
+        var restoreDatabaseCreated = false;
 
         try
         {
+            var databaseConnectionString = await CreateDatabaseAsync(adminConnectionString, databaseName);
+            databaseCreated = true;
+            var restoreConnectionString = await CreateDatabaseAsync(adminConnectionString, restoreDatabaseName);
+            restoreDatabaseCreated = true;
             await MigrateAsync(databaseConnectionString);
             JsonNode initialExport;
             Guid itemId;
+            Guid originalOccurrenceId;
+            Guid weeklyListId;
 
             using (var factory = new SqlJournalApiFactory(databaseConnectionString))
             using (var client = factory.CreateClient())
             {
+                using var ready = await GetAsync(client, "/health/ready");
+                Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+
                 var customList = await CreateListAsync(client, "Durability custom", JournalListKind.Custom, "Keep this goal");
                 var weeklyList = await CreateListAsync(
                     client,
@@ -61,7 +71,8 @@ public sealed class SqlDurabilityTests
                 using var captured = await JsonDocument.ParseAsync(await capture.Content.ReadAsStreamAsync());
                 var item = captured.RootElement.GetProperty("item");
                 itemId = item.GetProperty("id").GetGuid();
-                var originalOccurrenceId = item.GetProperty("currentOccurrenceId").GetGuid();
+                originalOccurrenceId = item.GetProperty("currentOccurrenceId").GetGuid();
+                weeklyListId = weeklyList;
                 var retryOperationId = Guid.NewGuid();
 
                 using var failedMove = await SendJsonAsync(
@@ -138,14 +149,17 @@ public sealed class SqlDurabilityTests
                     resolved.RootElement.GetProperty("currentOccurrence").GetProperty("id").GetGuid());
                 Assert.Equal(
                     "Done",
-                    resolved.RootElement.GetProperty("currentOccurrence").GetProperty("state").GetString());
+                    GetEnumName(
+                        resolved.RootElement.GetProperty("currentOccurrence").GetProperty("state"),
+                        typeof(OccurrenceState)));
 
                 initialExport = await GetExportAsync(client);
                 var exportedItem = initialExport["items"]!.AsArray()
                     .Single(exported => exported!["id"]!.GetValue<Guid>() == itemId);
                 Assert.Equal("Keep this goal", initialExport["lists"]!.AsArray()
                     .Single(list => list!["id"]!.GetValue<Guid>() == customList)!["goalText"]!.GetValue<string>());
-                Assert.Equal("synthetic", exportedItem!["tags"]!.AsArray()[1]!.GetValue<string>());
+                Assert.Contains(exportedItem!["tags"]!.AsArray(),
+                    tag => tag!.GetValue<string>() == "synthetic");
                 Assert.Equal(3, initialExport["occurrences"]!.AsArray()
                     .Count(occurrence => occurrence!["itemId"]!.GetValue<Guid>() == itemId));
 
@@ -195,7 +209,7 @@ public sealed class SqlDurabilityTests
                     concurrentSnapshot.RootElement.GetProperty("occurrences").EnumerateArray(),
                     occurrence =>
                         occurrence.GetProperty("itemId").GetGuid() == concurrentItemId &&
-                        occurrence.GetProperty("state").GetString() == "Open");
+                        GetEnumName(occurrence.GetProperty("state"), typeof(OccurrenceState)) == "Open");
             }
 
             await MigrateAsync(restoreConnectionString);
@@ -214,6 +228,37 @@ public sealed class SqlDurabilityTests
                 using var snapshot = await JsonDocument.ParseAsync(await snapshotResponse.Content.ReadAsStreamAsync());
                 Assert.Contains(snapshot.RootElement.GetProperty("items").EnumerateArray(),
                     restoredItem => restoredItem.GetProperty("id").GetGuid() == itemId);
+                using var restoredResolutionResponse = await GetAsync(
+                    restoredClient,
+                    $"/api/occurrences/{originalOccurrenceId}/resolution");
+                using var restoredResolution = await JsonDocument.ParseAsync(
+                    await restoredResolutionResponse.Content.ReadAsStreamAsync());
+                Assert.Equal(HttpStatusCode.OK, restoredResolutionResponse.StatusCode);
+                Assert.Equal(
+                    weeklyListId,
+                    restoredResolution.RootElement.GetProperty("currentList").GetProperty("id").GetGuid());
+                Assert.Equal(
+                    "Done",
+                    GetEnumName(
+                        restoredResolution.RootElement.GetProperty("currentOccurrence").GetProperty("state"),
+                        typeof(OccurrenceState)));
+
+                using var mcpHttpClient = restoredFactory.CreateClient();
+                mcpHttpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+                await using var transport = new HttpClientTransport(
+                    new HttpClientTransportOptions
+                    {
+                        Endpoint = new Uri("http://localhost/mcp"),
+                        TransportMode = HttpTransportMode.StreamableHttp
+                    },
+                    mcpHttpClient,
+                    NullLoggerFactory.Instance);
+                await using var mcp = await McpClient.CreateAsync(transport);
+                var mcpExport = await mcp.CallToolAsync("export_journal", new Dictionary<string, object?>());
+                Assert.False(mcpExport.IsError);
+                var mcpExportNode = JsonNode.Parse(mcpExport.StructuredContent!.Value.GetRawText())!.AsObject();
+                mcpExportNode.Remove("exportedAt");
+                Assert.True(JsonNode.DeepEquals(restoredExport, mcpExportNode));
             }
 
             using (var restartedFactory = new SqlJournalApiFactory(databaseConnectionString))
@@ -231,8 +276,20 @@ public sealed class SqlDurabilityTests
         }
         finally
         {
-            await DropDatabaseAsync(adminConnectionString, restoreDatabaseName);
-            await DropDatabaseAsync(adminConnectionString, databaseName);
+            try
+            {
+                if (restoreDatabaseCreated)
+                {
+                    await DropDatabaseAsync(adminConnectionString, restoreDatabaseName);
+                }
+            }
+            finally
+            {
+                if (databaseCreated)
+                {
+                    await DropDatabaseAsync(adminConnectionString, databaseName);
+                }
+            }
         }
     }
 
@@ -283,6 +340,11 @@ public sealed class SqlDurabilityTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
     }
+
+    private static string GetEnumName(JsonElement value, Type enumType) =>
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : Enum.GetName(enumType, value.GetInt32())!;
 
     private static async Task<string> CreateDatabaseAsync(string adminConnectionString, string databaseName)
     {

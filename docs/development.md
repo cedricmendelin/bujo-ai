@@ -147,7 +147,9 @@ SQL-backed durability tests are opt-in and use a real SQL Server database.
 Start the local Aspire AppHost as described above, then provide
 `BUJO_SQL_DURABILITY_CONNECTION` with a SQL Server connection string whose
 credential is held outside the repository and whose login can create/drop a
-temporary test database. Do not print or commit the connection string. The test
+temporary test database. Obtain the local SQL connection details from the
+running Aspire resource and set the variable only in the test process
+environment. Do not print or commit the connection string. The test
 creates a uniquely named database, applies the checked-in migrations, exercises
 the production EF SQL Server provider, and drops the database afterward.
 

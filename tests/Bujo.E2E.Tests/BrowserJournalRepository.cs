@@ -8,9 +8,19 @@ internal sealed class BrowserJournalRepository : IJournalRepository
 {
     private readonly InMemoryJournalRepository _inner = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
     private int _loseMoveReply;
+    private int _failReads;
+
+    public bool FailReads
+    {
+        get => Volatile.Read(ref _failReads) == 1;
+        set => Interlocked.Exchange(ref _failReads, value ? 1 : 0);
+    }
 
     public void LoseNextMoveReply() => Interlocked.Exchange(ref _loseMoveReply, 1);
-    public JournalSnapshot GetSnapshot() => _inner.GetSnapshot();
+    public JournalSnapshot GetSnapshot() =>
+        FailReads
+            ? throw new InvalidOperationException("Synthetic private journal data must not be logged.")
+            : _inner.GetSnapshot();
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) => _inner.CreateList(command);
     public DomainResult<CaptureResult> Capture(CaptureCommand command) => _inner.Capture(command);
     public DomainResult<MoveResult> Move(MoveCommand command)

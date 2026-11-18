@@ -92,6 +92,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_journal","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export_journal","arguments":{}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"close_list","arguments":{"listId":"00000000-0000-0000-0000-000000000101"}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}"""
@@ -194,6 +195,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         var capabilitiesText = JournalMcpResources.GetCapabilities();
         Assert.Contains("close_list", capabilitiesText);
         Assert.Contains("reopen_list", capabilitiesText);
+        Assert.Contains("export_journal", capabilitiesText);
         Assert.DoesNotContain("list-closure operations", capabilitiesText, StringComparison.OrdinalIgnoreCase);
 
         var capture = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>

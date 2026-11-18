@@ -58,8 +58,12 @@ Schema version 1 is UTF-8 JSON with these top-level fields:
 
 The export is a logical portable representation, not a SQL backup, restore
 loader, or guarantee that a complete production recovery has been rehearsed.
-Do not edit exported IDs or duplicate list names before restoration. A future
-schema version must define migration behavior before it replaces version 1.
+The opt-in SQL durability test includes a test-only loader that restores a
+synthetic export to an empty database and compares the canonical snapshot; it
+is not an operational import command. Knowledge entries remain absent until
+the knowledge domain is delivered. Do not edit exported IDs or duplicate list
+names before restoration. A future schema version must define migration
+behavior before it replaces version 1.
 
 ## SQL backup and restore
 
