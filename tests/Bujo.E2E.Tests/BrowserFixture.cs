@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Bujo.Host.Authentication;
+using Bujo.Domain;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -32,6 +33,7 @@ public sealed class BrowserFixture : IAsyncLifetime
 
     public IBrowser Browser { get; private set; } = null!;
     public string BaseUrl => _client.BaseAddress!.ToString().TrimEnd('/');
+    internal BrowserJournalRepository Journal => _factory.Journal;
 
     public async Task InitializeAsync()
     {
@@ -85,6 +87,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
     private readonly string _tenant = Guid.NewGuid().ToString("D");
     private readonly string _approvedObject = Guid.NewGuid().ToString("D");
     private readonly string _clientId = Guid.NewGuid().ToString("D");
+    internal BrowserJournalRepository Journal { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -96,7 +99,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             {
                 ["Auth:TenantId"] = _tenant,
                 ["Auth:Audience"] = "urn:bujo:e2e",
-                ["Auth:AllowedPrincipals"] = $"{_tenant}:{_approvedObject}",
+                ["Auth:AllowedPrincipals"] = _approvedObject,
                 ["Auth:Pwa:ClientId"] = _clientId,
                 ["Auth:Pwa:ClientSecret"] = Guid.NewGuid().ToString("N"),
                 ["Auth:Pwa:Scope"] = "urn:bujo:e2e/journal.access",
@@ -104,6 +107,9 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             }));
         builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<IJournalRepository>();
+            services.AddSingleton<IJournalRepository>(Journal);
+            services.AddSingleton<TimeProvider>(new BrowserClock());
             services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
             {
                 options.ClientId = _clientId;
@@ -140,6 +146,11 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton(new ProofIdentity(_tenant, _approvedObject));
         });
     }
+}
+
+internal sealed class BrowserClock : TimeProvider
+{
+    public override DateTimeOffset GetUtcNow() => new(2026, 11, 18, 23, 30, 0, TimeSpan.Zero);
 }
 
 internal sealed record ProofIdentity(string Tenant, string ApprovedObject);

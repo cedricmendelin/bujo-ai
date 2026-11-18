@@ -1,0 +1,29 @@
+@if (Items.Count == 0)
+{
+    <p>No items.</p>
+}
+else
+{
+    <ul class="journal-rows">
+        @foreach (var item in Items)
+        {
+            <li>
+                <a href="/items/@item.Destination.OccurrenceId">@item.Text</a>
+                <span> · @JournalLabels.Period(item.PlannedPeriod) · @item.Destination.State</span>
+                <div>@item.Reason <a href="/lists/@item.Destination.ListId">@item.Destination.ListName</a></div>
+                @if (item.Conflict)
+                {
+                    <strong>Planned period conflicts with the destination week.</strong>
+                }
+                @if (item.Tags.Count > 0)
+                {
+                    <div class="journal-meta">Tags: @string.Join(", ", item.Tags)</div>
+                }
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<PlannedReviewItem> Items { get; set; } = [];
+}

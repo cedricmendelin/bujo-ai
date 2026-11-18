@@ -179,6 +179,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
     {
         const string authorizationEndpoint = "https://login.microsoftonline.com/test/oauth2/v2.0/authorize";
         const string scope = "api://proof/journal.access";
+        string? challengeReturnUri = null;
         using var factory = _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Auth:Pwa:ClientId", BffTestFactory.Subject);
@@ -186,9 +187,16 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
             builder.UseSetting("Auth:Pwa:Scope", scope);
             builder.ConfigureTestServices(services =>
                 services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
+                {
                     options.ConfigurationManager =
                         new Microsoft.IdentityModel.Protocols.StaticConfigurationManager<OpenIdConnectConfiguration>(
-                            new OpenIdConnectConfiguration { AuthorizationEndpoint = authorizationEndpoint })));
+                            new OpenIdConnectConfiguration { AuthorizationEndpoint = authorizationEndpoint });
+                    options.Events.OnRedirectToIdentityProvider = context =>
+                    {
+                        challengeReturnUri = context.Properties.RedirectUri;
+                        return Task.CompletedTask;
+                    };
+                }));
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -207,6 +215,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         Assert.Equal("https://bujo.example.test/signin-oidc", parameters["redirect_uri"].ToString());
         Assert.Equal("S256", parameters["code_challenge_method"].ToString());
         Assert.Contains(scope, parameters["scope"].ToString().Split(' '));
+        Assert.Equal("/", challengeReturnUri);
     }
 
     private sealed class TestManagedIdentityCredential : TokenCredential
@@ -324,7 +333,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Auth:TenantId"] = BffTestFactory.Tenant,
-            ["Auth:AllowedPrincipals"] = $"{BffTestFactory.Tenant}:{BffTestFactory.Subject}"
+            ["Auth:AllowedPrincipals"] = BffTestFactory.Subject
         }).Build();
         var validator = new MutableSessionValidator();
         var services = new ServiceCollection().AddLogging();
@@ -350,7 +359,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         invoked = false;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => activity(null!));
         Assert.False(invoked);
-        configuration["Auth:AllowedPrincipals"] = $"{BffTestFactory.Tenant}:{BffTestFactory.Subject}";
+        configuration["Auth:AllowedPrincipals"] = BffTestFactory.Subject;
         validator.Valid = false;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => handler.OnConnectionUpAsync(null!, default));
         validator.Valid = true;
@@ -405,7 +414,7 @@ public sealed class BffTestFactory : WebApplicationFactory<JournalDatabaseHealth
         builder.UseSetting("ConnectionStrings:journal", "Server=localhost;Database=proof;Integrated Security=true;TrustServerCertificate=true");
         builder.UseSetting("Auth:TenantId", Tenant);
         builder.UseSetting("Auth:Audience", "proof-api");
-        builder.UseSetting("Auth:AllowedPrincipals", $"{Tenant}:{Subject}");
+        builder.UseSetting("Auth:AllowedPrincipals", Subject);
         builder.UseSetting("Auth:Pwa:ClientSecret", "");
         builder.ConfigureTestServices(services =>
             services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>

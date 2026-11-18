@@ -67,6 +67,13 @@ service worker supply installation prerequisites without caching HTML, API
 responses, identities or journal data. Offline writes are neither queued nor
 replayed.
 
+The approved issue #124 plan extends this baseline with Interactive Server
+journal workflows for approved sessions at `/`; the original proof route
+remains under Diagnostics. Local synthetic browser tests verify those UI
+workflows, not live Entra sign-in, target-device installation, or SQL
+persistence across a host restart. See the [issue #124 delivery
+matrix](../delivery-matrix-124.md) for current implementation and evidence.
+
 The BFF boundary validates server-held delegated tokens and current approved
 identity on requests, circuit start/reconnect and inbound events; APIs remain
 bearer-only. See [authentication checkpoint](../auth.md#issue-10-v3-renderingbff-checkpoint)

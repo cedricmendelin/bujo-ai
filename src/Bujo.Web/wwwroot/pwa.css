@@ -17,7 +17,7 @@ button, input, select, textarea, a { touch-action: manipulation; }
 button, input, select, textarea { max-width: 100%; }
 button { min-height: 44px; padding: .5rem 1rem; }
 button:disabled, [aria-disabled="true"] { opacity: .7; }
-h1, h2 { line-height: 1.25; overflow-wrap: anywhere; }
+h1, h2, legend { line-height: 1.25; overflow-wrap: anywhere; }
 p { max-width: 70ch; }
 
 .app-shell { margin-inline: auto; max-width: 76rem; padding: 1rem; }
@@ -25,6 +25,7 @@ p { max-width: 70ch; }
 .brand { font-size: 1.5rem; font-weight: 750; text-decoration: none; }
 nav { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
 nav a { display: inline-flex; min-height: 44px; align-items: center; }
+nav a.active { font-weight: 750; text-decoration-thickness: .16em; }
 .account-state { align-self: center; }
 .skip-link {
     position: absolute;
@@ -47,7 +48,41 @@ nav a { display: inline-flex; min-height: 44px; align-items: center; }
     color: #542700;
 }
 main { padding: clamp(1rem, 3vw, 2rem); background: white; border-radius: .5rem; }
-.proof-scope { margin-top: 2rem; border-top: 1px solid #aebdc5; padding-top: 1rem; }
+.journal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
+.journal-form {
+    display: grid;
+    gap: .5rem;
+    min-width: 0;
+    max-width: 42rem;
+    margin: 1rem 0;
+    padding: 1rem;
+    border: 1px solid #aebdc5;
+    border-radius: .35rem;
+}
+.journal-form legend, .journal-form label { font-weight: 650; }
+.journal-form input, .journal-form select, .journal-form textarea {
+    width: 100%;
+    min-height: 44px;
+    padding: .5rem;
+    color: inherit;
+    background: white;
+    border: 1px solid #526a76;
+    border-radius: .25rem;
+}
+.journal-form textarea { min-height: 6rem; resize: vertical; }
+.journal-form button { justify-self: start; margin-top: .5rem; }
+.journal-form p { margin: 0; }
+.journal-actions, .journal-inline { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.journal-inline { min-height: 44px; }
+.journal-rows { padding-inline-start: 1.75rem; }
+.journal-rows li { padding: .55rem .25rem; border-block-end: 1px solid #cdd7dc; }
+.journal-rows, .journal-text, .journal-meta, .journal-error { overflow-wrap: anywhere; }
+.journal-text { white-space: pre-wrap; }
+.journal-meta { color: #435963; }
+.journal-error { margin-block: 1rem; padding: .75rem; border: 2px solid #8a4000; border-radius: .35rem; background: #fff3da; color: #542700; }
+.journal-error p:first-child { margin-top: 0; }
+.journal-confirmation { color: #1c5034; font-weight: 650; }
+.journal-confirmation:empty { margin: 0; }
 footer { padding-block: 1rem; font-size: .9rem; }
 
 #components-reconnect-modal { display: none; }

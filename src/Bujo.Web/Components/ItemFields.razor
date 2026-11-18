@@ -1,0 +1,10 @@
+<label for="item-name">Item name</label>
+<input id="item-name" maxlength="@DomainLimits.ItemName" required @bind="Draft.Name" @bind:event="oninput" />
+<label for="item-description">Description (optional)</label>
+<textarea id="item-description" maxlength="@DomainLimits.ItemDescription" @bind="Draft.Description" @bind:event="oninput"></textarea>
+<label for="item-tags">Tags (comma-separated, optional)</label>
+<input id="item-tags" @bind="Draft.Tags" @bind:event="oninput" />
+
+@code {
+    [Parameter, EditorRequired] public ItemDraft Draft { get; set; } = null!;
+}

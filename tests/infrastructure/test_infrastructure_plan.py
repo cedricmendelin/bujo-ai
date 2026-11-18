@@ -239,7 +239,7 @@ class InfrastructurePlanTests(unittest.TestCase):
             [".containers[0].env[4].value"],
         )
         env_value = keeper["after"]["input"]["containers"][0]["env"][4]["value"]
-        self.assertEqual(env_value, "00000000-0000-0000-0000-000000000003:00000000-0000-0000-0000-000000000002")
+        self.assertEqual(env_value, "00000000-0000-0000-0000-000000000002")
         self.assertEqual(
             set(changes(preparation)),
             {

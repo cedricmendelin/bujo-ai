@@ -1,0 +1,94 @@
+@page "/lists/{ListId:guid}"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+
+<PageTitle>List · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">@(_list?.Name ?? "List details")</h1>
+    <p><a href="/lists">All lists</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_list is { } list)
+    {
+        <p class="journal-meta">@list.State @(list.WeekKey is { } week ? $"· {week}" : null)</p>
+        @if (list.GoalText is { } goal)
+        {
+            <p class="journal-text">Saved goal: @goal</p>
+        }
+        <h2>Items in this list</h2>
+        @if (_rows.Length == 0)
+        {
+            <p>No items in this list.</p>
+        }
+        else
+        {
+            <ul class="journal-rows">
+                @foreach (var row in _rows)
+                {
+                    <li>
+                        <a href="/items/@row.Occurrence.Id">@row.ItemName</a> · @row.Occurrence.State
+                        @if (row.Latest is { } latest)
+                        {
+                            <div>Latest: <a href="/items/@latest.CurrentOccurrence.Id">@latest.CurrentList.Name · @latest.CurrentOccurrence.State</a></div>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+        <form method="post" data-journal-write data-journal-form @onsubmit="SaveGoalAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@(Busy || !Ready)">
+                <legend>Edit list goal</legend>
+                <label for="list-goal">Goal (optional)</label>
+                <textarea id="list-goal" maxlength="@DomainLimits.GoalText" @bind="_goalDraft" @bind:event="oninput"></textarea>
+                <button type="submit">Save goal</button>
+            </fieldset>
+        </form>
+        @if (list.Kind != JournalListKind.FutureLog)
+        {
+            <div class="journal-actions" data-journal-write data-journal-form>
+                <button type="button" disabled="@(Busy || !Ready)" @onclick="ChangeStateAsync">@(list.State == JournalListState.Open ? "Close list" : "Reopen list")</button>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ListId { get; set; }
+    private JournalListSnapshot? _list;
+    private ListRow[] _rows = [];
+    private string? _goalDraft;
+
+    protected override void Read()
+    {
+        var snapshot = Journal.GetSnapshot();
+        var previous = _list;
+        var list = snapshot.Lists.SingleOrDefault(list => list.Id == ListId);
+        if (list is null)
+            throw new DomainException(DomainErrorCode.NotFound, "The list was not found.");
+        var items = snapshot.Items.ToDictionary(item => item.Id);
+        _rows = snapshot.Occurrences.Where(occurrence => occurrence.ListId == ListId)
+            .OrderBy(occurrence => occurrence.CreatedAt).ThenBy(occurrence => occurrence.Id)
+            .Select(occurrence => new ListRow(occurrence, items[occurrence.ItemId].Name,
+                occurrence.State == OccurrenceState.Moved ? snapshot.Resolve(occurrence.Id).Value : null)).ToArray();
+        if (previous is null || _goalDraft == previous.GoalText) _goalDraft = list.GoalText;
+        _list = list;
+    }
+
+    private Task SaveGoalAsync() => SaveAsync(
+        () => WithCurrentList(() => Journal.SetListGoal(ListId, _goalDraft)),
+        list => { _goalDraft = list.GoalText; _list = list; return "Goal saved."; });
+
+    private Task ChangeStateAsync()
+    {
+        var close = _list!.State == JournalListState.Open;
+        return SaveAsync(() => WithCurrentList(() => close ? Journal.CloseList(ListId) : Journal.ReopenList(ListId)),
+            _ => close ? "List closed." : "List reopened.");
+    }
+
+    private DomainResult<JournalListSnapshot> WithCurrentList(Func<DomainResult<JournalListSnapshot>> command) =>
+        Journal.GetSnapshot().Lists.SingleOrDefault(list => list.Id == ListId)?.Version == _list!.Version
+            ? command()
+            : DomainResult<JournalListSnapshot>.Failure(new(DomainErrorCode.ConcurrencyConflict, "This list changed since it was opened."));
+
+    private sealed record ListRow(OccurrenceSnapshot Occurrence, string ItemName, ItemResolution? Latest);
+}

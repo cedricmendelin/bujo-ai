@@ -74,6 +74,13 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                     command.Kind,
                     command.GoalText,
                     command.WeekKey);
+
+                if (_lists.Values.Any(existing =>
+                    string.Equals(existing.Name, list.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new DomainException(DomainErrorCode.DuplicateListName, "A list with this name already exists.");
+                }
+
                 _lists.Add(list.Id, list);
                 return ToSnapshot(list);
             });

@@ -3,18 +3,20 @@
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <div class="app-shell">
     <header class="site-header">
-        <a class="brand" href="/" aria-label="Bujo-AI home">Bujo-AI</a>
+        <a class="brand" href="/" aria-label="Bujo-AI home" data-enhance-nav="false">Bujo-AI</a>
         <nav aria-label="Primary navigation">
-            <a href="/">Home</a>
-            <a href="#proof-scope">About this proof</a>
-            <AuthorizeView>
+            <AuthorizeView Policy="ApprovedUi">
                 <Authorized>
-                    <a href="/rendering-proof">Connection proof</a>
+                    <NavLink href="/" Match="NavLinkMatch.All" data-enhance-nav="false">Today</NavLink>
+                    <NavLink href="/upcoming" data-enhance-nav="false">Upcoming</NavLink>
+                    <NavLink href="/capture" data-enhance-nav="false">Capture</NavLink>
+                    <NavLink href="/lists" data-enhance-nav="false">Lists</NavLink>
+                    <a href="/rendering-proof" data-enhance-nav="false">Diagnostics</a>
                     <span class="account-state">Signed in</span>
-                    <a href="/auth/sign-out">Sign out</a>
+                    <a href="/auth/sign-out" data-enhance-nav="false">Sign out</a>
                 </Authorized>
                 <NotAuthorized>
-                    <a href="/auth/sign-in">Sign in</a>
+                    <a href="/auth/sign-in" data-enhance-nav="false">Sign in</a>
                 </NotAuthorized>
             </AuthorizeView>
         </nav>
@@ -30,20 +32,8 @@
         </noscript>
     </aside>
 
-    <main id="main-content" tabindex="-1">
+    <main id="main-content" tabindex="-1" data-enhance-nav="false">
         @Body
-        <section id="proof-scope" class="proof-scope" aria-labelledby="proof-scope-title">
-            <h2 id="proof-scope-title">Online-first application proof</h2>
-            <p>
-                This shell is used to evaluate sign-in, installation and connection behavior.
-                Journal screens await owner and Architect review.
-            </p>
-            <p>
-                Changes will only be saved after the server confirms them.
-                Offline or disconnected writes are not available and are never queued or replayed.
-                Reconnecting keeps this page in place; reloading loses unsaved input.
-            </p>
-        </section>
     </main>
     <footer>No journal data is stored offline. An internet connection is required to open the app.</footer>
 </div>

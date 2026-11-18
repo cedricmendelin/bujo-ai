@@ -1,0 +1,202 @@
+@page "/items/{OccurrenceId:guid}"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+
+<PageTitle>Item · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">@(_resolved?.Item.Name ?? "Item details")</h1>
+    <p><a href="/lists">All lists</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_resolved is { } resolved)
+    {
+        <p>Latest: <a href="/lists/@resolved.CurrentList.Id">@resolved.CurrentList.Name</a> · @resolved.CurrentOccurrence.State</p>
+        <p>Planned period: @JournalLabels.Period(resolved.Item.PlannedPeriod)</p>
+        @if (PeriodConflictRules.Find(resolved.Item.PlannedPeriod, resolved.CurrentList) is not null)
+        {
+            <p class="journal-error">Planned period conflicts with the destination week.</p>
+        }
+        @if (resolved.Item.Description is { } description)
+        {
+            <p class="journal-text">@description</p>
+        }
+        @if (resolved.Item.Tags.Count > 0)
+        {
+            <p class="journal-meta">Tags: @string.Join(", ", resolved.Item.Tags.Select(tag => tag.Value))</p>
+        }
+        <h2>Occurrence history</h2>
+        <ol class="journal-rows">
+            @foreach (var occurrence in _history)
+            {
+                <li>
+                    <a href="/lists/@occurrence.ListId">@_listNames[occurrence.ListId]</a> · @occurrence.State
+                    @if (occurrence.Id == resolved.CurrentOccurrence.Id)
+                    {
+                        <span> (latest)</span>
+                    }
+                    @if (occurrence.Id == OccurrenceId)
+                    {
+                        <span> (viewed occurrence)</span>
+                    }
+                </li>
+            }
+        </ol>
+        @if (OccurrenceId != resolved.CurrentOccurrence.Id)
+        {
+            <p><a href="/items/@resolved.CurrentOccurrence.Id">Open latest occurrence</a></p>
+        }
+        @if (Ready)
+        {
+            <h2>Actions for the latest occurrence</h2>
+            <div class="journal-grid">
+                <form method="post" data-journal-write data-journal-form @onsubmit="EditAsync" @onsubmit:preventDefault>
+                    <fieldset class="journal-form" disabled="@Busy">
+                        <legend>Edit item</legend>
+                        <ItemFields Draft="_draft!" />
+                        <button type="submit">Save item details</button>
+                    </fieldset>
+                </form>
+                <form method="post" data-journal-write data-journal-form @onsubmit="PlanAsync" @onsubmit:preventDefault>
+                    <fieldset class="journal-form" disabled="@Busy">
+                        <legend>Change planned period</legend>
+                        <p>This does not move the item.</p>
+                        <PeriodFields Draft="_period!" />
+                        <button type="submit">Save planned period</button>
+                    </fieldset>
+                </form>
+            </div>
+            <div class="journal-actions" data-journal-write data-journal-form>
+                @if (CanResolve)
+                {
+                    <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Done)">Complete item</button>
+                    <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Abandon)">Abandon item</button>
+                }
+                else if (resolved.CurrentList.State == JournalListState.Open &&
+                    resolved.CurrentOccurrence.State is OccurrenceState.Done or OccurrenceState.Abandoned)
+                {
+                    <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Reopen)">Reopen item</button>
+                }
+            </div>
+            @if (_pendingMove is not null)
+            {
+                <div class="journal-error" data-journal-write data-journal-form>
+                    <p>The last move was not confirmed. Retry the same move to check its outcome without creating a duplicate.</p>
+                    <button type="button" disabled="@Busy" @onclick="MoveAsync">Retry same move</button>
+                </div>
+            }
+            else if (CanResolve && (_destinations.Length > 0 || _destination is not null))
+            {
+                <form method="post" data-journal-write data-journal-form @onsubmit="MoveAsync" @onsubmit:preventDefault>
+                    <fieldset class="journal-form" disabled="@Busy">
+                        <legend>Move item</legend>
+                        <p>This does not change the planned period.</p>
+                        <label for="move-destination">Move destination</label>
+                        <select id="move-destination" @key="_destinations" @bind="_destination" required>
+                            <option value="">Choose a list</option>
+                            @if (_destination is { } selected && !_destinations.Any(list => list.Id == selected))
+                            {
+                                <option value="@selected">Previous selection (unavailable)</option>
+                            }
+                            @foreach (var list in _destinations)
+                            {
+                                <option value="@list.Id">@list.Name</option>
+                            }
+                        </select>
+                        <button type="submit">Move item</button>
+                    </fieldset>
+                </form>
+            }
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid OccurrenceId { get; set; }
+    private ItemResolution? _resolved;
+    private ItemDraft? _draft;
+    private PeriodDraft? _period;
+    private OccurrenceSnapshot[] _history = [];
+    private Dictionary<Guid, string> _listNames = [];
+    private JournalListSnapshot[] _destinations = [];
+    private Guid? _destination;
+    private MoveIntent? _pendingMove;
+    private bool CanResolve => _resolved is { CurrentOccurrence.State: OccurrenceState.Open, CurrentList.State: JournalListState.Open };
+
+    protected override void Read()
+    {
+        var snapshot = Journal.GetSnapshot();
+        var result = snapshot.Resolve(OccurrenceId);
+        if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
+        var resolved = result.Value!;
+        var previous = _resolved?.Item;
+        if (_draft is null || previous is not null && Matches(_draft, ItemDraft.From(previous)))
+            _draft = ItemDraft.From(resolved.Item);
+        if (_period is null || previous is not null && Matches(_period, PeriodDraft.From(previous.PlannedPeriod)))
+            _period = PeriodDraft.From(resolved.Item.PlannedPeriod);
+        _history = snapshot.Occurrences.Where(item => item.ItemId == resolved.Item.Id).OrderBy(item => item.Sequence).ToArray();
+        _listNames = snapshot.Lists.ToDictionary(list => list.Id, list => list.Name);
+        _destinations = snapshot.Lists.Where(list => list.State == JournalListState.Open && list.Id != resolved.CurrentList.Id)
+            .OrderBy(list => list.Name).ToArray();
+        _resolved = resolved;
+    }
+
+    private static bool Matches(ItemDraft left, ItemDraft right) =>
+        left.Name == right.Name && left.Description == right.Description && left.Tags == right.Tags;
+
+    private static bool Matches(PeriodDraft left, PeriodDraft right) =>
+        left.Kind == right.Kind && left.Day == right.Day && left.Year == right.Year && left.Number == right.Number;
+
+    private Task EditAsync() => SaveAsync(
+        () => WithCurrentItem(() =>
+        {
+            var item = _resolved!.Item;
+            var tags = _draft!.Tags == ItemDraft.From(item).Tags
+                ? item.Tags.Select(tag => tag.Value).ToArray() : _draft.TagNames;
+            return Journal.EditItem(item.Id, _draft.Name, _draft.Description, tags);
+        }),
+        _ => { _draft = null; return "Item details saved."; });
+
+    private Task PlanAsync() => SaveAsync(
+        () => WithCurrentItem(() => Journal.ChangePlannedPeriod(_resolved!.Item.Id, _period!.Build())),
+        _ => { _period = null; return "Planned period saved."; });
+
+    private Task TransitionAsync(OccurrenceAction action) => SaveAsync(
+        () =>
+        {
+            var displayed = _resolved!.CurrentOccurrence;
+            var latest = Journal.Resolve(displayed.Id);
+            if (!latest.IsSuccess) return DomainResult<OccurrenceSnapshot>.Failure(latest.Error!);
+            if (latest.Value!.CurrentOccurrence != displayed)
+                return DomainResult<OccurrenceSnapshot>.Failure(new(DomainErrorCode.StaleOccurrence, "The occurrence has changed."));
+            return Journal.Transition(displayed.Id, action);
+        },
+        saved => $"Item is now {saved.State.ToString().ToLowerInvariant()}.");
+
+    private DomainResult<ItemSnapshot> WithCurrentItem(Func<DomainResult<ItemSnapshot>> command)
+    {
+        var latest = Journal.Resolve(OccurrenceId);
+        if (!latest.IsSuccess) return DomainResult<ItemSnapshot>.Failure(latest.Error!);
+        return latest.Value!.Item.Version == _resolved!.Item.Version
+            ? command()
+            : DomainResult<ItemSnapshot>.Failure(new(DomainErrorCode.ConcurrencyConflict, "This item changed since it was opened."));
+    }
+
+    private Task MoveAsync() => SaveAsync(
+        () =>
+        {
+            if (_pendingMove is null && (_destination is not { } destination || !_destinations.Any(list => list.Id == destination)))
+                return DomainResult<MoveResult>.Failure(new(DomainErrorCode.InvalidInput, "Choose an open destination list."));
+            var move = _pendingMove ??= new MoveIntent(Guid.NewGuid(), _resolved!.Item.Id, _resolved.CurrentOccurrence.Id, _destination!.Value);
+            return Journal.Move(move.OperationId, move.ItemId, move.ExpectedOccurrenceId, move.DestinationId);
+        },
+        saved =>
+        {
+            _pendingMove = null;
+            _destination = null;
+            return saved.PeriodConflict is null
+                ? "Item moved." : "Item moved. Its planned period conflicts with the destination week.";
+        },
+        rejected: _ => _pendingMove = null);
+
+    private sealed record MoveIntent(Guid OperationId, Guid ItemId, Guid ExpectedOccurrenceId, Guid DestinationId);
+}

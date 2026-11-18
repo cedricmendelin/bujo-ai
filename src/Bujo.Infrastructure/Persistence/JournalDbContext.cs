@@ -24,11 +24,16 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.ToTable("JournalLists");
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Name).HasMaxLength(DomainLimits.ListName).IsRequired();
+            entity.Property(item => item.NormalizedName)
+                .HasMaxLength(DomainLimits.ListName)
+                .UseCollation("Latin1_General_100_CI_AS_SC")
+                .IsRequired();
             entity.Property(item => item.Kind).HasConversion<int>();
             entity.Property(item => item.State).HasConversion<int>();
             entity.Property(item => item.GoalText).HasMaxLength(DomainLimits.GoalText);
             entity.Property(item => item.Version).IsRequired();
             entity.Property(item => item.RowVersion).IsRowVersion();
+            entity.HasIndex(item => item.NormalizedName).IsUnique();
             entity.HasIndex(item => item.Kind)
                 .IsUnique()
                 .HasFilter("[Kind] = 0");
@@ -108,6 +113,8 @@ public sealed class JournalListEntity
     public Guid Id { get; set; }
 
     public required string Name { get; set; }
+
+    public required string NormalizedName { get; set; }
 
     public JournalListKind Kind { get; set; }
 

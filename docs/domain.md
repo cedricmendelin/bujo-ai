@@ -15,7 +15,10 @@ Knowledge entries have a separate contract and are not journal occurrences.
 - A **list** has an identity, name, `FutureLog`, `Weekly`, or `Custom` kind,
   `Open` or `Closed` state, optional goal text, and an optional calendar week key
   for weekly lists. There is exactly one ongoing Future Log; it cannot be closed.
-  Goals are list text, not a goal hierarchy.
+  List names are globally unique without regard to case. Goals are list text,
+  not a goal hierarchy.
+- Multiple weekly lists may share an ISO year/week key; uniqueness is by list
+  name, not by week key.
 - An **occurrence** is one visit by an item to a list. It has its own identity,
   local state, sequence number, UTC timestamps, and previous/next occurrence
   links for moves. Only an `Open` occurrence is active. The current occurrence

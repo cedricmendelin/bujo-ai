@@ -1,0 +1,33 @@
+<label for="period-kind">Planned period</label>
+<select id="period-kind" @bind="Draft.Kind" @bind:after="ResetFields">
+    @foreach (var kind in Enum.GetValues<PlannedPeriodKind>())
+    {
+        <option value="@kind">@kind</option>
+    }
+</select>
+@if (Draft.Kind == PlannedPeriodKind.Day)
+{
+    <label for="period-day">Planned date</label>
+    <input id="period-day" type="date" required @bind="Draft.Day" />
+}
+else if (Draft.Kind != PlannedPeriodKind.Unplanned)
+{
+    <label for="period-year">@(Draft.Kind == PlannedPeriodKind.Week ? "ISO week-year" : "Year")</label>
+    <input id="period-year" type="number" min="1" max="9999" required @bind="Draft.Year" @bind:event="oninput" />
+    @if (Draft.Kind != PlannedPeriodKind.Year)
+    {
+        <label for="period-number">@Draft.Kind number</label>
+        <input id="period-number" type="number" min="1" max="@Maximum" required @bind="Draft.Number" @bind:event="oninput" />
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public PeriodDraft Draft { get; set; } = null!;
+    private int Maximum => Draft.Kind switch { PlannedPeriodKind.Week => 53, PlannedPeriodKind.Month => 12, _ => 4 };
+
+    private void ResetFields()
+    {
+        Draft.Day = null;
+        Draft.Year = Draft.Number = null;
+    }
+}

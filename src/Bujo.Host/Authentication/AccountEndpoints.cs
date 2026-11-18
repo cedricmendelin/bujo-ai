@@ -30,7 +30,7 @@ public static class AccountEndpoints
                 !BffAuthentication.HasClientCredential(configuration) ||
                 string.IsNullOrWhiteSpace(configuration["Auth:Pwa:Scope"]))
                 return Results.Redirect("/auth/error");
-            return Results.Challenge(new AuthenticationProperties { RedirectUri = "/rendering-proof" },
+            return Results.Challenge(new AuthenticationProperties { RedirectUri = "/" },
                 [BffAuthentication.OidcScheme]);
         }).AllowAnonymous();
 

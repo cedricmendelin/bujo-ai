@@ -1,0 +1,31 @@
+@inherits PlanningPage
+
+<div data-requires-circuit>
+    <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_review is { } review)
+    {
+        <p class="journal-meta">Local date: @review.Today.ToString("yyyy-MM-dd") (@Zone)</p>
+        <p>Review missed intentions and what you planned. Nothing is rescheduled automatically.</p>
+        @foreach (var group in review.Groups)
+        {
+            <section>
+                <h2>@group.Label</h2>
+                <ReviewItems Items="group.Items" />
+            </section>
+        }
+        <p>Future Log: @review.FutureLogCount · Unplanned: @review.UnplannedCount</p>
+        <p><a href="/capture">Capture an item</a> · <a href="/upcoming">Review upcoming plans</a></p>
+    }
+</div>
+
+@code {
+    private DailyStartReview? _review;
+
+    protected override void Read()
+    {
+        _review = null;
+        var result = Journal.GetDailyStart(Zone);
+        if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
+        _review = result.Value;
+    }
+}

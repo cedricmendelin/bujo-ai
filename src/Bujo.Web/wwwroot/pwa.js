@@ -38,7 +38,10 @@
 
         if (!available) {
             document.querySelectorAll(writeSelector).forEach(region => {
-                const elements = [region, ...region.querySelectorAll(controlSelector)];
+                // Journal forms own their controls' disabled state in Blazor. Block the
+                // whole region without overwriting disabled state during a render.
+                const elements = region.hasAttribute("data-journal-form")
+                    ? [region] : [region, ...region.querySelectorAll(controlSelector)];
                 for (const element of elements) {
                     if (blockedElements.has(element)) continue;
                     blockedElements.set(element, {
@@ -59,6 +62,9 @@
                 else element.setAttribute("aria-disabled", previous.ariaDisabled);
             }
             blockedElements.clear();
+        }
+        for (const element of blockedElements.keys()) {
+            if (!element.isConnected) blockedElements.delete(element);
         }
     }
 
@@ -131,6 +137,9 @@
 
     window.addEventListener("offline", circuitDown);
     window.addEventListener("online", checkConnection);
+    document.addEventListener("click", event => {
+        if (event.target instanceof Element && event.target.closest("[data-reload-page]")) location.reload();
+    });
     document.addEventListener("components-reconnect-state-changed", event => {
         if (event.detail?.state === "hide") {
             if (modalWasDisconnected) {
