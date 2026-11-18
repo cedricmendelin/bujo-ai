@@ -132,10 +132,27 @@ public sealed class JournalMcpTools
     public static CallToolResult CreateReviewProposal(
         ReviewApplicationService review,
         IHttpContextAccessor httpContextAccessor,
-        ReviewProposalRequest request) =>
-        McpErrors.From(review.CreateProposal(
+        ReviewProposalRequest request)
+    {
+        var created = review.CreateProposal(
             request,
-            Actor(httpContextAccessor, ReviewProposalSource.Mcp)));
+            Actor(httpContextAccessor, ReviewProposalSource.Mcp));
+        if (!created.IsSuccess)
+        {
+            return McpErrors.From(created);
+        }
+
+        var result = McpErrors.Success(created.Value!);
+        result.Content =
+        [
+            .. result.Content,
+            new TextContentBlock
+            {
+                Text = $"Open in the PWA to inspect and approve: /lists/{created.Value!.ListId}/review?proposalId={created.Value.Id}"
+            }
+        ];
+        return result;
+    }
 
     [McpServerTool(Name = "get_review_proposal", ReadOnly = true, Destructive = false),
      Description("Returns a proposal created by the authenticated user, including its exact changes and digest.")]

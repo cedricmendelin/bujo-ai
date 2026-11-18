@@ -156,6 +156,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Button(page, "Review proposal").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();
         Assert.Matches("^[0-9a-f]{64}$", await page.Locator("code").InnerTextAsync());
+        await Link(page, "Open this proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();
         await Button(page, "Approve this proposal").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Approved" })).ToBeVisibleAsync();
         await Button(page, "Apply approved proposal").ClickAsync();

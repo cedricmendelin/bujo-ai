@@ -83,13 +83,16 @@
             </ul>
         }
 
-        <fieldset class="journal-form" disabled="@(Busy || !Ready || review.Unfinished.Count == 0)">
-            <label>
-                <input type="checkbox" @bind="_requestClose" />
-                Close this list after applying all dispositions
-            </label>
-            <button type="button" @onclick="CreateProposalAsync">Review proposal</button>
-        </fieldset>
+        @if (ProposalId is null)
+        {
+            <fieldset class="journal-form" disabled="@(Busy || !Ready || review.Unfinished.Count == 0)">
+                <label>
+                    <input type="checkbox" @bind="_requestClose" />
+                    Close this list after applying all dispositions
+                </label>
+                <button type="button" @onclick="CreateProposalAsync">Review proposal</button>
+            </fieldset>
+        }
     }
 
     @if (_proposal is { } proposal)
@@ -97,6 +100,7 @@
         <section aria-labelledby="proposal-heading">
             <h2 id="proposal-heading">Proposal · @proposal.Status</h2>
             <p>Proposal ID: @proposal.Id</p>
+            <p><a href="/lists/@proposal.ListId/review?proposalId=@proposal.Id">Open this proposal</a></p>
             <p>List version: @proposal.ExpectedListVersion · digest: <code>@proposal.Digest</code></p>
             <ul class="journal-rows">
                 @foreach (var change in proposal.Changes)
@@ -130,6 +134,7 @@
 
 @code {
     [Parameter] public Guid ListId { get; set; }
+    [SupplyParameterFromQuery] public Guid? ProposalId { get; set; }
     private Bujo.Domain.ListReview? _review;
     private JournalListSnapshot[] _destinations = [];
     private Dictionary<Guid, DispositionDraft> _drafts = [];
@@ -152,7 +157,16 @@
             _drafts.TryAdd(entry.Occurrence.Id, new DispositionDraft());
         foreach (var id in _drafts.Keys.Except(_review.Unfinished.Select(entry => entry.Occurrence.Id)).ToArray())
             _drafts.Remove(id);
-        if (_proposal is { } proposal)
+        if (ProposalId is { } proposalId)
+        {
+            var proposalResult = Reviews.GetProposal(proposalId, _actor!);
+            if (!proposalResult.IsSuccess)
+                throw new DomainException(proposalResult.Error!.Code, proposalResult.Error.Message, proposalResult.Error.RelatedIds);
+            if (proposalResult.Value!.ListId != ListId)
+                throw new DomainException(DomainErrorCode.NotFound, "The review proposal was not found.");
+            _proposal = proposalResult.Value;
+        }
+        else if (_proposal is { } proposal)
         {
             var current = Reviews.GetProposal(proposal.Id, _actor!);
             if (current.IsSuccess)

@@ -239,6 +239,10 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         });
         Assert.False(created.IsError);
         var proposalId = created.StructuredContent!.Value.GetProperty("id").GetGuid();
+        Assert.Contains(
+            created.Content,
+            block => block is TextContentBlock text &&
+                     text.Text.Contains($"/lists/{listId}/review?proposalId={proposalId}", StringComparison.Ordinal));
         var digest = created.StructuredContent.Value.GetProperty("digest").GetString()!;
         var unapprovedApply = await mcp.CallToolAsync("apply_review_proposal", new Dictionary<string, object?>
         {

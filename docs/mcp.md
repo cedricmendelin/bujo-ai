@@ -47,6 +47,8 @@ the exact digest in the authenticated interactive PWA. Apply rechecks that
 single-use approval and applies every disposition and requested closure in one
 transaction; stale proposals conflict and need a new review. `reopen_list`
 remains an explicit direct action and does not change occurrence states.
+`create_review_proposal` returns a PWA review path with its proposal ID so the
+creator can load, inspect, and approve the persisted proposal after leaving MCP.
 
 List names are unique case-insensitively across list kinds, following the
 owner's direction. Multiple weekly lists may share the same ISO year/week key.
