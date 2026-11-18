@@ -9,10 +9,11 @@ approved sessions. `/rendering-proof` remains a Diagnostics-only route; its
 synthetic text and connection check never access SQL or save journal items.
 Interactive Server with static SSR where appropriate is Accepted in
 [ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
-provides implementation evidence, not live verification. The owner approved
-this limited proof for starting journal UI work in
-[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837);
-the Architect review found no blocking issue. Issue #10 was
+provides implementation evidence, not live verification. A prior owner comment
+allowed this limited proof to be used to start UI work in
+[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837).
+The final owner/Architect review for the #124 acceptance gate remains pending.
+Issue #10 was
 closed after this partial proof; [issue #124](https://github.com/cedricmendelin/bujo-ai/issues/124)
 tracks the completed UI implementation and remaining acceptance evidence in the
 [delivery matrix](delivery-matrix-124.md). Live Entra sign-in, target-browser
@@ -65,7 +66,7 @@ Supply through protected runtime configuration, never committed values:
 
 | Key | Purpose |
 | --- | --- |
-| `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant, exact API audience, and approved user object IDs within that tenant |
+| `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant and exact API audience; the current local allowlist format is a proposal pending owner confirmation |
 | `Auth:Pwa:ClientId` | Single-tenant confidential web-client registration |
 | `Auth:Pwa:ManagedIdentityClientId` | Production user-assigned managed identity client ID; used to request the federated client assertion |
 | `Auth:Pwa:ClientSecret` | Local-only server-side client credential, used when managed identity is not configured |
@@ -83,15 +84,17 @@ configured PWA settings to `journal-host`. In a deployment, provide them only
 through protected server-side runtime configuration. Neither path authorizes
 changing Entra registrations, granting consent, or deploying.
 
-`Auth:AllowedPrincipals` is a comma-separated list of bare Entra user object ID
-GUIDs. The token's `tid` must match the separately configured
-`Auth:TenantId`, and its `oid` must appear in this list. Tenant/object pair
-entries are invalid and cannot authorize an account. Invalid entries are
-ignored, logged without their values, and never authorize anyone; valid entries
-in the same list remain usable. A missing or invalid tenant ID denies all
-principals. Update any owner-managed local or protected deployment setting
-using the old `tenant-guid:object-guid` format before running a build with this
-change; no live settings are changed here.
+The current local implementation expects `Auth:AllowedPrincipals` as a
+comma-separated list of bare Entra user object ID GUIDs. This format is a
+proposal; owner confirmation remains pending. With the current parser, the
+token's `tid` must match the separately configured `Auth:TenantId`, and its
+`oid` must appear in this list. Tenant/object pair entries are rejected.
+Invalid entries are ignored, logged without their values, and never authorize
+anyone; valid entries in the same list remain usable. A missing or invalid
+tenant ID denies all principals. Do not deploy or run this build against
+owner-managed pair-format settings until the owner confirms the contract and
+authorizes any required configuration update. No live settings are changed
+here.
 
 Register the exact externally visible HTTPS `/signin-oidc` redirect URI.
 Use HTTPS locally (`dotnet dev-certs https --trust` where supported); Secure
@@ -115,9 +118,9 @@ evidence. The proof action is only a connection roundtrip, not persistence.
 @cedricmendelin: provide/verify the registered HTTPS redirect, protected PWA
 client configuration, trusted ingress scheme forwarding and approved account,
 then perform real Entra sign-in/denial/sign-out and target-browser installation.
-The owner approved the limited proof for UI work in
-[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837);
-the Architect review reported no blocking findings. This does not verify live
+The owner previously allowed the limited proof to unblock UI implementation in
+[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837).
+The final owner/Architect review remains pending. This does not verify live
 Entra sign-in/denial/sign-out, installation, or journal persistence. Issue #10
 remains closed as a historical partial delivery; issue #124 tracks the
 remaining UI and acceptance work.

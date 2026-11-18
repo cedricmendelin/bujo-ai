@@ -13,12 +13,15 @@ The journal host/API and SQL persistence are implemented; an authenticated
 remote MCP adapter is exposed at `/mcp`, but Copilot and Claude client
 compatibility is not yet live-verified. See the [MCP guide](docs/mcp.md). The
 browser currently has the authenticated rendering/BFF proof from partial PR
-[#108](https://github.com/cedricmendelin/bujo-ai/pull/108), not usable journal
-screens. Local startup and PWA configuration fixes were merged in
+[#108](https://github.com/cedricmendelin/bujo-ai/pull/108). Usable journal
+workflows are implemented in open partial PR #133, but are not yet merged or
+deployed. Local startup and PWA configuration fixes were merged in
 [#125](https://github.com/cedricmendelin/bujo-ai/pull/125). Issue
 [#10](https://github.com/cedricmendelin/bujo-ai/issues/10) was closed after
 the partial proof; [#124](https://github.com/cedricmendelin/bujo-ai/issues/124)
-tracks the unmet journal UI and acceptance evidence. See its
+tracks the remaining review and acceptance evidence. Owner confirmation remains
+pending for the allowlist contract, list close/reopen API-MCP parity, target
+browsers, and final rendering-proof review. See its
 [delivery matrix](docs/delivery-matrix-124.md). Production was last verified running the Azure
 quickstart image, not the journal host. CI applies merged infrastructure changes
 without a separate approval, and provisioning sets up API/hosting resources before manual application setup; an

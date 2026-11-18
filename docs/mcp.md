@@ -36,7 +36,9 @@ duplicate. Other writes use the domain's existing concurrency checks.
 `close_list` accepts only a list ID, and the domain rejects closing the Future
 Log or a list with unresolved occurrences. `reopen_list` accepts only a closed
 list ID. Both return the shared domain result and errors; neither creates a
-proposal or performs a bulk operation.
+proposal or performs a bulk operation. These tools are implemented in open PR
+#133 as a proposed resolution to the former API-only list-lifecycle exception;
+owner confirmation of the API-MCP parity contract remains pending.
 
 List names are unique case-insensitively across list kinds. A keyed weekly list
 is also unique per ISO year/week, even when its name differs; duplicate
