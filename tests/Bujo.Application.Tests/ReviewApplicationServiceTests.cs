@@ -41,6 +41,60 @@ public sealed class ReviewApplicationServiceTests
     }
 
     [Fact]
+    public void ApprovedMultiItemMoveProposalPreservesMovedSourcesAndResolvesDestinations()
+    {
+        var setup = CreateSetup();
+        var destination = setup.Journal.CreateList("Destination list", JournalListKind.Custom).Value!;
+        var first = setup.Journal.Capture("First item", listId: setup.List.Id).Value!;
+        var second = setup.Journal.Capture("Second item", listId: setup.List.Id).Value!;
+        var proposal = CreateProposal(setup, [
+            MoveChange(first.Item, first.Occurrence, destination),
+            MoveChange(second.Item, second.Occurrence, destination)
+        ], requestClose: true);
+
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Id, proposal.Digest, PwaActor()).IsSuccess);
+        var applied = setup.Reviews.ApplyProposal(proposal.Id, McpActor());
+        var snapshot = setup.Repository.GetSnapshot();
+
+        Assert.True(applied.IsSuccess, applied.Error?.Message);
+        Assert.Equal(JournalListState.Closed, snapshot.Lists.Single(list => list.Id == setup.List.Id).State);
+        Assert.All(
+            snapshot.Occurrences.Where(occurrence => occurrence.ListId == setup.List.Id),
+            occurrence => Assert.Equal(OccurrenceState.Moved, occurrence.State));
+        Assert.All(
+            snapshot.Items,
+            item => Assert.Equal(destination.Id, snapshot.Resolve(item.CurrentOccurrenceId).Value!.CurrentList.Id));
+    }
+
+    [Fact]
+    public void FailedListClosureRollsBackEarlierProposalDispositions()
+    {
+        var clock = new FrozenTimeProvider(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+        var journal = new JournalService(repository, clock);
+        var futureLog = repository.GetSnapshot().Lists.Single();
+        var captured = journal.Capture("Future item", listId: futureLog.Id).Value!;
+        var reviews = new ReviewApplicationService(repository, clock);
+        var proposal = reviews.CreateProposal(
+            new ReviewProposalRequest(
+                futureLog.Id,
+                repository.GetSnapshot().Lists.Single().Version,
+                true,
+                [Change(captured.Item, captured.Occurrence, ReviewDisposition.Done)]),
+            McpActor()).Value!;
+        Assert.True(reviews.ApproveProposal(proposal.Id, proposal.Digest, PwaActor()).IsSuccess);
+        var beforeApply = repository.GetSnapshot();
+
+        var apply = reviews.ApplyProposal(proposal.Id, McpActor());
+
+        Assert.Equal(DomainErrorCode.FutureLogCannotClose, apply.Error!.Code);
+        AssertJournalUnchanged(beforeApply, repository.GetSnapshot());
+        Assert.Equal(
+            ReviewProposalStatus.Approved,
+            reviews.GetProposal(proposal.Id, McpActor()).Value!.Status);
+    }
+
+    [Fact]
     public void ApprovalRequiresCreatorPwaSessionAndExactDigest()
     {
         var setup = CreateSetup();
@@ -204,6 +258,18 @@ public sealed class ReviewApplicationServiceTests
         OccurrenceSnapshot occurrence,
         ReviewDisposition action) =>
         new(item.Id, occurrence.Id, item.Version, action);
+
+    private static ReviewChangeRequest MoveChange(
+        ItemSnapshot item,
+        OccurrenceSnapshot occurrence,
+        JournalListSnapshot destination) =>
+        new(
+            item.Id,
+            occurrence.Id,
+            item.Version,
+            ReviewDisposition.Move,
+            destination.Id,
+            destination.Version);
 
     private static ReviewActor PwaActor(string? userId = null) =>
         new(userId ?? UserId, ReviewProposalSource.Pwa, Interactive: true);
