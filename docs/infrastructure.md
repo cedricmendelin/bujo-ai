@@ -133,21 +133,29 @@ Foundry project, and the `chat`, `decision`, and `embedding` model deployments.
 The deployment map is flat and can only use pay-per-token SKUs:
 `DataZoneStandard`, `GlobalStandard`, or `Standard`. The production setting is
 `foundry_enabled = false`; while disabled, Terraform creates none of these
-resources. The model names below are proposed defaults, not an owner-approved
-authorization to provision or send data.
+resources or group role assignments. The owner
+[confirmed `gpt-6.1-terra` and the existing access group](https://github.com/cedricmendelin/bujo-ai/issues/128#issuecomment-6975784638);
+[issue #128 plan v1](https://github.com/cedricmendelin/bujo-ai/issues/128#issuecomment-6975892384)
+authorizes milestone A only: disabled infrastructure code, not provisioning or
+sending data. Decision and embedding defaults remain unchanged.
 
-The following candidates were checked on 2026-11-18 against Microsoft's model
-catalog, regional availability and public pricing pages. Availability and prices
-change; recheck the selected model, version, region, SKU and Azure calculator
-estimate before enabling.
+Evidence review dated 2026-11-18: indexed Microsoft catalog, GA announcement,
+pricing and privacy excerpts support the model choices below, but direct live
+page retrieval was blocked in the implementation environment. This is not a
+fresh subscription availability, quota or quote verification. In particular,
+the exact Switzerland North / Data Zone Standard combination for each version
+and the Terra Data Zone price row still need owner verification. Retain the
+configured defaults while disabled; do not silently substitute another model
+or deployment type.
 
 | Purpose | Proposed model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
 | --- | --- | --- | ---: | --- | --- |
-| Chat | `gpt-6.1-terra` / `2026-10-26` | GA; catalog lists Data Zone Standard in Switzerland North | 1 | Input $1.10; output $5.50 | `GlobalStandard`, then `Standard`; owner approval required |
-| Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; confirm exact region/SKU in target subscription | 1 | Input $0.28 (cached $0.03); output $2.20 | `GlobalStandard`, then `Standard`; owner approval required |
-| Embedding | `text-embedding-3-small` / `1` | Azure model; Data Zone Standard listed; confirm exact region/SKU in target subscription | 1 | Input $0.022 | `GlobalStandard`, then `Standard`; owner approval required |
+| Chat | `gpt-6.1-terra` / `2026-10-26` | Microsoft GA announcement lists EU Data Zone Standard; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $1.10; output $5.50; Data Zone row not independently verified | No automatic fallback; owner must verify and approve an available alternative |
+| Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; exact Switzerland North version/SKU/quota not verified | 1 | Indexed pricing: input $0.28 (cached $0.03); output $2.20 | No automatic fallback; do not assume `Standard` is offered for GPT models in Switzerland North |
+| Embedding | `text-embedding-3-small` / `1` | Azure model; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $0.022; verify billing units and Data Zone price row | No automatic fallback; owner must verify and approve an available alternative |
 
-The public Azure OpenAI pricing page supplies the model prices above. For an
+The public Azure OpenAI pricing page is the source to recheck these assumptions;
+the figures above are not an approved quote. For an
 illustrative, **not capped**, usage of 1M uncached input and 1M output tokens
 for each text deployment plus 1M embedding input tokens, the estimate is about
 $9.10. This is not a monthly worst-case: standard deployments bill by token,
@@ -174,35 +182,116 @@ terms before any sensitive content is sent.
 
 The account disables local/key authentication and keeps public network access
 enabled, consistent with the existing no-private-networking design. The
-Container App's runtime user-assigned identity is the only intended inference
-principal. Terraform does not grant Azure RBAC roles: the GitHub OIDC
-deployment identity is only resource-group Contributor and cannot create role
-assignments. Before use, the owner must grant **Cognitive Services OpenAI User**
-to the runtime identity at the Foundry account scope. Do not elevate the GitHub
-deployment identity or grant it model-inference access. Account creation alone
+Container App's runtime user-assigned identity remains the intended application
+inference principal. Before use, the owner must grant or verify **Cognitive
+Services OpenAI User** for that identity at the Foundry account scope. This
+remains external to Terraform; the group grants below do not replace it.
+Account creation alone
 does not enable the application adapter, inference, or authorization to send
 journal content.
+
+### Existing group access
+
+`foundry_access_group` is a nullable object containing `object_id` (GUID) and
+`display_name` (non-blank descriptive metadata, not used to resolve the group).
+`infra/prod.tfvars` references the owner-supplied `bujo-ai-foundry-admins`
+group. Its directory object ID is a non-secret group identifier, not a tenant
+or subscription ID. Terraform never creates, imports, looks up, or manages
+the group or its membership. No new `azuread` dependency is added; the existing
+provider is still needed for application registrations.
+
+Only when Foundry is enabled and the group is non-null does Terraform assign:
+
+| Role | Scope | Purpose |
+| --- | --- | --- |
+| Cognitive Services OpenAI User | Foundry account | Call/test model deployments |
+| Foundry User (formerly Azure AI User) | Foundry account (inherited by project) | Project reader access and project data actions |
+
+Microsoft's [Foundry RBAC documentation](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
+records the rename from Azure AI User to Foundry User. Terraform uses the
+current name for the same approved built-in role, not a broader replacement.
+The [built-in role reference](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/ai-machine-learning#foundry-user)
+identifies it as `53ca6127-db72-4b80-b1b0-d745d6d5456d`. These project data
+actions are distinct from the OpenAI inference grant; no app or agent is
+enabled by assigning either role.
+
+Assignments target `principal_type = "Group"` and have deterministic names
+derived from the account ID, group ID and role. The group name does not imply
+management rights: no Contributor, Owner or RBAC administration role is granted.
+The deployment identity receives neither of these model roles.
+
+The GitHub OIDC deployment identity currently has resource-group Contributor,
+which cannot write role assignments. **This PR does not change its permissions.**
+Before enablement, @cedricmendelin must arrange an out-of-band, explicitly
+approved **Role Based Access Control Administrator** grant constrained by an
+Azure RBAC condition to these two roles and this group, at the narrowest
+applicable scope (the resource group before the account exists, or account
+after creation). Include deletion rights for rollback; do not grant unrestricted
+Owner or User Access Administrator. If that privilege increase is not approved,
+set `foundry_access_group = null` before enabling and have an authorized Azure
+administrator create and verify the same account-scoped group assignments
+manually. Review any existing managed grants before switching to manual mode:
+setting the variable to null removes Terraform-managed assignments on apply.
 
 ### Owner approval and teardown
 
 ## 🙋 Needs human
 
-@cedricmendelin: before setting `foundry_enabled = true`, confirm whether
-`gpt-6-tera` meant `gpt-6.1-terra`, the decision and embedding model choices,
+@cedricmendelin: before setting `foundry_enabled = true`, approve the decision
+and embedding model choices,
 the exact region and SKU for all three models, current pricing and accepted
 abuse-monitoring terms, and a monthly usage/cost assumption. Also confirm the
-owner-managed runtime identity role grant described above. The next action is a
+deployment identity's constrained role-write grant (or manual group-role
+fallback) and the separate runtime identity role grant described above. The next action is a
 separate owner-approved `infra/prod.tfvars` change enabling Foundry after those
 checks; this infrastructure change does not enable chat.
 
+### Remaining work and acceptance evidence
+
+Milestone A is partial; keep the rollout issue open. No live enabled plan,
+apply or role verification is claimed by mocked Terraform tests.
+
+- [ ] @cedricmendelin: record written approval of all model versions,
+  Switzerland North / `DataZoneStandard`, privacy/abuse-monitoring terms and
+  usage/cost assumptions, with dated catalog/pricing and subscription quota
+  evidence. Any model, region or SKU fallback needs separate owner approval.
+- [ ] @cedricmendelin / Azure administrator: authorize the constrained RBAC
+  grant above, or choose manual assignments with the variable unset.
+- [ ] DevOps: after those gates, open a separate authorized
+  `infra/prod.tfvars` enablement PR with a sanitized enabled plan showing only
+  intended changes. Record the merged PR, reviewed revision and successful
+  existing workflow apply evidence; do not attach state or binary plan files.
+- [ ] @cedricmendelin / Azure administrator: once the account exists, verify
+  both group roles and the runtime identity's OpenAI User role at the exact
+  account scope. Link sanitized role-name, principal-type and scope evidence,
+  redacting real subscription/tenant/principal IDs, before claiming completion.
+
+For each intended principal, an authorized administrator can inspect direct
+account-scoped assignments locally (substitute IDs without posting them):
+
+```sh
+az role assignment list --assignee-object-id "<principal-object-id>" \
+  --scope "<foundry-account-resource-id>" \
+  --query "[].{role:roleDefinitionName,principalType:principalType,scope:scope}" \
+  --output table
+```
+
+Tests: `terraform fmt -check -recursive`, `terraform validate` and
+`terraform test` in `infra/`; the existing infrastructure Python CI suite also
+runs `tests/foundry.tftest.hcl`. No journal capability is added, so no API
+endpoint or MCP tool is required.
+
 To tear down, set `foundry_enabled = false` and apply; Terraform removes the
-deployments, project and account. Remove the runtime identity's account-scoped
+managed group roles, deployments, project and account. Have the administrator
+remove externally managed group roles and the runtime identity's account-scoped
 inference role grant separately. If Azure retains the deleted Cognitive
 Services account as soft-deleted, use the Azure recovery/purge process only
 after confirming no recovery or retention requirement remains.
 
-Sources checked 2026-11-18:
+Sources reviewed through indexed excerpts on 2026-11-18; live confirmation
+remains an enablement gate:
 
+- [Microsoft GPT-6.1 Terra GA announcement](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/gpt-6-1-terra-now-generally-available-in-microsoft-foundry-build-agents-that-see/4567769)
 - [GPT-6.1 Terra model catalog](https://ai.azure.com/catalog/models/gpt-6.1-terra)
 - [GPT-5 mini model catalog](https://ai.azure.com/catalog/models/gpt-5-mini)
 - [Text embedding 3 small model catalog](https://ai.azure.com/catalog/models/text-embedding-3-small)
