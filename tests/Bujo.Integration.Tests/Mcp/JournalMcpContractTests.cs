@@ -21,6 +21,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["GET /api/journal"] = ["get_journal"],
+            ["GET /api/journal/export"] = ["export_journal"],
             ["GET /api/daily-start"] = ["get_daily_start"],
             ["GET /api/planning/upcoming"] = ["get_upcoming"],
             ["POST /api/lists"] = ["create_list"],
@@ -39,6 +40,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     private static readonly string[] ExpectedTools =
     [
         "get_journal",
+        "export_journal",
         "get_daily_start",
         "get_upcoming",
         "find_lists",
@@ -379,11 +381,52 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             JsonNode.DeepEquals(JsonNode.Parse(apiUpcoming), JsonNode.Parse(mcpUpcoming)),
             $"API: {apiUpcoming}{Environment.NewLine}MCP: {mcpUpcoming}");
 
+        using var apiExportRequest = new HttpRequestMessage(HttpMethod.Get, "/api/journal/export");
+        apiExportRequest.Headers.Add("Authorization", "Test allow");
+        using var apiExportResponse = await apiClient.SendAsync(apiExportRequest);
+        using var apiExportJson = JsonDocument.Parse(await apiExportResponse.Content.ReadAsStringAsync());
+        var mcpExport = await mcp.CallToolAsync("export_journal", new Dictionary<string, object?>());
+        Assert.Equal(HttpStatusCode.OK, apiExportResponse.StatusCode);
+        Assert.False(mcpExport.IsError);
+        var apiExportNode = JsonNode.Parse(apiExportJson.RootElement.GetRawText())!.AsObject();
+        var mcpExportNode = JsonNode.Parse(mcpExport.StructuredContent!.Value.GetRawText())!.AsObject();
+        apiExportNode.Remove("exportedAt");
+        mcpExportNode.Remove("exportedAt");
+        Assert.True(
+            JsonNode.DeepEquals(apiExportNode, mcpExportNode),
+            $"API: {apiExportNode}{Environment.NewLine}MCP: {mcpExportNode}");
+
         var missingTimeZone = await mcp.CallToolAsync(
             "get_daily_start",
             new Dictionary<string, object?> { ["timeZone"] = "" });
         Assert.True(missingTimeZone.IsError);
         Assert.Equal("InvalidTimeZone", GetErrorCode(missingTimeZone));
+    }
+
+    [Fact]
+    public async Task JournalAndExportMcpToolsReturnErrorsWhenTheRepositoryIsUnavailable()
+    {
+        using var factory = new JournalApiFactory { FailQueries = true };
+        using var httpClient = factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            },
+            httpClient,
+            NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+
+        foreach (var toolName in new[] { "get_journal", "export_journal" })
+        {
+            var result = await mcp.CallToolAsync(toolName, new Dictionary<string, object?>());
+            Assert.True(result.IsError);
+            Assert.Equal("QueryFailed", GetErrorCode(result));
+            Assert.DoesNotContain("Simulated repository failure", result.Content.OfType<TextContentBlock>()
+                .Select(block => block.Text).Single());
+        }
     }
 
     [Fact]

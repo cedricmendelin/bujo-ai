@@ -19,6 +19,7 @@ public static class DependencyInjection
     public static IServiceCollection AddJournalApplication(this IServiceCollection services)
     {
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IJournalExport, JournalExport>();
         services.AddScoped<JournalService>();
         services.AddScoped<JournalApplicationService>();
         return services;
