@@ -18,22 +18,78 @@ On Linux, install Podman and enable its rootless socket:
 systemctl --user enable --now podman.socket
 ```
 
-Initialize the AppHost's local user-secrets store and provide an SQL password
-there. Do not put credentials in the repository or a committed environment file:
+The AppHost already declares a user-secrets store. Provide a local SQL password
+there (at least eight characters with uppercase, lowercase, digits, and symbols).
+Do not put credentials in the repository or a committed environment file:
 
 ```sh
-dotnet user-secrets init --project src/Bujo.AppHost
 dotnet user-secrets set "Parameters:sql-password" "<local-only-password>" --project src/Bujo.AppHost
 dotnet user-secrets set "Auth:TenantId" "<tenant-guid>" --project src/Bujo.AppHost
-dotnet user-secrets set "Auth:Audience" "<api-application-id-or-uri>" --project src/Bujo.AppHost
+dotnet user-secrets set "Auth:Audience" "<api-application-client-id>" --project src/Bujo.AppHost
 dotnet user-secrets set "Auth:AllowedPrincipals" "<tenant-guid>:<approved-object-guid>" --project src/Bujo.AppHost
 ```
 
-Run the local host and SQL container with Podman:
+For Entra v2 access tokens, `Auth:Audience` is the API registration's
+Application (client) ID, not the browser-client ID or scope URI.
+`Auth:AllowedPrincipals` uses `tenant-id:user-object-id` pairs. For multiple
+users, separate complete pairs with commas; a comma-separated list of bare
+Object IDs is not supported. Use user Object IDs from **Entra ID > Users**,
+not app-registration Object IDs, and the same tenant as `Auth:TenantId`.
 
-```sh
-ASPIRE_CONTAINER_RUNTIME=podman dotnet run --project src/Bujo.AppHost
+From the repository root, run the local host and SQL container with Podman:
+
+```powershell
+dotnet dev-certs https --trust
+dotnet run --project src\Bujo.AppHost --launch-profile https
 ```
+
+The checked-in `https` launch profile selects Podman and Development mode,
+opens the dashboard at `https://localhost:17000`, and configures Aspire's
+telemetry and resource-service endpoints. Use the dashboard login URL printed
+in the terminal if prompted for a token. In Visual Studio, select
+`Bujo.AppHost` as the startup project and the `https` launch profile, then run.
+Do not launch the executable in `bin` directly; use the project launch profile
+or `dotnet run` so Aspire receives its startup configuration.
+
+If startup appears stuck, check the following:
+
+- `podman machine list` must show a running machine and `podman ps` must succeed.
+  Run `podman machine start` if the existing machine is stopped; do not
+  initialize another machine on every run.
+- **Unresolved parameters** in the dashboard means `Parameters:sql-password`
+  has not been supplied. Set it in user secrets and restart AppHost.
+- The first SQL startup pulls the container image and creates the database.
+  Inspect the `sql` and `journal-host` console logs in the dashboard if they
+  remain unhealthy. Existing SQL volumes retain their original password;
+  changing the parameter does not reset the stored SQL login password.
+- Stop the previous AppHost run before starting another one; the launch
+  profile uses fixed localhost ports.
+
+Starting the dashboard, database, and anonymous host pages does not require
+Entra configuration. Protected API/MCP calls still require the real API auth
+settings above. For browser sign-in, also set the following in AppHost user
+secrets; AppHost forwards these settings to `journal-host`:
+
+```powershell
+dotnet user-secrets set "Auth:Pwa:ClientId" "<web-client-application-id>" --project src\Bujo.AppHost
+dotnet user-secrets set "Auth:Pwa:ClientSecret" "<client-secret-value>" --project src\Bujo.AppHost
+dotnet user-secrets set "Auth:Pwa:Scope" "<API-application-ID-URI>/journal.access" --project src\Bujo.AppHost
+```
+
+Use the exact delegated scope URI from the API registration's **Expose an API**
+page. Register `https://localhost:7168/signin-oidc` as a **Web** redirect URI on
+the browser-client registration. Restart AppHost after changing secrets.
+If PWA settings are absent from AppHost, it leaves any host-specific PWA
+configuration untouched. See [the authentication guide](auth.md) for the full
+requirements; local startup does not configure Entra or bypass authentication.
+
+An immediate redirect to `/auth/error` before reaching Microsoft sign-in can
+mean required auth configuration is missing or malformed. Browser-console CSP
+warnings about `browserLinkSignalR` or `aspnetcore-browser-refresh.js` are
+separate: Visual Studio injects development tooling that tries to connect to
+other local ports, which the app's `connect-src 'self'` policy blocks. Disable
+Browser Link and browser refresh in the IDE if needed; do not broaden the
+application CSP to allow arbitrary localhost connections.
 
 For authenticated MCP setup, the exact-Origin allowlist, and client-specific
 configuration examples, see the [remote MCP guide](mcp.md). Do not put access
@@ -65,9 +121,6 @@ Provide the existing private `ConnectionStrings:journal` configuration first.
 Verification and migration flags are mutually exclusive. `--verify-database`
 never applies migrations; `--migrate-only` remains the dedicated production
 migration entry point.
-
-For Windows PowerShell, set the runtime with
-`$env:ASPIRE_CONTAINER_RUNTIME = "podman"` before `dotnet run`.
 
 ## SQL-backed integration test
 

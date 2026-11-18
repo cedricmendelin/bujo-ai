@@ -15,6 +15,14 @@ var journalHost = builder.AddProject<Projects.Bujo_Host>("journal-host")
     .WithEnvironment("Mcp__PublicBaseUrl", builder.Configuration["Mcp:PublicBaseUrl"] ?? string.Empty)
     .WithArgs("--migrate");
 
+foreach (var key in new[] { "ClientId", "ClientSecret", "Scope" })
+{
+    if (builder.Configuration[$"Auth:Pwa:{key}"] is { } value)
+    {
+        journalHost.WithEnvironment($"Auth__Pwa__{key}", value);
+    }
+}
+
 foreach (var origin in builder.Configuration.GetSection("Mcp:AllowedOrigins").GetChildren())
 {
     journalHost.WithEnvironment($"Mcp__AllowedOrigins__{origin.Key}", origin.Value ?? string.Empty);
