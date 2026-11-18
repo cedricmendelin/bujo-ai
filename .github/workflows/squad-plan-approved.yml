@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   plan-comment:
-    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request && contains(github.event.comment.body, '## 📋 Implementation plan v')
+    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request && (contains(github.event.comment.body, '## 📋 Implementation plan v') || contains(github.event.comment.body, '## Planning questions'))
     concurrency:
       group: squad-plan-comment-${{ github.repository }}-${{ github.event.issue.number }}
       cancel-in-progress: false
@@ -41,27 +41,28 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const { latestPlan } = require('./.github/scripts/plan-approval');
+            const { isQuestions, latestPlan } = require('./.github/scripts/plan-approval');
             const { owner, repo } = context.repo;
             const issue = context.payload.issue;
             const comment = context.payload.comment;
             const ownerLogin = context.payload.repository.owner.login;
             if (![ownerLogin, 'github-actions[bot]'].includes(comment.user.login)) return;
-            if (!(comment.body || '').trimStart().startsWith('## 📋 Implementation plan v')) return;
+            if (!isQuestions(comment) && !(comment.body || '').trimStart().startsWith('## 📋 Implementation plan v')) return;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: issue.number, per_page: 100,
             });
             const selected = latestPlan(comments, ownerLogin);
             if (selected.ok && selected.plan.comment.id !== comment.id) return;
+            if (selected.waiting && selected.comment.id !== comment.id) return;
             const liveIssue = (await github.rest.issues.get({ owner, repo, issue_number: issue.number })).data;
             if (liveIssue.labels.some(label => label.name === 'plan:approved')) {
               await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: 'plan:approved' });
               await github.rest.issues.createComment({ owner, repo, issue_number: issue.number,
                 body: selected.ok
                   ? `A newer plan v${selected.plan.version} was published. Review it and apply \`plan:approved\` again if it is the intended scope.`
-                  : `Approval cleared: ${selected.reason} Correct the numbered plan history before approving it.` });
+                  : `Approval cleared: ${selected.reason}` });
             }
-            if (!selected.ok) core.setFailed(selected.reason);
+            if (!selected.ok && !selected.waiting && !isQuestions(comment)) core.setFailed(selected.reason);
 
   assign:
     if: (github.event_name == 'issues' && github.event.label.name == 'plan:approved') || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch)
@@ -164,6 +165,13 @@ jobs:
                 await agent.rest.issues.removeAssignees({
                   owner, repo, issue_number: number, assignees: [COPILOT_ASSIGNEE],
                 });
+              }
+            } else {
+              const livePlan = latestPlan(await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              }), ownerLogin);
+              if (!livePlan.ok || livePlan.plan.comment.id !== selected.plan.comment.id) {
+                throw new Error('Planning state changed before assignment; approve the new plan when it is ready.');
               }
             }
             const instructions = [

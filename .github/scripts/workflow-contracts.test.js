@@ -95,7 +95,7 @@ test('controller preserves reviewer bypass boundaries, human blocks, CI, and no 
 
 test('completed issue closure warning uses trusted code and issue-only write permission', () => {
   const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
-  assert.match(lifecycle, /issues:\r?\n\s+types:\s+\[closed\]/);
+  assert.match(lifecycle, /issues:\r?\n\s+types:\s+\[[^\]\r\n]*\bclosed\b/);
   const closure = lifecycle.split('  completed-closure-guard:')[1].split('  lifecycle:')[0];
   assert.match(closure, /github\.event\.issue\.state_reason == 'completed'/);
   assert.match(closure, /github\.event\.repository\.default_branch/);

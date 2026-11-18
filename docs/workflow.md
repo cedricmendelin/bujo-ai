@@ -24,6 +24,13 @@ cloud session success or local ready PR
 
 See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
 
+| Stage | Owner and exit condition |
+|---|---|
+| Clarify and plan | Architect maps every acceptance criterion to verification and checks dependencies and capabilities. If a requirement is unresolved, ask with a recommendation; don't publish an approvable plan. |
+| Approve and implement | Repository owner or writer approves the latest complete plan. The named delivery owner implements the agreed outcomes and records evidence per criterion. |
+| Review and repair | Specialists assess the current head; the delivery owner fixes each blocker or gives the reviewer evidence for a disagreement. A formal rejection goes to a different revision author. |
+| Decide and merge | GitHub merges only after CI, independent review, and readiness pass. An ordinary partial milestone leaves the issue open; an audited split moves only nonessential work to an open follow-up. |
+
 ## Journal API and MCP parity
 
 Every journal capability ships through both the API and MCP, using the same
@@ -44,6 +51,14 @@ not hide or edit older versions. A new numbered plan clears `plan:approved`;
 review and re-apply the label to start cloud implementation. Chat-authored plans
 use the exact same heading, required sections, version increment, and completion
 contract; publish them as issue comments. Publishing alone never starts work.
+
+If a blocking question remains, use the first line `## Planning questions`,
+then state the decision, recommended answer, and effect on delivery. For
+example: “Must installation be supported on Safari as well as Chromium?
+Recommend both only if the release needs iOS installation; this determines the
+browser acceptance tests.” A newer authorized questions comment prevents
+assignment under the old plan. Once answered, publish the next numbered plan
+and apply `plan:approved` again. A routing change cannot resolve a question.
 
 The repository owner or an ordinary repository writer may apply `plan:approved`.
 The default-branch `squad-plan-approved.yml` reads the latest numbered plan,
@@ -134,10 +149,11 @@ publishes success. Publishing success first can make the PR clean, in which
 case GitHub rejects the auto-merge request. An arming failure must not publish
 green readiness; no direct-merge fallback is permitted.
 
-An infrastructure failure or approval block in a reviewer pauses once with
-`needs:human` rather than repeatedly invoking the model. Fix the cause, remove
-the label, and re-evaluate. Resolving a blocking inline thread without another
-PR/review event requires a manual lifecycle dispatch; there is no polling loop.
+A reviewer startup failure or timeout gets one deduplicated automatic retry
+for that head and review input. A persistent failure or a human approval block
+pauses with `needs:human`. Fix the cause, remove the label, and re-evaluate.
+Resolving a blocking inline thread without another PR/review event requires
+a manual lifecycle dispatch; there is no polling loop.
 
 The shared reviewer GitHub reader explicitly uses `min-integrity: none` scoped
 to `cedricmendelin/bujo-ai`. gh-aw otherwise defaults public repositories to
@@ -212,14 +228,27 @@ Their relative ordering is not a freshness signal: GitHub can assign an implicit
 must neither trigger a duplicate review nor hide genuine blocking findings.
 
 An eligible owner/maintainer can add `review:none` to one PR. It skips pending
-and existing specialist findings for that PR, but never CI, trusted human
+and existing specialist findings for ordinary PRs, not audited scope splits or
+an artifact under formal rejection. It never skips CI, trusted human
 `CHANGES_REQUESTED` reviews, or unresolved trusted human inline threads marked
 `[blocking]`. It is not an issue label. Removing it starts fresh reviews on the
 same head. Review selection does not change required branch protection checks;
 while old reviewer contexts remain required, GitHub still enforces them.
 
 The controller forwards blocking specialist findings and trusted human review
-feedback to the implementer. It suppresses cloud fix requests while a session is
+feedback to the delivery owner. Record each finding and its fix/test evidence
+or a reasoned disagreement for the reviewer. Nothing is cleared by a comment
+or a push alone. Metadata corrections are routed to the delivery owner without
+using a coding attempt. A formal `Revision: independent` rejection blocks
+re-dispatch: the coordinator must check the rejected authors, assign a
+different eligible agent and keep rejected authors out of revision or advice.
+Actions cannot start a local app session or distinguish two agents behind the
+same GitHub bot identity. After the coordinator verifies the author, the
+repository owner posts a **Comment** review on the revised head containing
+`Independent revision: <rejection-comment-id> by <agent/session-id>`.
+This records the verified handoff, not a review bypass; `review:none` is
+unavailable, and current-head independent checks must still pass.
+It suppresses cloud fix requests while a session is
 active. Three **attributed substantive** review-fix attempts (or local code changes
 after a request) are allowed per repair episode. The cloud agent reports the
 request token, actual Actions run ID, outcome, and evidence in a top-level PR
@@ -228,14 +257,21 @@ Copilot bot's report paired with a terminal run can count. A no-change
 investigation can be substantive; a commit alone is not proof of attribution.
 Queued runs, cancellations, metadata fixes, unrelated Watch and fix runs, and
 capability/dependency blocks do not consume attempts. Missing attribution after
-a later session completes pauses for inspection rather than inferring a fix.
+a later session completes triggers one re-review of remaining specialist
+findings before escalation. It is never inferred to mean a fix.
 After three actual attempts with
 blocking findings still present, it assigns/mentions @cedricmendelin and adds
 `needs:human`. That label is an explicit pause and is never silently removed.
 Capability/dependency outcomes and human-only review findings pause once instead
 of issuing the same impossible request repeatedly. Shared reviews declare
-`Repair route: implementation`, `Repair route: human`, or `Repair route: none`.
+`Repair route: implementation`, `Repair route: metadata`, `Repair route: human`,
+or `Repair route: none`.
 Implementation work is addressed first when both code and human actions remain.
+
+An escalation names the blocker, evidence, recovery attempted, and the exact
+action that unblocks work. For example: “Live-client verification is required by
+the plan. Local smoke tests pass, but the test account cannot sign in. Please
+grant the test account access or name the person who can; then resume the PR.”
 
 Resolve the cause, then deliberately run **Squad PR Lifecycle** with its PR
 number and `resume_repairs: true` to clear the pause and start a fresh bounded
@@ -255,7 +291,8 @@ Actions run must not clear a later pause.
 
 Every PR declares exactly one whole-line `Completion: full` or
 `Completion: partial`. Full completion requires evidence for every issue
-acceptance criterion, including implementation and relevant automated tests.
+acceptance criterion, including implementation and relevant automated tests,
+except for work explicitly transferred under an audited scope split.
 The declaration is not semantic proof; the independent Verifier checks the
 evidence.
 
@@ -314,6 +351,39 @@ issue and the existing approved plan for continuation whenever scope is
 unchanged. Use a linked follow-up only to recover an already-closed issue
 or to track an intentional scope split; carry forward the applicable plan
 and remaining criteria rather than planning from scratch.
+
+### Audited scope splits
+
+Ship the full issue by default. If implementation discovers genuinely
+unexpected, nonessential work that can safely ship later, the delivery owner
+may transfer it without another human approval. The delivered slice must still
+meet the original intent. Required outcomes, security/privacy/data-integrity
+safeguards, compatibility contracts, and necessary verification cannot move.
+If the boundary is unclear, stop and ask.
+
+Create or reuse an open same-repository issue before requesting merge. Leave
+the original acceptance list intact and add these whole-line records:
+
+| Record | PR #81 | Original issue #11 | Follow-up #22 |
+|---|---|---|---|
+| Delivery | `Completion: full` | Original criteria and evidence | Deferred acceptance work |
+| Links | `Closes #11`, `Scope split: #22` | `Scope split: #22`, `Split PR: #81` | `Split from: #11`, `Split PR: #81` |
+| Plan | `Plan: v2` | Latest numbered plan, approved | Normal planning when picked up |
+| Transfer | Same `Deferred:` line(s) | Same `Deferred:` line(s) | Same `Deferred:` line(s) |
+
+Put each value on its own line. Copy the exact deferred item, reason, owner,
+and next action to all three records, for example:
+
+```text
+Deferred: Add optional dark-theme screenshot to help text | reason: Existing help already covers the workflow | owner: builder | next: Add the screenshot and verify the rendered help
+```
+
+Architect and Verifier verify the transfer and every retained criterion; the
+controller uses all four reviews and excludes `review:none` on this path. It
+rechecks the live records before arming auto-merge. The original closes on
+merge, and the follow-up stays open. If the records cannot be created or the
+split is rejected, do not use closing linkage. An explicitly agreed partial
+milestone can still merge without closing the issue.
 
 ### Recovering the observed partial-delivery loop
 
