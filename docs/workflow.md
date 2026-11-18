@@ -275,12 +275,38 @@ Other syntax/closing-reference errors receive explicit completion feedback and
 blocked readiness, even if no specialist check has failed. They consume no
 code-repair budget. Correcting the description triggers re-evaluation.
 
-For an unambiguous single same-repository `Refs #N`, `Relates to #N`, or
-`Part of #N` and a `## Remaining work` section, the controller copies a quoted
-handoff to the open issue, once per changed remaining-work text. It never
-reopens issues or marks them complete. Ambiguous/multiple linkage needs an
-explicit owner-maintained handoff; specialists verify it. This makes remaining
-scope durable without creating duplicate follow-up issues.
+Use one unambiguous same-repository `Refs #N`, `Relates to #N`, or
+`Part of #N` and a nonempty `## Remaining work` section. Before requesting
+merge readiness, the delivery owner updates the single `## Acceptance tracking`
+checklist on that open issue. Convert or consolidate any earlier checklist
+rather than keeping two competing lists. For example:
+
+```markdown
+## Acceptance tracking
+
+- [x] Local sign-in works — evidence: PR #125 and its sign-in evidence.
+- [ ] Browser installation — blocked on target browser selection; owner: Verifier; next: record installation evidence on the agreed browsers.
+- [ ] Journal capture — open; owner: Builder; next: deliver and test the capture flow.
+```
+
+For a partial milestone, mark work done once it has landed and has evidence;
+leave each unmet criterion unchecked with its owner, dependency or blocker,
+and concrete next action. Use `evidence:` on checked rows; use `open` or
+`blocked`, `owner:`, and `next:` on unchecked rows, as in the example.
+The controller checks that the issue is open and
+has an outstanding checklist before it reports merge readiness, including on
+the `review:none` path. It copies a quoted handoff once per changed
+remaining-work text as history; it does not edit the issue checklist or
+validate evidence on its own. If you corrected only the issue, re-run **Squad
+PR Lifecycle** with the PR number to re-evaluate readiness.
+
+If GitHub records the issue as completed while the checklist still has
+unchecked criteria, the closure check posts a warning. It does not reopen
+the issue automatically or act on a `not planned` closure. Use the same
+issue and the existing approved plan for continuation whenever scope is
+unchanged. Use a linked follow-up only to recover an already-closed issue
+or to track an intentional scope split; carry forward the applicable plan
+and remaining criteria rather than planning from scratch.
 
 ### Recovering the observed partial-delivery loop
 

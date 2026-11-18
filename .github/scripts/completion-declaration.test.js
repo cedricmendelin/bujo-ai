@@ -2,7 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, LEGACY_PR_CUTOFF } = require('./completion-declaration');
+const {
+  acceptanceTracking, evaluateCompletion, hasPartialDeclaration, repairGeneratedClosingReferences,
+  partialHandoff, LEGACY_PR_CUTOFF,
+} = require('./completion-declaration');
 
 const current = { createdAt: '2026-11-15T12:58:07Z' };
 const legacy = { createdAt: '2026-11-15T12:49:18Z' };
@@ -128,6 +131,43 @@ test('partial handoff extracts one same-repository issue and stops at the next s
   assert.deepEqual(partialHandoff(body, 'cedricmendelin/bujo-ai'),
     { issue: 11, remaining: 'Owner: AI. Test clients after access.' });
   assert.equal(partialHandoff(body.replace('Refs #11', 'Refs other/repo#11'), 'cedricmendelin/bujo-ai'), null);
+  assert.equal(partialHandoff(body.replace('Refs #11', 'Refs #11\nPart of other/repo#12'), 'cedricmendelin/bujo-ai'), null);
   assert.equal(partialHandoff(body.replace('Refs #11', 'Refs #11\nRefs #12'), 'cedricmendelin/bujo-ai'), null);
   assert.equal(partialHandoff(body.replace('partial', 'full'), 'cedricmendelin/bujo-ai'), null);
+});
+
+test('acceptance tracking requires one canonical checklist with evidence and actionable unchecked rows', () => {
+  const body = [
+    '## Acceptance tracking',
+    '',
+    '- [x] Local sign-in works — evidence: PR #125 and sign-in test.',
+    '- [ ] Browser installation — blocked on target selection; owner: Verifier; next: record evidence on agreed browsers.',
+    '- [ ] Journal capture — open; owner: Builder; next: deliver and test the flow.',
+    '',
+    '## Notes',
+    '- [ ] Not a tracked criterion',
+  ].join('\n');
+  const result = acceptanceTracking(body);
+  assert.equal(result.ok, true);
+  assert.equal(result.criteria.length, 3);
+  assert.equal(result.incomplete.length, 2);
+  assert.equal(acceptanceTracking(body.replace('- [x] Local sign-in works — evidence: PR #125 and sign-in test.', '- [x] Local sign-in works')).ok, false);
+  assert.equal(acceptanceTracking(body.replace('blocked on target selection; owner: Verifier; next:', 'waiting; next:')).ok, false);
+  assert.equal(acceptanceTracking(body.replace('owner: Verifier', 'owner:;')).ok, false);
+  assert.equal(acceptanceTracking(body.replace('## Acceptance tracking', '## Checklist')).ok, false);
+  const duplicate = acceptanceTracking(`${body}\n## Acceptance tracking\n- [ ] duplicate; open; owner: Builder; next: resolve`);
+  assert.equal(duplicate.ok, false);
+  assert.equal(duplicate.incomplete.length, 3, 'closure detection must inspect every duplicate checklist section');
+  assert.equal(acceptanceTracking(body.replace(/\n- \[ \].*$/gm, '')).incomplete.length, 0);
+});
+
+test('partial declaration and issue reference parsing fail closed for absent, duplicate, or foreign linkage', () => {
+  const body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: AI. Test clients after access.';
+  assert.equal(hasPartialDeclaration(body), true);
+  assert.equal(hasPartialDeclaration(body.replace('partial', 'full')), false);
+  assert.equal(hasPartialDeclaration(`${body}\nCompletion: partial`), false);
+  assert.equal(partialHandoff(body.replace('Refs #11', 'Relates to other/repo#12\nRefs #11'), 'cedricmendelin/bujo-ai'), null);
+  assert.equal(partialHandoff(body.replace('Refs #11', 'Notes only'), 'cedricmendelin/bujo-ai'), null);
+  assert.equal(partialHandoff('Completion: partial\nRefs #11\n## Remaining work\n```\nnot an actual handoff\n```',
+    'cedricmendelin/bujo-ai'), null);
 });

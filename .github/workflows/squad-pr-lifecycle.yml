@@ -29,13 +29,15 @@ on:
         description: Explicitly clear the human pause and start a new repair episode after inspecting its cause
         default: false
         type: boolean
+  issues:
+    types: [closed]
 
 permissions:
   contents: read
 
 jobs:
   route:
-    if: github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch
+    if: github.event_name != 'issues' && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -77,6 +79,60 @@ jobs:
             core.setOutput('numbers', JSON.stringify(numbers));
             core.setOutput('found', numbers.length > 0 ? 'true' : 'false');
 
+  completed-closure-guard:
+    if: github.event_name == 'issues' && github.event.action == 'closed'
+      && github.event.issue.state_reason == 'completed'
+      && !github.event.issue.pull_request
+    concurrency:
+      group: squad-issue-closure-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted default-branch checklist parser
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Warn when a completed issue retains unchecked criteria
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { acceptanceTracking } = require('./.github/scripts/completion-declaration');
+            const { owner, repo } = context.repo;
+            const eventIssue = context.payload.issue;
+            if (context.eventName !== 'issues' || context.payload.action !== 'closed'
+                || eventIssue?.state_reason !== 'completed' || eventIssue.pull_request) {
+              return core.info('Not an explicit completed issue closure; no warning is needed.');
+            }
+            const number = Number(eventIssue.number);
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('Issue event did not contain a valid issue number.');
+            const issue = (await github.rest.issues.get({ owner, repo, issue_number: number })).data;
+            if (issue.state !== 'closed' || issue.state_reason !== 'completed' || issue.pull_request) {
+              return core.info(`#${number}: live issue state is not a completed issue closure.`);
+            }
+            const tracking = acceptanceTracking(issue.body);
+            if (!tracking.incomplete.length) {
+              return core.info(`#${number}: no unchecked acceptance criteria remain.`);
+            }
+            const marker = `<!-- squad-acceptance-closure-warning:${number}:${require('./.github/scripts/delivery-lifecycle').reviewInputKey(issue.body || '')} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: number, per_page: 100,
+            });
+            if (comments.some(comment => comment.user?.login === 'github-actions[bot]'
+                && (comment.body || '').includes(marker))) {
+              return core.info(`#${number}: the warning for this checklist version already exists.`);
+            }
+            const guidance = tracking.ok
+              ? 'Review the remaining owner/next actions and decide whether the issue should be reopened for the existing approved continuation. Once all criteria are complete, mark them checked with evidence.'
+              : 'Repair the `## Acceptance tracking` checklist so every remaining criterion has an explicit status, owner, and next action; decide whether the issue should be reopened for the existing approved continuation.';
+            await github.rest.issues.createComment({ owner, repo, issue_number: number,
+              body: `${marker}\n⚠️ This issue was closed as completed while ${tracking.incomplete.length} acceptance-tracking criterion/criteria remain unchecked. ${guidance} This notice does not reopen the issue or authorize a change in scope.` });
+
   lifecycle:
     needs: route
     if: needs.route.outputs.found == 'true'
@@ -114,7 +170,10 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, removeNonProse } = require('./.github/scripts/completion-declaration');
+            const {
+              acceptanceTracking, evaluateCompletion, hasPartialDeclaration,
+              repairGeneratedClosingReferences, partialHandoff, removeNonProse,
+            } = require('./.github/scripts/completion-declaration');
             const { isEligiblePermission, parsePlan } = require('./.github/scripts/plan-approval');
             const {
               actualRepairAttempts, currentHeadCheck, hasHumanBlocks, humanBlockingFeedback, isControllerComment,
@@ -399,9 +458,15 @@ jobs:
                 core.info(`#${number}: replaced generated closing references with non-closing references; issue scope remains partial.`);
               }
               const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
-              if (!completion.ok) {
+              const partial = hasPartialDeclaration(pr.body);
+              const handoff = partial ? partialHandoff(pr.body, `${owner}/${repo}`) : null;
+              const referenceFinding = partial && !handoff
+                ? '`Completion: partial` requires one unambiguous same-repository issue reference and a nonempty "Remaining work" section.'
+                : null;
+              if (!completion.ok || referenceFinding) {
                 await pauseMerge(pr);
-                const reason = `Completion metadata requires a maintainer decision:\n\n${completion.findings.map(item => `- ${item}`).join('\n')}`;
+                const findings = [...completion.findings, ...(referenceFinding ? [referenceFinding] : [])];
+                const reason = `Completion metadata requires a maintainer decision:\n\n${findings.map(item => `- ${item}`).join('\n')}`;
                 const marker = `<!-- squad-completion-blocked:${reviewInputKey(pr.body || '')} -->`;
                 if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
@@ -411,14 +476,17 @@ jobs:
                 return;
               }
               const inputKey = reviewInputKey(pr.body || '');
-              const handoff = partialHandoff(pr.body, `${owner}/${repo}`);
-              if (handoff && (!cloudPr || session.state === 'ok')) {
+              if (handoff) {
                 const issue = (await github.rest.issues.get({ owner, repo, issue_number: handoff.issue })).data;
-                if (issue.pull_request || issue.state !== 'open') {
+                const tracking = acceptanceTracking(issue.body);
+                if (issue.pull_request || issue.state !== 'open' || !tracking.ok || tracking.incomplete.length === 0) {
                   await pauseMerge(pr);
+                  const trackingReason = issue.pull_request || issue.state !== 'open'
+                    ? `Partial delivery must reference an open issue; inspect #${handoff.issue}. No issue was reopened automatically.`
+                    : `Partial delivery requires a valid \`## Acceptance tracking\` checklist on open issue #${handoff.issue} with at least one unchecked criterion. ${tracking.findings.join(' ')}`;
                   await setReadiness(pr, sha, {
                     status: 'completed', conclusion: 'failure',
-                    reason: `Partial delivery must reference an open issue; inspect #${handoff.issue}. No issue was reopened automatically.`,
+                    reason: trackingReason,
                   });
                   return;
                 }
@@ -637,6 +705,21 @@ jobs:
                   await setReadiness(latestPr, sha, decision);
                   await pauseMerge(latestPr);
                   return core.info(`#${number}: readiness bootstrapped; required-check migration is still an owner action.`);
+                }
+                if (handoff) {
+                  const latestIssue = (await github.rest.issues.get({
+                    owner, repo, issue_number: handoff.issue,
+                  })).data;
+                  const latestTracking = acceptanceTracking(latestIssue.body);
+                  if (latestIssue.pull_request || latestIssue.state !== 'open'
+                      || !latestTracking.ok || latestTracking.incomplete.length === 0) {
+                    await pauseMerge(latestPr);
+                    await setReadiness(latestPr, sha, {
+                      status: 'completed', conclusion: 'failure',
+                      reason: `Partial issue #${handoff.issue} is no longer open with a valid acceptance checklist containing an unchecked criterion. Re-evaluate after the delivery owner updates the issue.`,
+                    });
+                    return;
+                  }
                 }
                 // GitHub rejects enabling auto-merge on an already clean PR.
                 // Keep our required check pending until native auto-merge is armed.
