@@ -151,7 +151,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         var accessibility = await page.RunAxe();
         Assert.Empty(accessibility.Violations);
 
-        await page.GetByLabel("Disposition").SelectOptionAsync("Done");
+        await page.GetByLabel("Disposition", new() { Exact = true }).SelectOptionAsync("Done");
         await page.GetByLabel("Close this list after applying all dispositions").CheckAsync();
         await Button(page, "Review proposal").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();

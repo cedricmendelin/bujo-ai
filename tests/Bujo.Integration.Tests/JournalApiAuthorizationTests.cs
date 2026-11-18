@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Bujo.Application;
 using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Infrastructure.Persistence;
@@ -270,8 +271,30 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         Assert.Equal(64, proposalBody.RootElement.GetProperty("digest").GetString()!.Length);
         Assert.Equal(HttpStatusCode.Conflict, unapprovedApply.StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, noApiApproval.StatusCode);
-        using var afterApplyBody = JsonDocument.Parse(await afterApply.Content.ReadAsStringAsync());
-        Assert.Single(afterApplyBody.RootElement.GetProperty("unfinished").EnumerateArray());
+        using (var afterApplyBody = JsonDocument.Parse(await afterApply.Content.ReadAsStringAsync()))
+        {
+            Assert.Single(afterApplyBody.RootElement.GetProperty("unfinished").EnumerateArray());
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var reviewService = scope.ServiceProvider.GetRequiredService<ReviewApplicationService>();
+        var actor = new ReviewActor(
+            "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7:2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72",
+            ReviewProposalSource.Pwa,
+            Interactive: true);
+        var approved = reviewService.ApproveProposal(
+            proposalId,
+            proposalBody.RootElement.GetProperty("digest").GetString()!,
+            actor);
+        using var applied = await client.SendAsync(
+            AuthenticatedJsonRequest(HttpMethod.Post, $"/api/review-proposals/{proposalId}/apply", new { }));
+        using var completedReview = await client.SendAsync(AuthenticatedGet($"/api/lists/{listId}/review"));
+        using var completedReviewBody = JsonDocument.Parse(await completedReview.Content.ReadAsStringAsync());
+
+        Assert.True(approved.IsSuccess, approved.Error?.Message);
+        Assert.Equal(HttpStatusCode.OK, applied.StatusCode);
+        Assert.Empty(completedReviewBody.RootElement.GetProperty("unfinished").EnumerateArray());
+        Assert.Single(completedReviewBody.RootElement.GetProperty("resolved").EnumerateArray());
     }
 
     [Fact]
