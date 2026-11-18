@@ -20,8 +20,9 @@ deployed. Local startup and PWA configuration fixes were merged in
 [#10](https://github.com/cedricmendelin/bujo-ai/issues/10) was closed after
 the partial proof; [#124](https://github.com/cedricmendelin/bujo-ai/issues/124)
 tracks the remaining review and acceptance evidence. Owner confirmation remains
-pending for the allowlist contract, list close/reopen API-MCP parity, target
-browsers, and final rendering-proof review. See its
+pending for the additional weekly-key uniqueness rule, allowlist contract, list
+close/reopen API-MCP parity, target browsers, and final rendering-proof review.
+See its
 [delivery matrix](docs/delivery-matrix-124.md). Production was last verified running the Azure
 quickstart image, not the journal host. CI applies merged infrastructure changes
 without a separate approval, and provisioning sets up API/hosting resources before manual application setup; an

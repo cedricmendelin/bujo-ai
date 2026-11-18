@@ -458,3 +458,19 @@
 - Data Zone Standard is EU-zone processing, not a Switzerland residency
   promise. No under-$50 monthly Foundry cost claim is made; the budget alerts
   but does not cap pay-per-token usage.
+
+### 2026-11-18: Globally unique journal list names
+
+- The owner reversed the earlier allowance for repeated list names and directed
+  that list names be unique. This is a global, case-insensitive rule across
+  list kinds, recorded from the owner's direct instruction in the Copilot
+  conversation for issue #124 on 2026-11-18.
+- The owner direction covers list names; it does not explicitly establish a
+  separate uniqueness rule for keyed weekly lists by ISO year/week. PR #133
+  currently implements that additional rule as an unconfirmed proposal. Do not
+  treat it as an accepted domain invariant until the owner confirms it or it is
+  removed from the change.
+- The approved plan v3 says no migrations are expected. The database migration
+  in PR #133 is a scope deviation required to enforce the owner-requested
+  unique-name constraint in SQL. Any retained weekly-key constraint also needs
+  to be addressed explicitly in an approved plan revision.
