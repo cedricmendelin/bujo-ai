@@ -153,9 +153,12 @@ against actual blocking findings on routine, sensitive, and cross-cutting PRs
 before setting the variable to `enforce`. Unset it to roll back.
 
 In enforcement mode, Verifier reviews every ready PR unless `review:none` is set.
-Changed paths can add Security (identity, sensitive data access, MCP and supply
-chain), DevOps (infrastructure, CI and runtime configuration), or Architect
-(domain model and contracts). A repository-owner review on the current head can
+Changed paths can add Security (application identity, authorization, sensitive
+data access, MCP permissions, or supply-chain risk), DevOps (infrastructure, CI
+and runtime configuration), or Architect (domain model and contracts). Routine
+endpoint and infrastructure changes do not need Security review solely by path
+category; escalate when they affect an application trust boundary. A
+repository-owner review on the current head can
 add a specialist with the exact line `Squad review: Architect` (or `Security`
 or `DevOps`). If all three specialists apply, Security and DevOps take the two
 slots and readiness fails until the PR is split or the repository owner posts
