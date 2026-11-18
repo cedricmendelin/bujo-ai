@@ -126,8 +126,8 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
 
         await page.EvaluateAsync("""
             async () => {
-                for (const path of ["/api/journal", "/auth/sign-in", "/auth/signed-out", "/auth/denied",
-                    "/auth/error", "/rendering-proof", "/_content/Bujo.Web/pwa.css?private=1"]) {
+                for (const path of ["/", "/upcoming", "/capture", "/lists", "/api/journal", "/auth/sign-in",
+                    "/auth/signed-out", "/auth/denied", "/auth/error", "/rendering-proof", "/_content/Bujo.Web/pwa.css?private=1"]) {
                     await fetch(path);
                 }
             }

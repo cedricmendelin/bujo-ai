@@ -112,6 +112,14 @@ public sealed class JournalMcpTools
         string? goalText) =>
         McpErrors.From(journal.SetListGoal(listId, goalText));
 
+    [McpServerTool(Name = "close_list"), Description("Closes one eligible journal list after its open occurrences are resolved. The Future Log cannot be closed.")]
+    public static CallToolResult CloseList(JournalApplicationService journal, Guid listId) =>
+        McpErrors.From(journal.CloseList(listId));
+
+    [McpServerTool(Name = "reopen_list"), Description("Reopens one closed journal list.")]
+    public static CallToolResult ReopenList(JournalApplicationService journal, Guid listId) =>
+        McpErrors.From(journal.ReopenList(listId));
+
     [McpServerTool(Name = "move_item", Idempotent = true), Description("Moves one item to a list. Reuse operationId on retries and supply the expected current occurrence ID.")]
     public static CallToolResult MoveItem(
         JournalApplicationService journal,

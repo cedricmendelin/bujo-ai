@@ -167,6 +167,42 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task ListCreationRejectsDuplicateNamesAndWeeklyKeys()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N");
+        var listName = $"Projects {suffix}";
+        using var created = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = listName, kind = JournalListKind.Custom }));
+        using var duplicateName = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = listName.ToUpperInvariant(), kind = JournalListKind.Custom }));
+        using var duplicateNameBody = JsonDocument.Parse(await duplicateName.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, duplicateName.StatusCode);
+        Assert.Equal("DuplicateListName", duplicateNameBody.RootElement.GetProperty("code").GetString());
+
+        using var weekly = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = $"Week 48 {suffix}", kind = JournalListKind.Weekly, weekKey = new { year = 2026, week = 48 } }));
+        using var duplicateWeek = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = $"Planning 48 {suffix}", kind = JournalListKind.Weekly, weekKey = new { year = 2026, week = 48 } }));
+        using var duplicateWeekBody = JsonDocument.Parse(await duplicateWeek.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, weekly.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, duplicateWeek.StatusCode);
+        Assert.Equal("DuplicateWeeklyList", duplicateWeekBody.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task PlannedQueryEndpointsValidateTimeZoneAndReturnStructuredResults()
     {
         using var dailyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/daily-start?timeZone=Europe%2FZurich");
@@ -243,7 +279,7 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
     {
         Environment.SetEnvironmentVariable("Auth__TenantId", TenantId);
         Environment.SetEnvironmentVariable("Auth__Audience", "journal-api");
-        Environment.SetEnvironmentVariable("Auth__AllowedPrincipals", $"{TenantId}:{AllowedObjectId}");
+        Environment.SetEnvironmentVariable("Auth__AllowedPrincipals", AllowedObjectId);
         Environment.SetEnvironmentVariable("Mcp__PublicBaseUrl", "http://localhost");
         Environment.SetEnvironmentVariable("Mcp__AllowedOrigins__0", "https://approved.example");
         Environment.SetEnvironmentVariable(

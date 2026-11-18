@@ -106,16 +106,35 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
         {
             return ConcurrencyFailure<T>();
         }
+        catch (DbUpdateException exception) when (IsUniqueIndexViolation(exception, "IX_JournalLists_NormalizedName"))
+        {
+            return DomainFailure<T>(
+                DomainErrorCode.DuplicateListName,
+                "A list with this name already exists.");
+        }
+        catch (DbUpdateException exception) when (IsUniqueIndexViolation(exception, "IX_JournalLists_WeekYear_WeekNumber"))
+        {
+            return DomainFailure<T>(
+                DomainErrorCode.DuplicateWeeklyList,
+                "A weekly list already exists for this ISO week.");
+        }
         catch (DbUpdateException exception) when (IsConstraintViolation(exception))
         {
             return ConcurrencyFailure<T>();
         }
     }
 
+    private static DomainResult<T> DomainFailure<T>(DomainErrorCode code, string message) =>
+        DomainResult<T>.Failure(new DomainError(code, message));
+
     private static DomainResult<T> ConcurrencyFailure<T>() =>
         DomainResult<T>.Failure(new DomainError(
             DomainErrorCode.ConcurrencyConflict,
             "The journal changed while the operation was being saved."));
+
+    private static bool IsUniqueIndexViolation(DbUpdateException exception, string indexName) =>
+        exception.InnerException is SqlException { Number: 2601 or 2627 } sqlException &&
+        sqlException.Message.Contains(indexName, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsConstraintViolation(DbUpdateException exception) =>
         exception.InnerException is SqlException { Number: 2601 or 2627 or 547 };
@@ -206,12 +225,18 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
         {
             if (!lists.TryGetValue(list.Id, out var entity))
             {
-                entity = new JournalListEntity { Id = list.Id, Name = list.Name };
+                entity = new JournalListEntity
+                {
+                    Id = list.Id,
+                    Name = list.Name,
+                    NormalizedName = list.Name
+                };
                 context.Lists.Add(entity);
                 lists.Add(entity.Id, entity);
             }
 
             entity.Name = list.Name;
+            entity.NormalizedName = list.Name;
             entity.Kind = list.Kind;
             entity.State = list.State;
             entity.GoalText = list.GoalText;

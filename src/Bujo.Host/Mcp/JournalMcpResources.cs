@@ -16,8 +16,9 @@ public sealed class JournalMcpResources
         # Journal MCP capabilities
 
         Read tools: get_journal, get_daily_start, get_upcoming, find_lists, resolve_occurrence.
-        Single-item writes: capture_item, create_list, edit_item, set_planned_period,
-        set_list_goal, move_item, complete_occurrence, abandon_occurrence, reopen_occurrence.
+        Writes: capture_item, create_list, edit_item, set_planned_period, set_list_goal,
+        close_list, reopen_list, move_item, complete_occurrence, abandon_occurrence,
+        reopen_occurrence.
 
         Writes use the shared journal application service. Use stable list, item, and
         occurrence IDs. move_item requires a reusable operationId and the expected
@@ -25,15 +26,18 @@ public sealed class JournalMcpResources
         destination implicitly. Date values must be explicit ISO calendar periods;
         daily-start and upcoming queries require an IANA time zone.
 
-        The server does not interpret relative dates, perform bulk/list-closure
-        operations, apply ceremony proposals, run schedules, or connect to mail or
-        calendars. Prompts are reusable templates only; they do not enable client
-        scheduling or grant write authority.
+        close_list requires a list ID, rejects the Future Log, and requires all open
+        occurrences to be resolved. reopen_list reopens a closed list by ID. The
+        server does not interpret relative dates, perform bulk operations, apply
+        ceremony proposals, run schedules, or connect to mail or calendars. Prompts
+        are reusable templates only; they do not enable client scheduling or grant
+        write authority.
 
         Tool errors are JSON with code and message, with candidates for list
         lookup errors. Domain codes: InvalidInput, InvalidTimeZone, NotFound,
         InvalidTransition, ListClosed, StaleOccurrence, ConcurrencyConflict,
-        IdempotencyKeyReuse, DuplicateFutureLog, InvariantViolation,
+        IdempotencyKeyReuse, DuplicateFutureLog, DuplicateListName,
+        DuplicateWeeklyList, InvariantViolation,
         UnresolvedOccurrences, FutureLogCannotClose.
         Adapter lookup codes: AmbiguousList.
         """;

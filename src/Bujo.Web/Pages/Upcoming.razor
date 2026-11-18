@@ -1,0 +1,48 @@
+@page "/upcoming"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits PlanningPage
+
+<PageTitle>Upcoming · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Upcoming</h1>
+    <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_plan is { } plan)
+    {
+        <p class="journal-meta">From @plan.Today.ToString("yyyy-MM-dd") (@Zone) · @plan.HorizonDays days</p>
+        <label class="journal-inline"><input type="checkbox" @bind="_futureLogOnly" @bind:after="ApplyFilterAsync" /> Future Log only</label>
+        @if (plan.TotalCount == 0)
+        {
+            <p>No planned items in this window.</p>
+        }
+        @foreach (var group in plan.Groups)
+        {
+            <section>
+                <h2>@JournalLabels.Period(group.PlannedPeriod)</h2>
+                <ReviewItems Items="group.Items" />
+            </section>
+        }
+        <div class="journal-actions">
+            <button type="button" disabled="@(Busy || plan.Page <= 1)" @onclick="() => ChangePageAsync(-1)">Previous</button>
+            <span>Page @plan.Page · @plan.TotalCount items</span>
+            <button type="button" disabled="@(Busy || plan.Page * plan.PageSize >= plan.TotalCount)" @onclick="() => ChangePageAsync(1)">Next</button>
+        </div>
+    }
+</div>
+
+@code {
+    private UpcomingPlan? _plan;
+    private bool _futureLogOnly;
+    private int _page = 1;
+
+    protected override void Read()
+    {
+        _plan = null;
+        var result = Journal.GetUpcoming(Zone, page: _page, futureLog: _futureLogOnly);
+        if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
+        _plan = result.Value;
+    }
+
+    private Task ApplyFilterAsync() { _page = 1; return RefreshAsync(); }
+    private Task ChangePageAsync(int delta) { _page += delta; return RefreshAsync(); }
+}

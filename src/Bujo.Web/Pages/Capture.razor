@@ -1,0 +1,67 @@
+@page "/capture"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+
+<PageTitle>Capture · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Capture</h1>
+    <p>Capture a task or thought. Without a destination or planned period it goes to the Future Log, unplanned.</p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_saved is { } saved)
+    {
+        <p><a href="/items/@saved">View captured item</a></p>
+    }
+    @if (Ready)
+    {
+        <form method="post" data-journal-write data-journal-form @onsubmit="CaptureAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>New item</legend>
+                <ItemFields Draft="_draft" />
+                <label for="capture-list">Destination list</label>
+                <select id="capture-list" @key="_destinations" @bind="_destination">
+                    <option value="">Future Log (default)</option>
+                    @if (DestinationUnavailable)
+                    {
+                        <option value="@_destination">Previous selection (unavailable)</option>
+                    }
+                    @foreach (var list in _destinations)
+                    {
+                        <option value="@list.Id">@list.Name</option>
+                    }
+                </select>
+                <PeriodFields Draft="_period" />
+                <button type="submit">Capture item</button>
+            </fieldset>
+        </form>
+    }
+</div>
+
+@code {
+    private ItemDraft _draft = new();
+    private PeriodDraft _period = new();
+    private Guid? _destination;
+    private Guid? _saved;
+    private IReadOnlyList<JournalListSnapshot> _destinations = [];
+    private bool DestinationUnavailable => _destination is { } id && !_destinations.Any(list => list.Id == id);
+
+    protected override void Read() => _destinations = Journal.GetSnapshot().Lists
+        .Where(list => list.State == JournalListState.Open && list.Kind != JournalListKind.FutureLog)
+        .OrderBy(list => list.Name).ToArray();
+
+    private Task CaptureAsync() => SaveAsync(
+        () =>
+        {
+            _saved = null;
+            return Journal.Capture(_draft.Name, _draft.Description, _draft.TagNames, _period.Build(), _destination);
+        },
+        saved =>
+        {
+            _saved = saved.Occurrence.Id;
+            _draft = new();
+            _period = new();
+            _destination = null;
+            return saved.PeriodConflict is null
+                ? "Item captured." : "Item captured. Its planned period conflicts with the destination week.";
+        });
+}

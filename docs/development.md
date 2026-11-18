@@ -26,15 +26,18 @@ Do not put credentials in the repository or a committed environment file:
 dotnet user-secrets set "Parameters:sql-password" "<local-only-password>" --project src/Bujo.AppHost
 dotnet user-secrets set "Auth:TenantId" "<tenant-guid>" --project src/Bujo.AppHost
 dotnet user-secrets set "Auth:Audience" "<api-application-client-id>" --project src/Bujo.AppHost
-dotnet user-secrets set "Auth:AllowedPrincipals" "<tenant-guid>:<approved-object-guid>" --project src/Bujo.AppHost
+dotnet user-secrets set "Auth:AllowedPrincipals" "<approved-object-guid>" --project src/Bujo.AppHost
 ```
 
 For Entra v2 access tokens, `Auth:Audience` is the API registration's
 Application (client) ID, not the browser-client ID or scope URI.
-`Auth:AllowedPrincipals` uses `tenant-id:user-object-id` pairs. For multiple
-users, separate complete pairs with commas; a comma-separated list of bare
-Object IDs is not supported. Use user Object IDs from **Entra ID > Users**,
-not app-registration Object IDs, and the same tenant as `Auth:TenantId`.
+`Auth:AllowedPrincipals` is a comma-separated list of bare user Object IDs.
+`Auth:TenantId` supplies the tenant boundary: a token is allowed only when its
+tenant matches that setting and its user Object ID is listed. Use user Object
+IDs from **Entra ID > Users**, not app-registration Object IDs. Existing
+owner-managed settings in the old `tenant-id:object-id` format must be updated
+before running a build with the new format; this change does not modify live
+settings.
 
 From the repository root, run the local host and SQL container with Podman:
 
@@ -122,26 +125,6 @@ Verification and migration flags are mutually exclusive. `--verify-database`
 never applies migrations; `--migrate-only` remains the dedicated production
 migration entry point.
 
-## SQL-backed integration test
-
-The integration suite migrates an empty database and verifies normalized
-journal rows, multi-hop moves across repository restarts, idempotent retries,
-close/move races, transactional rollback, and concurrent writes. CI starts a
-disposable SQL Server and supplies the test connection string as an ephemeral
-environment variable.
-
-To run this test locally, start a disposable SQL Server with Podman or Docker,
-then set `BUJO_SQL_TEST_CONNECTION` in your shell to a connection string for
-that instance's `master` database. The login must be able to create and drop
-databases. Run `dotnet test tests/Bujo.Integration.Tests/Bujo.Integration.Tests.csproj`;
-the test fails rather than skips when the variable or SQL Server is unavailable.
-The CI job uses a pinned SQL Server container on an x64 runner. The documented
-container architecture is validated on x64; ARM host behavior is not yet verified.
-
-Startup/readiness tests also cover an unrelated migration-history row,
-insufficient runtime table permissions, a reader/writer user without DDL,
-unmigrated startup rejection, and unchanged API authorization after verification.
-
 ## Compatibility evidence
 
 The repository pins SDK 11.0.100 and Aspire 13.6.5. Local validation used that
@@ -158,28 +141,34 @@ certify this repository's .NET 11 AppHost combination. That narrower official
 compatibility evidence remains an issue #5/B3 blocker; do not silently change
 the approved application runtime or declare it resolved from a local run.
 
-## PWA rendering proof (issue #10, plan v3)
+## PWA journal UI and rendering proof (issue #124)
 
-The initial UI is a rendering proof, **not the journal UI**. The protected
-`/rendering-proof` page exercises Interactive Server without reading or writing
-journal data. `/auth/sign-in`, `/auth/signed-out`, `/auth/denied`, and `/auth/error`
-are safe anonymous account pages. API endpoints still require bearer tokens;
-signing into the browser does not authorize an API request.
+The current #124 implementation renders Today at `/` for approved sessions and
+provides Today, Upcoming, Capture, Lists, and item detail/history workflows
+over the shared application service. Successful sign-in returns to `/`.
+`/rendering-proof` remains under Diagnostics and exercises Interactive Server
+without reading or writing journal data. `/auth/sign-in`, `/auth/signed-out`,
+`/auth/denied`, and `/auth/error` are safe anonymous account pages. API
+endpoints still require bearer tokens; signing into the browser does not
+authorize an API request.
 
 The local Podman/HTTPS/user-secrets and PWA-setting-forwarding fixes are merged
 in [PR #125](https://github.com/cedricmendelin/bujo-ai/pull/125); they do not
 add journal screens or authorize Entra changes. Issue #10 was closed after the
 partial rendering proof, while [issue #124](https://github.com/cedricmendelin/bujo-ai/issues/124)
-tracks the remaining browser workflows and evidence in the
-[delivery matrix](delivery-matrix-124.md).
+tracks the completed implementation and remaining acceptance evidence in the
+[delivery matrix](delivery-matrix-124.md). The owner approved the limited
+rendering proof only as a gate to begin UI work; it does not establish live
+sign-in, installation, or journal-persistence verification.
 
 The manifest and icons support an installable online-first shell. The service
 worker caches only explicitly listed public static assets, never navigations,
 account pages, journal responses, or API responses. There is no offline capture,
 write queue, or automatic replay. Disconnecting preserves the current document
 while the circuit remains recoverable; a host restart, circuit expiration, or
-scale-to-zero can require a reload and lose unsaved input. A successful proof
-roundtrip is not evidence that a journal item was saved.
+scale-to-zero can require a reload and lose unsaved input. The local browser
+suite uses a synthetic identity and in-memory repository; it does not verify
+SQL persistence across a host restart or contact Entra.
 
 Run the browser proof tests with the existing .NET test tooling:
 

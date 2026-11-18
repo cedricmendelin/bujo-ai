@@ -17,6 +17,7 @@ is public and contains no credentials or journal data.
 | `capture_item`, `create_list` | Capture an unplanned Future Log item or create a list. |
 | `resolve_occurrence` | Resolve an occurrence to its current destination and history. |
 | `edit_item`, `set_planned_period`, `set_list_goal` | Make explicit single-item or list-goal edits. |
+| `close_list`, `reopen_list` | Close an eligible list or reopen a closed list by ID. |
 | `move_item` | Move one item using a client operation ID and expected occurrence ID. |
 | `complete_occurrence`, `abandon_occurrence`, `reopen_occurrence` | Change one occurrence's state. |
 
@@ -32,11 +33,19 @@ back to its local time zone or UTC.
 operation ID, so a client that loses the response and retries may create a
 duplicate. Other writes use the domain's existing concurrency checks.
 
-There are no bulk, ceremony-generated, close-list, or reopen-list tools. Do not
-interpret a prompt or tool description as authorization: only the listed
-single-operation tools are exposed. Prompts are guidance, not automatic
-(`capture_item`, `daily_start`, and `explicit_edit`); daily start is a query,
-not a background job. The
+`close_list` accepts only a list ID, and the domain rejects closing the Future
+Log or a list with unresolved occurrences. `reopen_list` accepts only a closed
+list ID. Both return the shared domain result and errors; neither creates a
+proposal or performs a bulk operation.
+
+List names are unique case-insensitively across list kinds. A keyed weekly list
+is also unique per ISO year/week, even when its name differs; duplicate
+attempts return shared domain errors.
+
+There are no bulk or ceremony-generated tools. Do not interpret a prompt or
+tool description as authorization: only the listed single-operation tools are
+exposed. Prompts are guidance, not automatic (`capture_item`, `daily_start`,
+and `explicit_edit`); daily start is a query, not a background job. The
 `bujo://journal/capabilities` resource describes available operations and
 errors.
 

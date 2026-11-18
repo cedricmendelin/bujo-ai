@@ -29,6 +29,6 @@ locals {
   api_owner_object_id = local.deployment_uses_current_identity ? data.azuread_client_config.current.object_id : data.azuread_service_principal.deployment[0].object_id
   auth_allowed_principals = trimspace(var.auth_allowed_principal_object_ids) == "" ? "" : join(",", [
     for object_id in split(",", var.auth_allowed_principal_object_ids) :
-    "${data.azurerm_client_config.current.tenant_id}:${trimspace(object_id)}"
+    trimspace(object_id)
   ])
 }

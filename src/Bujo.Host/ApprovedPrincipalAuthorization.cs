@@ -12,21 +12,36 @@ public sealed class ApprovedPrincipalRequirement : IAuthorizationRequirement
         _configuration = configuration;
     }
 
-    public string? TenantId => Guid.TryParse(_configuration["Auth:TenantId"], out var tenantId)
-        ? tenantId.ToString("D") : null;
+    public string? TenantId =>
+        Guid.TryParse(_configuration["Auth:TenantId"], out var tenantId) && tenantId != Guid.Empty
+            ? tenantId.ToString("D")
+            : null;
 
-    public IReadOnlySet<string> AllowedObjectIds =>
-        (_configuration["Auth:AllowedPrincipals"] ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(value => value.Split(':', 2, StringSplitOptions.TrimEntries))
-            .Where(parts =>
-                parts.Length == 2 &&
-                Guid.TryParse(parts[0], out var configuredTenantId) &&
-                Guid.TryParse(parts[1], out _) &&
-                TenantId is not null &&
-                StringComparer.OrdinalIgnoreCase.Equals(configuredTenantId.ToString("D"), TenantId))
-            .Select(parts => Guid.Parse(parts[1]).ToString("D"))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlySet<string> AllowedObjectIds => ParseAllowedObjectIds().ObjectIds;
+
+    public int InvalidAllowedPrincipalEntryCount => ParseAllowedObjectIds().InvalidEntryCount;
+
+    private (IReadOnlySet<string> ObjectIds, int InvalidEntryCount) ParseAllowedObjectIds()
+    {
+        var objectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var invalidEntryCount = 0;
+        var configuredEntries = (_configuration["Auth:AllowedPrincipals"] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var entry in configuredEntries)
+        {
+            if (Guid.TryParse(entry, out var objectId) && objectId != Guid.Empty)
+            {
+                objectIds.Add(objectId.ToString("D"));
+            }
+            else
+            {
+                invalidEntryCount++;
+            }
+        }
+
+        return (objectIds, invalidEntryCount);
+    }
 }
 
 public sealed class ApprovedPrincipalHandler : AuthorizationHandler<ApprovedPrincipalRequirement>

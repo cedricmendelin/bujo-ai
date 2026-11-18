@@ -12,6 +12,8 @@ public enum DomainErrorCode
     StaleOccurrence,
     IdempotencyKeyReuse,
     DuplicateFutureLog,
+    DuplicateListName,
+    DuplicateWeeklyList,
     InvalidTimeZone,
     InvariantViolation
 }

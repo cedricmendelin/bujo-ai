@@ -133,6 +133,22 @@ builder.Services.AddHealthChecks()
     .AddCheck<JournalDatabaseHealthCheck>("journal-database", tags: ["ready"]);
 
 var app = builder.Build();
+if (approvedPrincipal.TenantId is null)
+{
+    app.Logger.LogWarning("Auth:TenantId is missing or invalid; approved-account authorization will deny all principals.");
+}
+
+if (approvedPrincipal.InvalidAllowedPrincipalEntryCount > 0)
+{
+    app.Logger.LogWarning(
+        "Auth:AllowedPrincipals contains {InvalidEntryCount} invalid entries; use comma-separated bare Entra object ID GUIDs. Invalid entries cannot authorize an account.",
+        approvedPrincipal.InvalidAllowedPrincipalEntryCount);
+}
+else if (approvedPrincipal.AllowedObjectIds.Count == 0)
+{
+    app.Logger.LogWarning("Auth:AllowedPrincipals contains no valid object IDs; approved-account authorization will deny all principals.");
+}
+
 app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment())
 {

@@ -1,0 +1,75 @@
+@page "/lists"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+
+<PageTitle>Lists · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Lists</h1>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (Ready)
+    {
+        <ul class="journal-rows">
+            @foreach (var list in _lists)
+            {
+                <li>
+                    <a href="/lists/@list.Id">@list.Name</a> · @list.State
+                    @if (list.WeekKey is { } week)
+                    {
+                        <span> · @week</span>
+                    }
+                    @if (list.GoalText is { } goal)
+                    {
+                        <div class="journal-text">@goal</div>
+                    }
+                </li>
+            }
+        </ul>
+        <form method="post" data-journal-write data-journal-form @onsubmit="CreateAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>Create a list</legend>
+                <label for="list-name">List name</label>
+                <input id="list-name" maxlength="@DomainLimits.ListName" required @bind="_name" @bind:event="oninput" />
+                <label for="list-kind">List type</label>
+                <select id="list-kind" @bind="_kind">
+                    <option value="@JournalListKind.Custom">Custom</option>
+                    <option value="@JournalListKind.Weekly">Weekly</option>
+                </select>
+                @if (_kind == JournalListKind.Weekly)
+                {
+                    <label for="week-year">ISO week-year</label>
+                    <input id="week-year" type="number" min="1" max="9999" required @bind="_year" @bind:event="oninput" />
+                    <label for="week-number">ISO week number</label>
+                    <input id="week-number" type="number" min="1" max="53" required @bind="_week" @bind:event="oninput" />
+                }
+                <label for="new-goal">Goal (optional)</label>
+                <textarea id="new-goal" maxlength="@DomainLimits.GoalText" @bind="_goal" @bind:event="oninput"></textarea>
+                <button type="submit">Create list</button>
+            </fieldset>
+        </form>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<JournalListSnapshot> _lists = [];
+    private JournalListKind _kind = JournalListKind.Custom;
+    private string _name = "";
+    private string? _goal;
+    private int? _year;
+    private int? _week;
+
+    protected override void Read() => _lists = Journal.GetSnapshot().Lists
+        .OrderBy(list => list.Kind != JournalListKind.FutureLog).ThenBy(list => list.Name).ToArray();
+
+    private Task CreateAsync() => SaveAsync(
+        () => Journal.CreateList(_name, _kind, _goal,
+            _kind == JournalListKind.Weekly ? new IsoWeekKey(_year ?? 0, _week ?? 0) : null),
+        _ =>
+        {
+            _name = "";
+            _goal = null;
+            _year = _week = null;
+            _kind = JournalListKind.Custom;
+            return "List created.";
+        });
+}

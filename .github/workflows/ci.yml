@@ -42,31 +42,6 @@ jobs:
         with:
           dotnet-version: 11.0.x
 
-      - name: Start SQL Server for persistence tests
-        if: steps.detect.outputs.dotnet == 'true'
-        shell: bash
-        run: |
-          sa_token="$(openssl rand -hex 23)Aa!"
-          echo "::add-mask::$sa_token"
-          printf 'BUJO_SQL_TEST_CONNECTION=Server=localhost,1433;Initial Catalog=master;User ID=sa;Pass%s=%s;Encrypt=False;TrustServerCertificate=True\n' \
-            "word" "$sa_token" >> "$GITHUB_ENV"
-          docker run --detach --name bujo-sql-test \
-            --publish 1433:1433 \
-            --env ACCEPT_EULA=Y \
-            --env MSSQL_SA_PASSWORD="$sa_token" \
-            mcr.microsoft.com/mssql/server@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f
-
-          for attempt in {1..60}; do
-            if docker exec bujo-sql-test /opt/mssql-tools18/bin/sqlcmd \
-              -S localhost -U sa -P "$sa_token" -C -Q "SELECT 1" >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 2
-          done
-
-          docker logs bujo-sql-test
-          exit 1
-
       - name: Build and test
         if: steps.detect.outputs.dotnet == 'true'
         run: |

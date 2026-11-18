@@ -2,17 +2,19 @@
 
 ## Issue #10 v3 rendering/BFF checkpoint
 
-The host now implements a **thin proof**, not the complete journal UI or a
-verified Entra deployment. Static SSR renders anonymous `/` and safe account
-states; only `/rendering-proof` creates an Interactive Server circuit. Its
+PR #108 introduced a **thin rendering proof**, not a verified Entra
+deployment. The current #124 working change uses static SSR for anonymous `/`
+and safe account states, and renders Today with Interactive Server for
+approved sessions. `/rendering-proof` remains a Diagnostics-only route; its
 synthetic text and connection check never access SQL or save journal items.
 Interactive Server with static SSR where appropriate is Accepted in
 [ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
-provides implementation evidence, not live verification. Owner and Architect
-review of that evidence, required by the [PR #108 handoff](https://github.com/cedricmendelin/bujo-ai/pull/108),
-remains outstanding before journal UI work. Issue #10 was
+provides implementation evidence, not live verification. The owner approved
+this limited proof for starting journal UI work in
+[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837);
+the Architect review found no blocking issue. Issue #10 was
 closed after this partial proof; [issue #124](https://github.com/cedricmendelin/bujo-ai/issues/124)
-now tracks the unfinished journal UI and proof evidence in the
+tracks the completed UI implementation and remaining acceptance evidence in the
 [delivery matrix](delivery-matrix-124.md). Live Entra sign-in, target-browser
 installation, cost and multi-replica recovery remain unverified. The original
 issue #4 MCP/client proposal below remains provisional.
@@ -32,8 +34,9 @@ issue #4 MCP/client proposal below remains provisional.
   delegated token until its expiry or one hour, whichever comes first.
   Tokens are not refreshed; expiry, eviction, restart or logout requires sign-in.
 - Every protected UI HTTP request, circuit open/reconnect, and inbound circuit
-  activity checks current configuration's immutable approved `(tid, oid)` pair,
-  delegated scope and server-held token signature/issuer/audience/lifetime.
+  activity checks that the token tenant matches `Auth:TenantId`, its object ID
+  is in the approved allowlist, and its delegated scope and server-held token
+  signature/issuer/audience/lifetime remain valid.
   Revocation rejects the next request/event/reconnect; this is not continuous
   Entra revocation notification and does not erase previously rendered DOM.
 - `/auth/sign-in` and `/auth/sign-out` GETs only render forms. Their POSTs require
@@ -62,7 +65,7 @@ Supply through protected runtime configuration, never committed values:
 
 | Key | Purpose |
 | --- | --- |
-| `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant, exact API audience, immutable approved tenant/object pairs |
+| `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant, exact API audience, and approved user object IDs within that tenant |
 | `Auth:Pwa:ClientId` | Single-tenant confidential web-client registration |
 | `Auth:Pwa:ManagedIdentityClientId` | Production user-assigned managed identity client ID; used to request the federated client assertion |
 | `Auth:Pwa:ClientSecret` | Local-only server-side client credential, used when managed identity is not configured |
@@ -80,12 +83,15 @@ configured PWA settings to `journal-host`. In a deployment, provide them only
 through protected server-side runtime configuration. Neither path authorizes
 changing Entra registrations, granting consent, or deploying.
 
-`Auth:AllowedPrincipals` is a comma-separated list of complete
-`tenant-guid:object-guid` pairs, and the tenant must match `Auth:TenantId`.
-Bare Object IDs are not accepted. The current parser silently ignores malformed
-entries, leaving no matching principals; clear configuration diagnostics and a
-focused bare-ID rejection test remain outstanding in issue #124. Do not change
-the authorization contract by accepting bare IDs.
+`Auth:AllowedPrincipals` is a comma-separated list of bare Entra user object ID
+GUIDs. The token's `tid` must match the separately configured
+`Auth:TenantId`, and its `oid` must appear in this list. Tenant/object pair
+entries are invalid and cannot authorize an account. Invalid entries are
+ignored, logged without their values, and never authorize anyone; valid entries
+in the same list remain usable. A missing or invalid tenant ID denies all
+principals. Update any owner-managed local or protected deployment setting
+using the old `tenant-guid:object-guid` format before running a build with this
+change; no live settings are changed here.
 
 Register the exact externally visible HTTPS `/signin-oidc` redirect URI.
 Use HTTPS locally (`dotnet dev-certs https --trust` where supported); Secure
@@ -109,10 +115,12 @@ evidence. The proof action is only a connection roundtrip, not persistence.
 @cedricmendelin: provide/verify the registered HTTPS redirect, protected PWA
 client configuration, trusted ingress scheme forwarding and approved account,
 then perform real Entra sign-in/denial/sign-out and target-browser installation.
-Owner and Architect must review the proof before further journal UI work.
-Issue #10 remains closed as a historical partial delivery; issue #124 tracks
-the remaining UI and acceptance work. Do not infer proof-gate completion from
-the PR merge or reported local sign-in.
+The owner approved the limited proof for UI work in
+[PR #108](https://github.com/cedricmendelin/bujo-ai/pull/108#issuecomment-6978606837);
+the Architect review reported no blocking findings. This does not verify live
+Entra sign-in/denial/sign-out, installation, or journal persistence. Issue #10
+remains closed as a historical partial delivery; issue #124 tracks the
+remaining UI and acceptance work.
 
 ---
 
@@ -249,7 +257,7 @@ tokens, connection strings or secrets belong in source or test reports.
 | API + MCP | One single-tenant API resource registration; v2 access tokens (`accessTokenAcceptedVersion = 2`, equivalent Graph manifest `api.requestedAccessTokenVersion = 2`); HTTPS Application ID URI exactly `(mcp-url)`; expose `(mcp-url)/journal.access`. | Entra v2 `aud` is `(api-client-id)`, **not** the URL; `scp` includes `journal.access`. Separate knowledge/MCP scopes only if later approved. |
 | PWA BFF | Separate single-tenant web client with its approved HTTPS redirect, authorization code + PKCE and server-managed credentials if required. | ID token signs in the BFF only; API access requires the delegated API scope and an API access token. A cookie is not an MCP bearer token. |
 | Each MCP client | Appropriate public-client registration and product-specific redirect URI, where supported; client ID supplied through that client's secure configuration. Public clients must not embed a shared secret. | Obtain a delegated token for the API, not an ID token, Graph token, or token for another API. Some client surfaces may require a different registration model; verify before use. |
-| Deployment | `(tenant-id)`, `(api-client-id)`, canonical `(mcp-url)`, exact issuer, scope and approved `(tenant-id, object-id)` pairs in protected runtime configuration/Key Vault as appropriate; no values committed. | Default deny if config is absent or invalid. |
+| Deployment | `(tenant-id)`, `(api-client-id)`, canonical `(mcp-url)`, exact issuer, scope and approved bare object IDs in protected runtime configuration/Key Vault as appropriate; no values committed. | The token tenant must match `(tenant-id)` and its object ID must be listed; default deny if config is absent or invalid. |
 
 Configure consent for the delegated scope for each client; user or administrator
 consent depends on tenant policy and permission settings. Preauthorization of
@@ -270,20 +278,20 @@ Authentication middleware validates signature using the tenant's trusted Entra
 keys, exact v2 issuer and `tid`, API `aud`, token lifetime and token type.
 Require a delegated user token with `oid` and `scp`; reject app-only tokens,
 ID tokens, missing subject and unexpected issuers. Then a shared application
-policy checks the configured immutable `(tid, oid)` pair and required scope on
-every operation, including PWA, API and MCP. Do not use email, UPN, display name
-or tenant membership as identity authorization. An authenticated BFF session
+policy checks the configured tenant, approved object-ID allowlist and required
+scope on every operation, including PWA, API and MCP. Do not use email, UPN,
+display name or tenant membership as identity authorization. An authenticated BFF session
 must carry a validated identity and evidence of the required delegated
 permission; it is rechecked against current configuration, not trusted forever.
 
-These are **future test vectors**, not executed tests. API and MCP receive
-bearer tokens and return the shown HTTP status; MCP `401` includes the
-discovery challenge. The PWA receives a cookie, not a bearer token. For PWA
-tests, use a test identity provider/token validator to create a BFF session
-with the corresponding underlying delegated-token condition; rejected token
-conditions must prevent session creation or further access. The PWA statuses
-refer to protected HTTP/data operations; interactive navigation may instead
-initiate sign-in.
+These are authorization expectations. Local integration tests exercise
+selected allowlist, BFF, bearer-boundary, and MCP cases with synthetic
+principals; they do not contact Entra. API and MCP receive bearer tokens and
+return the shown HTTP status; MCP `401` includes the discovery challenge. The
+PWA receives a cookie, not a bearer token. Rejected delegated-token conditions
+must prevent session creation or further access. The PWA statuses refer to
+protected HTTP/data operations; interactive navigation may instead initiate
+sign-in.
 
 | Input on PWA, API and MCP | Expected result |
 | --- | --- |

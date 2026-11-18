@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bujo.Domain;
 using Bujo.Host;
+using Bujo.Host.Mcp;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -27,19 +28,12 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["POST /api/items/{itemId:guid}/move"] = ["move_item"],
             ["POST /api/occurrences/{occurrenceId:guid}/transition"] =
                 ["complete_occurrence", "abandon_occurrence", "reopen_occurrence"],
+            ["POST /api/lists/{listId:guid}/close"] = ["close_list"],
+            ["POST /api/lists/{listId:guid}/reopen"] = ["reopen_list"],
             ["PUT /api/items/{itemId:guid}"] = ["edit_item"],
             ["PUT /api/items/{itemId:guid}/planned-period"] = ["set_planned_period"],
             ["PUT /api/lists/{listId:guid}/goal"] = ["set_list_goal"],
             ["GET /api/occurrences/{occurrenceId:guid}/resolution"] = ["resolve_occurrence"]
-        };
-
-    private static readonly IReadOnlyDictionary<string, string> ApiParityExceptions =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["POST /api/lists/{listId:guid}/close"] =
-                "Deliberately excluded as a list-lifecycle operation until a concrete-proposal approval flow exists.",
-            ["POST /api/lists/{listId:guid}/reopen"] =
-                "Deliberately excluded as a list-lifecycle operation until a concrete-proposal approval flow exists."
         };
 
     private static readonly string[] ExpectedTools =
@@ -54,6 +48,8 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         "edit_item",
         "set_planned_period",
         "set_list_goal",
+        "close_list",
+        "reopen_list",
         "move_item",
         "complete_occurrence",
         "abandon_occurrence",
@@ -94,6 +90,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_journal","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"close_list","arguments":{"listId":"00000000-0000-0000-0000-000000000101"}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}"""
         };
@@ -165,7 +162,6 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
         var tools = await mcp.ListToolsAsync();
         Assert.Equal(ExpectedTools.Order(), tools.Select(tool => tool.Name).Order());
-        Assert.DoesNotContain(tools, tool => tool.Name is "close_list" or "reopen_list");
         var dailyStartSchema = tools.Single(tool => tool.Name == "get_daily_start").ProtocolTool.InputSchema;
         Assert.Equal("string", dailyStartSchema.GetProperty("properties").GetProperty("timeZone").GetProperty("type").GetString());
         Assert.Contains(
@@ -175,12 +171,28 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         Assert.Equal(
             "uuid",
             moveSchema.GetProperty("properties").GetProperty("operationId").GetProperty("format").GetString());
+        foreach (var toolName in new[] { "close_list", "reopen_list" })
+        {
+            var lifecycleTool = tools.Single(tool => tool.Name == toolName);
+            var listIdSchema = lifecycleTool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("listId");
+            Assert.Equal("string", listIdSchema.GetProperty("type").GetString());
+            Assert.Equal("uuid", listIdSchema.GetProperty("format").GetString());
+            Assert.Contains(
+                "listId",
+                lifecycleTool.ProtocolTool.InputSchema.GetProperty("required").EnumerateArray()
+                    .Select(value => value.GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(lifecycleTool.Description));
+        }
         Assert.Equal(
             ["capture_item", "daily_start", "explicit_edit"],
             (await mcp.ListPromptsAsync()).Select(prompt => prompt.Name).Order());
         Assert.Contains(
             (await mcp.ListResourcesAsync()),
             resource => resource.Uri.ToString() == "bujo://journal/capabilities");
+        var capabilitiesText = JournalMcpResources.GetCapabilities();
+        Assert.Contains("close_list", capabilitiesText);
+        Assert.Contains("reopen_list", capabilitiesText);
+        Assert.DoesNotContain("list-closure operations", capabilitiesText, StringComparison.OrdinalIgnoreCase);
 
         var capture = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
         {
@@ -214,6 +226,30 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["kind"] = JournalListKind.Custom
         });
         Assert.False(destination.IsError);
+        var duplicateName = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "mcp DESTINATION",
+            ["kind"] = JournalListKind.Custom
+        });
+        Assert.True(duplicateName.IsError);
+        Assert.Equal("DuplicateListName", GetErrorCode(duplicateName));
+
+        var weekly = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP week 48",
+            ["kind"] = JournalListKind.Weekly,
+            ["weekKey"] = new { year = 2026, week = 48 }
+        });
+        Assert.False(weekly.IsError);
+        var duplicateWeek = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP planning week 48",
+            ["kind"] = JournalListKind.Weekly,
+            ["weekKey"] = new { year = 2026, week = 48 }
+        });
+        Assert.True(duplicateWeek.IsError);
+        Assert.Equal("DuplicateWeeklyList", GetErrorCode(duplicateWeek));
+
         var destinationId = destination.StructuredContent!.Value.GetProperty("id").GetGuid();
         var goal = await mcp.CallToolAsync("set_list_goal", new Dictionary<string, object?>
         {
@@ -352,7 +388,104 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     }
 
     [Fact]
-    public async Task ApiEndpointsHaveMcpToolsOrExplicitDocumentedExceptions()
+    public async Task ListLifecycleToolsUseTheSharedServiceAndPreserveDomainErrors()
+    {
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            },
+            httpClient,
+            NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+
+        var snapshot = await mcp.CallToolAsync("get_journal", new Dictionary<string, object?>());
+        Assert.False(snapshot.IsError);
+        var futureLogId = snapshot.StructuredContent!.Value.GetProperty("lists").EnumerateArray()
+            .Single(list => list.GetProperty("name").GetString() == "Future Log")
+            .GetProperty("id").GetGuid();
+        var futureLogClose = await mcp.CallToolAsync("close_list", new Dictionary<string, object?>
+        {
+            ["listId"] = futureLogId
+        });
+        Assert.True(futureLogClose.IsError);
+        Assert.Equal("FutureLogCannotClose", GetErrorCode(futureLogClose));
+
+        var missingListId = Guid.NewGuid();
+        foreach (var toolName in new[] { "close_list", "reopen_list" })
+        {
+            var missingList = await mcp.CallToolAsync(toolName, new Dictionary<string, object?>
+            {
+                ["listId"] = missingListId
+            });
+            Assert.True(missingList.IsError);
+            Assert.Equal("NotFound", GetErrorCode(missingList));
+        }
+
+        var created = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = $"MCP lifecycle {Guid.NewGuid():N}",
+            ["kind"] = JournalListKind.Custom
+        });
+        Assert.False(created.IsError);
+        var listId = created.StructuredContent!.Value.GetProperty("id").GetGuid();
+        var capture = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "Resolve before closing",
+            ["listId"] = listId
+        });
+        Assert.False(capture.IsError);
+        var occurrenceId = capture.StructuredContent!.Value.GetProperty("item")
+            .GetProperty("currentOccurrenceId").GetGuid();
+
+        var unresolvedClose = await mcp.CallToolAsync("close_list", new Dictionary<string, object?>
+        {
+            ["listId"] = listId
+        });
+        Assert.True(unresolvedClose.IsError);
+        Assert.Equal("UnresolvedOccurrences", GetErrorCode(unresolvedClose));
+
+        var completed = await mcp.CallToolAsync("complete_occurrence", new Dictionary<string, object?>
+        {
+            ["occurrenceId"] = occurrenceId
+        });
+        Assert.False(completed.IsError);
+        var closed = await mcp.CallToolAsync("close_list", new Dictionary<string, object?>
+        {
+            ["listId"] = listId
+        });
+        Assert.False(closed.IsError);
+        Assert.Equal("Closed", GetListState(closed.StructuredContent!.Value.GetProperty("state")));
+
+        using var closedSnapshotResponse = await httpClient.GetAsync("/api/journal");
+        Assert.Equal(HttpStatusCode.OK, closedSnapshotResponse.StatusCode);
+        using var closedSnapshot = JsonDocument.Parse(await closedSnapshotResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "Closed",
+            GetListState(closedSnapshot.RootElement.GetProperty("lists").EnumerateArray()
+                .Single(list => list.GetProperty("id").GetGuid() == listId).GetProperty("state")));
+
+        var reopened = await mcp.CallToolAsync("reopen_list", new Dictionary<string, object?>
+        {
+            ["listId"] = listId
+        });
+        Assert.False(reopened.IsError);
+        Assert.Equal("Open", GetListState(reopened.StructuredContent!.Value.GetProperty("state")));
+
+        using var reopenedSnapshotResponse = await httpClient.GetAsync("/api/journal");
+        Assert.Equal(HttpStatusCode.OK, reopenedSnapshotResponse.StatusCode);
+        using var reopenedSnapshot = JsonDocument.Parse(await reopenedSnapshotResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            "Open",
+            GetListState(reopenedSnapshot.RootElement.GetProperty("lists").EnumerateArray()
+                .Single(list => list.GetProperty("id").GetGuid() == listId).GetProperty("state")));
+    }
+
+    [Fact]
+    public async Task ApiEndpointsHaveMcpTools()
     {
         using var httpClient = _factory.CreateClient();
         httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
@@ -378,13 +511,17 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             .ToHashSet(StringComparer.Ordinal);
 
         var missingParity = apiOperations
-            .Where(operation => !ApiToolMappings.ContainsKey(operation) && !ApiParityExceptions.ContainsKey(operation))
+            .Where(operation => !ApiToolMappings.ContainsKey(operation))
             .ToArray();
         Assert.Empty(missingParity);
-        Assert.All(ApiParityExceptions.Keys, exception => Assert.Contains(exception, apiOperations));
         Assert.All(ApiToolMappings.Keys, mappedOperation => Assert.Contains(mappedOperation, apiOperations));
         Assert.All(ApiToolMappings.Values.SelectMany(names => names), tool => Assert.Contains(tool, toolNames));
     }
+
+    private static string GetListState(JsonElement state) =>
+        state.ValueKind == JsonValueKind.String
+            ? state.GetString()!
+            : Enum.GetName(typeof(JournalListState), state.GetInt32())!;
 
     private static HttpRequestMessage McpPost(string body)
     {
