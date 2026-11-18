@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -13,8 +15,21 @@ public static class BffAuthentication
     public const string OidcScheme = "Bujo.Oidc";
     public const string UiPolicy = "ApprovedUi";
 
+    private const string ManagedIdentitySetting = "Auth:Pwa:ManagedIdentityClientId";
+
+    internal static bool HasClientCredential(IConfiguration configuration) =>
+        string.IsNullOrWhiteSpace(configuration[ManagedIdentitySetting])
+            ? !string.IsNullOrWhiteSpace(configuration["Auth:Pwa:ClientSecret"])
+            : Guid.TryParse(configuration[ManagedIdentitySetting], out _);
+
     public static void AddBff(this IServiceCollection services, IConfiguration configuration, string? tenantId)
     {
+        var managedIdentityId = configuration[ManagedIdentitySetting];
+        var useManagedIdentity = !string.IsNullOrWhiteSpace(managedIdentityId);
+        if (Guid.TryParse(managedIdentityId, out var identityId))
+            services.AddKeyedSingleton<TokenCredential>(OidcScheme,
+                new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(identityId.ToString("D"))));
+
         services.AddSingleton<BffSessions>();
         services.AddSingleton<IBffSessionValidator>(provider => provider.GetRequiredService<BffSessions>());
         services.AddScoped<IAuthorizationHandler, BffSessionHandler>();
@@ -49,7 +64,7 @@ public static class BffAuthentication
                 options.SignInScheme = CookieScheme;
                 options.Authority = $"https://login.microsoftonline.com/{tenantId ?? "invalid"}/v2.0";
                 options.ClientId = configuration["Auth:Pwa:ClientId"] ?? "unconfigured";
-                options.ClientSecret = configuration["Auth:Pwa:ClientSecret"];
+                options.ClientSecret = useManagedIdentity ? null : configuration["Auth:Pwa:ClientSecret"];
                 options.ResponseType = OpenIdConnectResponseType.Code;
                 options.UsePkce = true;
                 options.MapInboundClaims = false;
@@ -62,6 +77,17 @@ public static class BffAuthentication
                 options.Scope.Add("openid");
                 options.Scope.Add("profile");
                 options.Scope.Add(configuration["Auth:Pwa:Scope"] ?? "urn:bujo:unconfigured/journal.access");
+                if (useManagedIdentity)
+                    options.Events.OnAuthorizationCodeReceived = async context =>
+                    {
+                        var credential = context.HttpContext.RequestServices.GetRequiredKeyedService<TokenCredential>(OidcScheme);
+                        var assertion = await credential.GetTokenAsync(
+                            new TokenRequestContext(["api://AzureADTokenExchange/.default"]),
+                            context.HttpContext.RequestAborted);
+                        context.TokenEndpointRequest!.SetParameter("client_assertion_type",
+                            "urn:ietf:params:oauth:client-assertion-type:jwt-bearer");
+                        context.TokenEndpointRequest.SetParameter("client_assertion", assertion.Token);
+                    };
                 options.Events.OnTokenValidated = async context =>
                 {
                     var sessions = context.HttpContext.RequestServices.GetRequiredService<BffSessions>();

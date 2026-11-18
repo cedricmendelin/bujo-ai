@@ -1,14 +1,17 @@
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Azure.Core;
 using Bujo.Host;
 using Bujo.Host.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -74,6 +77,48 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         Assert.Null(api.Headers.Location);
     }
 
+    [Theory]
+    [InlineData(true, "https", true)]
+    [InlineData(true, "http", false)]
+    [InlineData(false, "https", false)]
+    public async Task ForwardedHttpsEnablesSecureSignInOnlyBehindContainerAppsIngress(
+        bool containerApps, string forwardedScheme, bool expectHttps)
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("CONTAINER_APP_NAME", containerApps ? "test-bujo" : ""));
+
+        Task<Microsoft.AspNetCore.Http.HttpContext> GetAsync(string path) =>
+            factory.Server.SendAsync(context =>
+            {
+                context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.10");
+                context.Request.Method = "GET";
+                context.Request.Scheme = "http";
+                context.Request.Path = path;
+                context.Request.Host = new Microsoft.AspNetCore.Http.HostString("bujo.example.test");
+                context.Request.Headers["X-Forwarded-Proto"] = forwardedScheme;
+                context.Request.Headers["X-Forwarded-Host"] = "ignored.example.test";
+            });
+
+        var signIn = await GetAsync("/auth/sign-in");
+        if (expectHttps)
+        {
+            Assert.Equal(200, signIn.Response.StatusCode);
+            Assert.Contains(signIn.Response.Headers.SetCookie, cookie =>
+                cookie is not null && cookie.StartsWith("__Host-Bujo.Antiforgery=", StringComparison.Ordinal)
+                && cookie.Contains("; secure", StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            Assert.DoesNotContain(signIn.Response.Headers.SetCookie, cookie =>
+                cookie is not null && cookie.StartsWith("__Host-Bujo.Antiforgery=", StringComparison.Ordinal));
+        }
+
+        var protectedPage = await GetAsync("/rendering-proof");
+        Assert.Equal(302, protectedPage.Response.StatusCode);
+        Assert.StartsWith($"{(expectHttps ? "https" : "http")}://bujo.example.test/auth/sign-in",
+            protectedPage.Response.Headers.Location.ToString());
+    }
+
     [Fact]
     public async Task StateChangingAccountEndpointsRejectMissingAntiforgery()
     {
@@ -92,6 +137,91 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
             new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
         Assert.Equal(HttpStatusCode.Redirect, result.StatusCode);
         Assert.Equal("/auth/error", result.Headers.Location!.ToString());
+    }
+
+    [Fact]
+    public async Task ManagedIdentityAuthenticatesCodeRedemptionWithoutAClientSecret()
+    {
+        var credential = new TestManagedIdentityCredential();
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Auth:Pwa:ManagedIdentityClientId", BffTestFactory.Subject);
+            builder.UseSetting("Auth:Pwa:ClientSecret", "unused-test-secret");
+            builder.ConfigureTestServices(services =>
+                services.AddKeyedSingleton<TokenCredential>(BffAuthentication.OidcScheme, credential));
+        });
+        var options = factory.Services.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(BffAuthentication.OidcScheme);
+        Assert.Null(options.ClientSecret);
+        var context = new AuthorizationCodeReceivedContext(
+            new DefaultHttpContext { RequestServices = factory.Services },
+            new AuthenticationScheme(BffAuthentication.OidcScheme, null, typeof(OpenIdConnectHandler)),
+            options, new AuthenticationProperties())
+        {
+            TokenEndpointRequest = new OpenIdConnectMessage { Code = "test-code" }
+        };
+        context.TokenEndpointRequest.SetParameter("code_verifier", "test-verifier");
+
+        await options.Events.AuthorizationCodeReceived(context);
+
+        Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(credential.Scopes!));
+        Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            context.TokenEndpointRequest.GetParameter("client_assertion_type"));
+        Assert.Equal("test-assertion", context.TokenEndpointRequest.GetParameter("client_assertion"));
+        Assert.Null(context.TokenEndpointRequest.ClientSecret);
+        Assert.Equal("test-code", context.TokenEndpointRequest.Code);
+        Assert.Equal("test-verifier", context.TokenEndpointRequest.GetParameter("code_verifier"));
+        Assert.False(context.HandledCodeRedemption);
+    }
+
+    [Fact]
+    public async Task ManagedIdentityConfigurationStartsEntraChallengeWithoutAClientSecret()
+    {
+        const string authorizationEndpoint = "https://login.microsoftonline.com/test/oauth2/v2.0/authorize";
+        const string scope = "api://proof/journal.access";
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Auth:Pwa:ClientId", BffTestFactory.Subject);
+            builder.UseSetting("Auth:Pwa:ManagedIdentityClientId", BffTestFactory.Subject);
+            builder.UseSetting("Auth:Pwa:Scope", scope);
+            builder.ConfigureTestServices(services =>
+                services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
+                    options.ConfigurationManager =
+                        new Microsoft.IdentityModel.Protocols.StaticConfigurationManager<OpenIdConnectConfiguration>(
+                            new OpenIdConnectConfiguration { AuthorizationEndpoint = authorizationEndpoint })));
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://bujo.example.test"),
+            AllowAutoRedirect = false
+        });
+        var html = await client.GetStringAsync("/auth/sign-in");
+        var token = System.Text.RegularExpressions.Regex.Match(html,
+            "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
+        using var response = await client.PostAsync("/auth/sign-in",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location!;
+        Assert.Equal(authorizationEndpoint, location.GetLeftPart(UriPartial.Path));
+        var parameters = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(location.Query);
+        Assert.Equal("https://bujo.example.test/signin-oidc", parameters["redirect_uri"].ToString());
+        Assert.Equal("S256", parameters["code_challenge_method"].ToString());
+        Assert.Contains(scope, parameters["scope"].ToString().Split(' '));
+    }
+
+    private sealed class TestManagedIdentityCredential : TokenCredential
+    {
+        public string[]? Scopes { get; private set; }
+
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public override ValueTask<AccessToken> GetTokenAsync(
+            TokenRequestContext requestContext, CancellationToken cancellationToken)
+        {
+            Scopes = requestContext.Scopes;
+            return ValueTask.FromResult(new AccessToken("test-assertion", DateTimeOffset.UtcNow.AddMinutes(1)));
+        }
     }
 
     [Fact]

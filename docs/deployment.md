@@ -97,18 +97,17 @@ configuration changes can leave that app unhealthy; record that separately.
 ### PWA BFF client registration
 
 The Terraform apply provisions a
-dedicated single-tenant web client and service principal for the PWA BFF. Its
-redirect is the existing Container App HTTPS FQDN plus `/signin-oidc`. The
-client requests only the API's delegated `journal.access` scope. Terraform
-does not add outputs for the client ID or redirect URI, and never creates or
-stores a client credential. Both non-secret values can be reviewed on the
-managed Entra application registration. This registration is not an MCP client
-and must not be reused for MCP without the separate compatibility proof.
+dedicated single-tenant PWA web client and service principal. It registers
+the Container App HTTPS `/signin-oidc` callback and
+`https://localhost:7168/signin-oidc` for Aspire. The client requests only the
+API's delegated `journal.access` scope; it is not an MCP client.
 
-The owner creates the client secret in Entra and stores it only in the existing
-Key Vault; do not put its value in Terraform, state, outputs, GitHub variables
-or secrets, or source. Rotate by adding a replacement secret, updating the Key
-Vault version, verifying the BFF consumes it, and then deleting the old secret.
+Terraform configures the Container App with the PWA client ID, delegated scope,
+and runtime managed identity client ID. The Entra app trusts that identity's
+principal ID to authenticate the authorization-code exchange. Production
+does not require a client secret, Key Vault access, or private networking.
+For local development, use a separate credential stored in
+[.NET user secrets](development.md), never in Terraform, GitHub, or source.
 Admin consent for `journal.access` and assignment of approved users to the API's
 `JournalUser` role remain separate owner actions. The API's approved-user
 object-ID allowlist remains an independent authorization check.

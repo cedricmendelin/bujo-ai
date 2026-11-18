@@ -100,9 +100,17 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
-    // Never trust arbitrary clients' forwarded scheme. Deployment must supply actual ingress IPs.
-    foreach (var value in (builder.Configuration["Hosting:KnownProxies"] ?? "")
-        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    var knownProxies = (builder.Configuration["Hosting:KnownProxies"] ?? "")
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (knownProxies.Length == 0 && !string.IsNullOrWhiteSpace(builder.Configuration["CONTAINER_APP_NAME"]))
+    {
+        // Container Apps HTTP ingress overwrites X-Forwarded-Proto and is the only path to the app port.
+        // Do not trust any other forwarded headers or depend on the platform proxy's IP staying fixed.
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    }
+
+    foreach (var value in knownProxies)
     {
         if (System.Net.IPAddress.TryParse(value, out var address))
             options.KnownProxies.Add(address);

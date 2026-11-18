@@ -57,6 +57,18 @@ module "container_app" {
           {
             name  = "Auth__AllowedPrincipals"
             value = local.auth_allowed_principals
+          },
+          {
+            name  = "Auth__Pwa__ClientId"
+            value = azuread_application.pwa_client.client_id
+          },
+          {
+            name  = "Auth__Pwa__Scope"
+            value = "${local.api_identifier_uri}/journal.access"
+          },
+          {
+            name  = "Auth__Pwa__ManagedIdentityClientId"
+            value = module.identity.client_id
           }
         ]
       }

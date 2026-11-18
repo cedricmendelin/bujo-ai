@@ -134,7 +134,7 @@ override_resource {
         latestRevisionFqdn         = "test-app--0000001.test.switzerlandnorth.azurecontainerapps.io"
         outboundIpAddresses        = ["192.0.2.20"]
         configuration = {
-          ingress = { fqdn = "test-app.test.switzerlandnorth.azurecontainerapps.io" }
+          ingress = { fqdn = "ca-test1234.test.switzerlandnorth.azurecontainerapps.io" }
         }
       }
     }
@@ -188,6 +188,7 @@ run "baseline_full_apply" {
   override_resource {
     target = azuread_application.pwa_client
     values = {
+      id        = "/applications/00000000-0000-0000-0000-000000000033"
       client_id = "00000000-0000-0000-0000-000000000032"
     }
   }
@@ -260,8 +261,8 @@ run "pwa_client_configuration_plan" {
   }
 
   assert {
-    condition     = toset(tolist(azuread_application.pwa_client.web)[0].redirect_uris) == toset(["${module.container_app.fqdn_url}/signin-oidc"])
-    error_message = "The PWA client must register exactly the computed callback URI."
+    condition     = toset(tolist(azuread_application.pwa_client.web)[0].redirect_uris) == toset(["${module.container_app.fqdn_url}/signin-oidc", "https://localhost:7168/signin-oidc"])
+    error_message = "The PWA client must register only the Container App and local HTTPS callbacks."
   }
 
   assert {
@@ -287,10 +288,10 @@ run "pwa_client_configuration_plan" {
   assert {
     condition = alltrue([
       for filename in fileset(path.root, "*.tf") :
-      length(regexall("(?m)^\\s*resource\\s+\"azuread_application_(password|certificate|federated_identity_credential)\"", file("${path.root}/${filename}"))) == 0
+      length(regexall("(?m)^\\s*resource\\s+\"azuread_application_(password|certificate)\"", file("${path.root}/${filename}"))) == 0
       && length(regexall("(?i)client_secret|pwa_client_(secret|password)", file("${path.root}/${filename}"))) == 0
     ]) && length(regexall("(?m)^output\\s+\"pwa_client_(secret|password)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
-    error_message = "Terraform must not create, store, or output a PWA client credential."
+    error_message = "Terraform must not create, store, or output a PWA password or certificate."
   }
 }
 

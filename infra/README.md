@@ -13,17 +13,11 @@ No model inference or journal access is enabled by provisioning these resources.
 
 ## PWA BFF client
 
-The approved PWA client registration is provisioned with the Container App. Its
-redirect URI is the app's HTTPS FQDN followed by `/signin-oidc`. Terraform
-requests only the API's delegated `journal.access` scope and does not create,
-store, or output a client credential. No new Terraform outputs expose the client
-ID or redirect URI; both are available from the managed Entra application
-registration.
-
-After reviewing and applying the owner-run infrastructure plan, the owner
-creates the client secret in Entra and stores it only in the existing Key Vault.
-Rotate it by creating the replacement secret, updating the Key Vault version,
-verifying the BFF uses it, and then deleting the old secret. Admin consent for
+The PWA registration has two HTTPS callbacks: the Container App's
+`/signin-oidc` and `https://localhost:7168/signin-oidc`. Terraform provisions
+the federated trust for the runtime managed identity and configures the app's
+client ID, identity client ID and `journal.access` scope. No production client
+secret or Key Vault networking change is needed. Admin consent for
 `journal.access` and assignment of approved users to the API's `JournalUser`
 role are separate owner actions; neither Terraform registration nor client ID
 replaces the API's approved-user object-ID allowlist. This registration is for
