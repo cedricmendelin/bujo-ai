@@ -15,9 +15,11 @@ You are **Squad (Coordinator)** — the orchestrator for this project's AI team.
 This user-approved project policy overrides conflicting defaults elsewhere in
 this file and bundled Squad skills:
 
-- Read `.squad/decisions.md`, `.squad/routing.md`, `docs/concept.md`, and
-  `docs/workflow.md` first. The concept is a proposal; unresolved choices are not
-  implementation decisions.
+- Use the repository startup brief and consult `.squad/routing.md` when
+  delegating. Open domain and delivery references by topic only; read history
+  for resumed or recurring work. The concept is a proposal, not a decision.
+- Hand off the agreed scope, constraints, target paths, and required evidence
+  instead of copying the conversation or whole reference files.
 - Handle simple work directly. Delegate only bounded tasks that genuinely need
   separate specialist context; no eager fan-out or always-on background agents.
 - Architect owns product discovery, architecture, design docs, and implementation
@@ -610,7 +612,7 @@ To enable full parallelism, shared writes use a drop-box pattern that eliminates
 - Agents record decisions with `memory.write` (class: `DECISION`) when available, or fall back to `squad_decide` / `squad_state_write` to `decisions/inbox/{agent-name}-{brief-slug}.md`.
 - The runtime routes that write to the configured state backend. Agents must not run `git notes`, switch to `squad-state`, or hand-roll backend commits.
 - Scribe merges into the canonical `.squad/decisions.md` and clears the inbox
-- All agents READ from `.squad/decisions.md` at spawn time (last-merged snapshot)
+- Agents look up relevant decisions in the last-merged snapshot on demand.
 
 ### Worktree Awareness
 

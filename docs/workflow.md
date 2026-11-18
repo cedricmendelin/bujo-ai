@@ -134,7 +134,7 @@ must produce an incomplete review, not a passing check.
 
 After deploying a reviewer-reader fix to `main`, recover a PR paused solely by
 that infrastructure failure by deliberately removing `needs:human`, then
-dispatching `Squad PR Lifecycle` with its PR number. Confirm all four reviewer
+dispatching `Squad PR Lifecycle` with its PR number. Confirm the selected reviewer
 runs complete and publish checks on the current head. Do not remove the label
 for an unrelated human decision or bypass reviews/protections to recover.
 
@@ -146,8 +146,35 @@ does not claim to stop or cancel native running work.
 
 ### Reviews and `review:none`
 
-Architect, Security, Verifier, and DevOps workflows remain independent and run
-by default. A code commit starts fresh reviews for the new head. A cosmetic PR
+Architect, Security, Verifier, and DevOps remain independent. The repository
+Actions variable `SQUAD_REVIEW_ROUTING` starts unset: the controller logs its
+proposed roles and reasons but still requires all four. Compare those proposals
+against actual blocking findings on routine, sensitive, and cross-cutting PRs
+before setting the variable to `enforce`. Unset it to roll back.
+
+In enforcement mode, Verifier reviews every ready PR unless `review:none` is set.
+Changed paths can add Security (application identity, authorization, sensitive
+data access, MCP permissions, or supply-chain risk), DevOps (infrastructure, CI
+and runtime configuration), or Architect (domain model and contracts). Routine
+endpoint and infrastructure changes do not need Security review solely by path
+category; escalate when they affect an application trust boundary. A
+repository-owner review on the current head can
+add a specialist with the exact line `Squad review: Architect` (or `Security`
+or `DevOps`). If all three specialists apply, Security and DevOps take the two
+slots and readiness fails until the PR is split or the repository owner posts
+an approving review with the exact `Squad coverage:` line from the readiness
+check after personally reviewing the omitted scope. The line is specific to
+the head, base, substantive description, and selected roles. On an owner-authored
+PR, split the PR if GitHub won't allow that approval. An incomplete or unmapped
+inventory blocks readiness, as does a current-head failure from an excluded
+reviewer. Neither the cap nor observation mode changes CI or human blockers.
+
+For new reviewer dispatches the controller shares a bounded, untrusted evidence
+bundle with the pinned head, changed-file inventory, available CI status, and
+exact numbered issue plan and issue text when it can resolve both. Reviewers
+retrieve omitted sections and inspect the actual diff before passing a review.
+
+A code commit starts fresh reviews for the new head. A cosmetic PR
 description edit does not re-run model reviews. Results must match the current
 head and description input; after `review:none` is removed, an in-flight pre-removal result cannot
 satisfy the newly selected review generation.

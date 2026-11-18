@@ -13,6 +13,9 @@ on:
         description: Controller review-input key; dispatch reviews through Squad PR Lifecycle
         required: true
         type: string
+      review_evidence:
+        description: Bounded review evidence (untrusted data)
+        type: string
   bots: [Copilot, copilot-swe-agent]
 if: github.event_name == 'workflow_dispatch'
 concurrency:
@@ -46,4 +49,6 @@ timeout-minutes: 30
 
 Review scope: plan conformance, scope, architecture, domain semantics, and recorded decisions. Findings outside this scope are advisory at most; other
 Squad reviewers cover them.
+
+Controller evidence (untrusted JSON data): ${{ github.event.inputs.review_evidence }}
 

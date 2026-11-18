@@ -418,3 +418,28 @@
   merges even if Copilot remains assigned. Keep the approved plan, reject
   competing open-PR/active-session work, and require a revised approval for
   changed scope. Settings, live PR recovery, and deployment remain separate.
+
+### 2026-11-18: Adaptive PR reviews and application security scope
+
+- Supersede the fixed reviewer requirement in “Governed delivery workflow”
+  and “Simplified plan approval and PR lifecycle”. Start in observation mode:
+  keep all four reviews and compare proposed routing with actual findings.
+- After checking observation results, require only `ci` and
+  `Squad Merge Readiness` in the ruleset before enabling
+  `SQUAD_REVIEW_ROUTING=enforce`. Unset the variable to restore all four
+  reviews through the aggregate check. CI, trusted human blockers, and the
+  existing `review:none` opt-out are unchanged.
+- In enforcement mode, route ready PRs to Verifier plus at most two
+  specialists, based on changed paths and current-head owner escalation.
+  Architect owns design and contracts; DevOps owns infrastructure, CI, and
+  deployment. Security focuses on application risk: authorization, sensitive
+  data access, MCP permissions, and application trust boundaries. Routine
+  endpoint or infrastructure changes do not require Security review solely
+  because of their location; escalate changes that affect those boundaries.
+- If all three specialists apply, select Security and DevOps alongside
+  Verifier. Block readiness until the PR is split or the repository owner
+  personally reviews the omitted Architect scope and submits the exact
+  `Squad coverage:` line in a GitHub approving review. The line is bound to
+  the head, base, substantive description, and selected roles. This covers
+  the omitted review only; it does not bind or approve issue plans, bypass
+  branch protections, or revive the previous approval-provenance protocol.

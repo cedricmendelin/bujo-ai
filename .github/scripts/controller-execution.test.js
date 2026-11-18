@@ -38,7 +38,8 @@ function fixture() {
   const pr = {
     number: 81, node_id: 'PR_81', state: 'open', draft: false,
     head: { sha, ref: 'local-work', repo: { full_name: `${owner}/bujo-ai` } },
-    base: { ref: 'main' }, labels: [], body: '', created_at: '2026-11-16T10:00:00Z',
+    base: { ref: 'main', sha: 'b'.repeat(40) }, labels: [], body: '', created_at: '2026-11-16T10:00:00Z',
+    changed_files: 1,
     auto_merge: null,
   };
   const workflows = [
@@ -47,7 +48,7 @@ function fixture() {
     ...ROLES.map(role => ({ id: role, path: `.github/workflows/squad-review-${role.toLowerCase()}.lock.yml` })),
   ];
   return {
-    pr, workflows,
+    pr, workflows, files: [{ filename: 'src/Bujo.Web/Pages/Journal.razor', status: 'modified' }],
     checks: [
       { id: 1, name: 'ci', head_sha: sha, status: 'completed', conclusion: 'success' },
       ...ROLES.map((role, i) => ({
@@ -116,6 +117,7 @@ async function execute(state, step = 'evaluate') {
     },
     pulls: {
       get: endpoint('pr', () => ({ data: structuredClone(state.pr), headers: { etag: '"pr-version"' } })),
+      listFiles: endpoint('files', () => ({ data: state.files })),
       update: endpoint('updatePr', args => {
         state.pr.body = args.body;
         return { data: structuredClone(state.pr) };
@@ -210,6 +212,7 @@ async function execute(state, step = 'evaluate') {
   };
   const core = {
     info: message => logs.push(message),
+    warning: message => logs.push(message),
     setOutput: (key, value) => { outputs[key] = value; },
     setFailed: message => errors.push(message),
   };
@@ -217,7 +220,7 @@ async function execute(state, step = 'evaluate') {
   const code = state.mutateSource ? state.mutateSource(productionCode) : productionCode;
   await new AsyncFunction('require', 'github', 'context', 'core', 'getOctokit', 'process', code)(
     workflowRequire, github, { runId: 900, ...state.context }, core, () => agent,
-    { env: { HUMAN: owner, AGENT_TOKEN: 'test-only', PR_NUMBER: '81' } },
+    { env: { HUMAN: owner, AGENT_TOKEN: 'test-only', PR_NUMBER: '81', REVIEW_ROUTING: state.reviewRouting } },
   );
   return { calls, logs, outputs, errors, state };
 }
@@ -241,6 +244,74 @@ function report(state, request, session, outcome = 'attempted') {
 function humanReview(state = 'CHANGES_REQUESTED', id = 1, body = 'Fix the missing acceptance test') {
   return { id, state, body, user: { login: owner, type: 'User' }, author_association: 'OWNER', html_url: 'https://example.test/review/1' };
 }
+
+test('observation preserves all reviewers; enforcement dispatches Verifier with one bounded evidence bundle', async () => {
+  for (const mode of [undefined, 'enforce']) {
+    const state = fixture();
+    state.reviewRouting = mode;
+    state.pr.body = 'Completion: full\n\nCloses #12\n\nPlan v2';
+    state.issue = { number: 12, body: '## Acceptance criteria\n\n- New behavior' };
+    state.comments = [
+      { id: 11, user: { login: owner }, body: '## 📋 Implementation plan v2 · owner: builder\nExact scope' },
+      { id: 12, user: { login: owner }, body: '## 📋 Implementation plan v3 · owner: builder\nLater scope' },
+    ];
+    const result = await execute(state);
+    const dispatches = result.calls.filter(call => call.name === 'dispatch');
+    assert.deepEqual(dispatches.map(call => call.args.workflow_id), mode ? ['Verifier'] : ROLES);
+    assert.equal(result.calls.filter(call => call.name === 'issue').length, 1);
+    assert.equal(new Set(dispatches.map(call => call.args.inputs.review_evidence)).size, 1);
+    const packet = JSON.parse(dispatches[0].args.inputs.review_evidence);
+    assert.equal(packet.head, sha);
+    assert.equal(packet.bodyKey, reviewInputKey(state.pr.body));
+    assert.deepEqual(packet.files, [['modified', state.files[0].filename]]);
+    assert.equal(packet.ci.checkId, 1);
+    assert.equal(packet.scope.planComment, 11);
+    assert.match(packet.scope.issueBody, /New behavior/);
+    assert.match(result.logs.join('\n'), /"selected":\["Verifier"\]/);
+  }
+});
+
+test('routing counts both rename paths and caps all-domain PRs until current owner approval', async () => {
+  const state = fixture();
+  state.reviewRouting = 'enforce';
+  state.files = [{ filename: 'docs/retired.txt', previous_filename: 'infra/identity.tf', status: 'renamed' },
+    { filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' }];
+  state.pr.changed_files = 2;
+  state.runs.Architect = [];
+  let result = await execute(state);
+  const marker = readinessFrom(state).output.summary.match(/Squad coverage: Architect [a-f0-9]{64}/)?.[0];
+  assert.ok(marker, 'missing revision-bound overflow marker');
+  assert.equal(readinessFrom(state).conclusion, 'failure');
+  assert.deepEqual(result.calls.filter(call => call.name === 'runs').map(call => call.args.workflow_id),
+    ['ci', 'Security', 'Verifier', 'DevOps']);
+  assert.equal(enables(result).length, 0);
+  state.reviews = [{ ...humanReview('APPROVED', 1, marker), commit_id: sha,
+    user: { login: 'contributor', type: 'User' } }];
+  assert.equal(enables(await execute(state)).length, 0);
+  state.reviews[0].user.login = owner;
+  result = await execute(state);
+  assert.equal(enables(result).length, 1);
+  state.pr.body = 'Completion: full\n\nSubstantive edit';
+  result = await execute(state);
+  assert.equal(enables(result).length, 0);
+  assert.match(readinessFrom(state).output.summary, /Reviewer cap reached/);
+});
+
+test('enforcement fails closed on incomplete or raced inventory and an excluded failing check', async () => {
+  for (const kind of ['incomplete', 'raced', 'excluded', 'unknown']) {
+    const state = fixture();
+    state.reviewRouting = 'enforce';
+    if (kind === 'incomplete') state.pr.changed_files = 2;
+    if (kind === 'unknown') state.files[0].filename = 'unmapped/handler.cs';
+    if (kind === 'excluded') state.checks.find(check => check.name === 'Squad Review / Architect').conclusion = 'failure';
+    if (kind === 'raced') state.before = (name, _args, calls) => {
+      if (name === 'files' && calls.filter(call => call.name === 'files').length === 2) state.files = [];
+    };
+    const result = await execute(state);
+    assert.equal(enables(result).length, 0, kind);
+    assert.notEqual(readinessFrom(state).conclusion, 'success', kind);
+  }
+});
 function removal(state, minute = 10) {
   state.timeline.push({ event: 'unlabeled', label: { name: 'review:none' }, created_at: stamp(minute) });
 }
