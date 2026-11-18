@@ -320,9 +320,11 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
             _clock.GetUtcNow().ToUniversalTime()));
         if (applied.IsSuccess && applied.Value!.Status == ReviewProposalStatus.Conflicted)
         {
+            var snapshot = repository.GetSnapshot();
+            var details = DescribeConflicts(proposal, snapshot);
             return DomainResult<ReviewProposalSnapshot>.Failure(new DomainError(
                 DomainErrorCode.ConcurrencyConflict,
-                "The journal changed since this proposal was reviewed. Review the current list and create a new proposal.",
+                $"The journal changed since this proposal was reviewed. {details} Review the current list and create a new proposal.",
                 proposal.Changes.Select(change => change.OccurrenceId).ToArray()));
         }
 
@@ -383,6 +385,82 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
         }
 
         return DomainResult<ReviewProposalSnapshot>.Success(proposal);
+    }
+
+    private static string DescribeConflicts(ReviewProposalSnapshot proposal, JournalSnapshot snapshot)
+    {
+        var details = new List<string>();
+        var lists = snapshot.Lists.ToDictionary(candidate => candidate.Id);
+        var items = snapshot.Items.ToDictionary(candidate => candidate.Id);
+        var occurrences = snapshot.Occurrences.ToDictionary(candidate => candidate.Id);
+        var list = lists.GetValueOrDefault(proposal.ListId);
+        if (list is null)
+        {
+            details.Add($"List {proposal.ListId} no longer exists.");
+        }
+        else if (list.Version != proposal.ExpectedListVersion)
+        {
+            details.Add($"List {list.Id}: expected version {proposal.ExpectedListVersion}, current version {list.Version}.");
+        }
+
+        foreach (var change in proposal.Changes)
+        {
+            var item = items.GetValueOrDefault(change.ItemId);
+            if (item is null)
+            {
+                details.Add($"Item {change.ItemId} no longer exists.");
+            }
+            else if (item.Version != change.ExpectedItemVersion)
+            {
+                details.Add($"Item {item.Id}: expected version {change.ExpectedItemVersion}, current version {item.Version}.");
+            }
+
+            var occurrence = occurrences.GetValueOrDefault(change.OccurrenceId);
+            if (occurrence is null)
+            {
+                details.Add($"Occurrence {change.OccurrenceId} no longer exists.");
+            }
+            else if (occurrence.State != OccurrenceState.Open ||
+                     item is not null && item.CurrentOccurrenceId != occurrence.Id)
+            {
+                details.Add($"Occurrence {occurrence.Id} is no longer the current open occurrence (current state: {occurrence.State}).");
+            }
+
+            if (change.Action == ReviewDisposition.Move)
+            {
+                var destination = change.DestinationListId is { } destinationId
+                    ? lists.GetValueOrDefault(destinationId)
+                    : null;
+                if (destination is null)
+                {
+                    details.Add($"Destination list {change.DestinationListId} no longer exists.");
+                }
+                else if (destination.State != JournalListState.Open)
+                {
+                    details.Add($"Destination list {destination.Id} is {destination.State}.");
+                }
+                else if (destination.Version != change.ExpectedDestinationListVersion)
+                {
+                    details.Add($"Destination list {destination.Id}: expected version {change.ExpectedDestinationListVersion}, current version {destination.Version}.");
+                }
+            }
+        }
+
+        if (proposal.RequestCloseList && list is not null)
+        {
+            var changedOccurrences = proposal.Changes.Select(change => change.OccurrenceId).ToHashSet();
+            foreach (var occurrence in snapshot.Occurrences.Where(candidate =>
+                         candidate.ListId == list.Id &&
+                         candidate.State == OccurrenceState.Open &&
+                         !changedOccurrences.Contains(candidate.Id)))
+            {
+                details.Add($"Unresolved occurrence {occurrence.Id} is not in this proposal.");
+            }
+        }
+
+        return details.Count == 0
+            ? "Journal state changed."
+            : string.Join(" ", details);
     }
 
     private static DomainError? ValidateActor(ReviewActor actor) =>

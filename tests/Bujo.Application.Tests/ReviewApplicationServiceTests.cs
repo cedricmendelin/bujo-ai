@@ -151,6 +151,8 @@ public sealed class ReviewApplicationServiceTests
 
         Assert.Equal(DomainErrorCode.ConcurrencyConflict, conflict.Error!.Code);
         Assert.Equal(DomainErrorCode.ConcurrencyConflict, replay.Error!.Code);
+        Assert.Contains(first.Item.Id.ToString(), conflict.Error.Message);
+        Assert.Contains($"expected version {first.Item.Version}", conflict.Error.Message);
         Assert.Equal(ReviewProposalStatus.Conflicted, stored.Value!.Status);
         AssertJournalUnchanged(beforeApply, setup.Repository.GetSnapshot());
     }
@@ -187,6 +189,7 @@ public sealed class ReviewApplicationServiceTests
         var stored = setup.Reviews.GetProposal(proposal.Id, McpActor());
 
         Assert.Equal(DomainErrorCode.ConcurrencyConflict, conflict.Error!.Code);
+        Assert.Contains("expected version", conflict.Error.Message);
         Assert.Equal(ReviewProposalStatus.Conflicted, stored.Value!.Status);
         AssertJournalUnchanged(beforeApply, setup.Repository.GetSnapshot());
     }
