@@ -6,6 +6,11 @@ The [deployment guide](../docs/deployment.md) describes automatic plan/apply for
 merged infrastructure changes, on-demand reconciliation, and the separate
 application migration and promotion gate. Deployment workflows use OIDC only.
 
+The optional Foundry account, project, and model deployments are disabled by
+default. Model/region/SKU choices and owner-only enablement requirements are
+documented in [Optional Microsoft Foundry model provider](../docs/infrastructure.md#optional-microsoft-foundry-model-provider).
+No model inference or journal access is enabled by provisioning these resources.
+
 ## PWA BFF client
 
 The approved PWA client registration is provisioned with the Container App. Its

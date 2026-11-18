@@ -113,3 +113,63 @@ variable "budget_amount" {
     error_message = "The production monthly budget must remain 50."
   }
 }
+
+variable "foundry_enabled" {
+  type        = bool
+  description = "Create the optional Foundry account, project, and model deployments."
+  default     = false
+}
+
+variable "foundry_location" {
+  type        = string
+  description = "Azure region for the optional Foundry account and project."
+  default     = "switzerlandnorth"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.foundry_location))
+    error_message = "foundry_location must be an Azure region name."
+  }
+}
+
+variable "foundry_deployments" {
+  type = map(object({
+    model    = string
+    version  = string
+    sku      = string
+    capacity = number
+  }))
+  description = "Optional Foundry model deployments, keyed by their deployment names."
+  default = {
+    chat = {
+      model    = "gpt-6.1-terra"
+      version  = "2026-10-26"
+      sku      = "DataZoneStandard"
+      capacity = 1
+    }
+    decision = {
+      model    = "gpt-5-mini"
+      version  = "2025-08-07"
+      sku      = "DataZoneStandard"
+      capacity = 1
+    }
+    embedding = {
+      model    = "text-embedding-3-small"
+      version  = "1"
+      sku      = "DataZoneStandard"
+      capacity = 1
+    }
+  }
+
+  validation {
+    condition = length(var.foundry_deployments) > 0 && alltrue([
+      for name, deployment in var.foundry_deployments :
+      can(regex("^[a-z0-9-]{1,64}$", name))
+      && trimspace(deployment.model) != ""
+      && trimspace(deployment.version) != ""
+      && contains(["DataZoneStandard", "GlobalStandard", "Standard"], deployment.sku)
+      && deployment.capacity >= 1
+      && deployment.capacity <= 1000
+    ])
+    error_message = "foundry_deployments must be non-empty and use valid names, models, versions, pay-per-token SKUs, and capacities from 1 to 1000."
+  }
+}
