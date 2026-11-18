@@ -1,4 +1,89 @@
-# Proposed single-tenant authentication design
+# Single-tenant authentication design
+
+## Issue #10 v3 rendering/BFF checkpoint
+
+The host now implements a **thin proof**, not the complete journal UI or a
+verified Entra deployment. Static SSR renders anonymous `/` and safe account
+states; only `/rendering-proof` creates an Interactive Server circuit. Its
+synthetic text and connection check never access SQL or save journal items.
+Interactive Server with static SSR where appropriate is Accepted in
+[ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
+provides implementation evidence, not live verification. Owner and Architect
+review of that evidence remains required before journal UI work. Live Entra
+sign-in, target-browser installation, cost and multi-replica recovery remain
+unverified. The original issue #4 MCP/client proposal below remains provisional.
+
+### Implemented boundaries
+
+- UI uses named `Bujo.Cookie` and `ApprovedUi`; APIs and readiness explicitly use
+  JWT bearer. An otherwise-valid UI cookie cannot authorize `/api`.
+- OIDC `Bujo.Oidc` uses authorization code + PKCE, framework state/nonce
+  validation, tenant-specific HTTPS metadata, and the fixed `/signin-oidc`
+  callback. The ID-token identity must match the independently validated
+  delegated access token's `tid` and `oid`; `journal.access` is required.
+- `__Host-Bujo` is Secure, HttpOnly, SameSite=Lax, path `/`, non-sliding, with
+  a maximum one-hour lifetime. `SaveTokens=false`: the cookie contains no access,
+  refresh, or ID token. A bounded, process-memory-only server cache retains the
+  delegated token until its expiry or one hour, whichever comes first.
+  Tokens are not refreshed; expiry, eviction, restart or logout requires sign-in.
+- Every protected UI HTTP request, circuit open/reconnect, and inbound circuit
+  activity checks current configuration's immutable approved `(tid, oid)` pair,
+  delegated scope and server-held token signature/issuer/audience/lifetime.
+  Revocation rejects the next request/event/reconnect; this is not continuous
+  Entra revocation notification and does not erase previously rendered DOM.
+- `/auth/sign-in` and `/auth/sign-out` GETs only render forms. Their POSTs require
+  antiforgery; sign-out removes the server session immediately and clears the
+  local cookie. Upstream Entra SSO is **not** terminated; another sign-in may
+  reuse the identity provider's SSO session.
+- Anonymous `/auth/signed-out`, `/auth/denied`, `/auth/error` contain generic
+  messages only. Account/protected responses are private/no-store. Static
+  installation assets are anonymous; the root `/service-worker.js` serves the
+  actual worker with root scope. The worker only caches allowlisted public
+  assets, never HTML, authenticated responses, API responses, or tokens.
+- CSP restricts scripts, styles and connections to same origin, prohibits
+  framing and objects; anti-sniffing, referrer and permissions headers are set.
+  Production enables HSTS. `X-Forwarded-Proto` is honored only from known
+  proxies (one hop); configure exact comma-separated ingress IPs in
+  `Hosting:KnownProxies`. Never enable unrestricted forwarded-header trust.
+
+### Runtime configuration and deployment prerequisites
+
+Supply through protected runtime configuration, never committed values:
+
+| Key | Purpose |
+| --- | --- |
+| `Auth:TenantId`, `Auth:Audience`, `Auth:AllowedPrincipals` | Existing API tenant, exact API audience, immutable approved tenant/object pairs |
+| `Auth:Pwa:ClientId` | Single-tenant confidential web-client registration |
+| `Auth:Pwa:ClientSecret` | Server-only client credential, delivered by the owner through secure runtime configuration |
+| `Auth:Pwa:Scope` | Fully qualified delegated API scope ending in `/journal.access` |
+| `Hosting:KnownProxies` | Exact trusted ingress proxy IPs when TLS terminates outside Kestrel |
+
+Register the exact externally visible HTTPS `/signin-oidc` redirect URI.
+Use HTTPS locally (`dotnet dev-certs https --trust` where supported); Secure
+antiforgery cookies intentionally prevent HTTP sign-in. Ensure the approved
+proxy forwards the real HTTPS scheme so OIDC does not produce an HTTP callback.
+Do not treat Container Apps deployment or proxy configuration as verified here.
+Protect Data Protection keys appropriately in production. This checkpoint
+assumes **one replica**: cookies, server token sessions and circuits do not
+provide cross-replica/restart continuity. No infrastructure or tenant change is
+made here.
+
+### Evidence limits / human gate
+
+Automated tests use locally generated signing keys for access-token validation
+and test-host-only authentication for browser rendering. They are not real Entra
+sign-in, consent, client-secret, redirect, remote-client or Azure deployment
+evidence. The proof action is only a connection roundtrip, not persistence.
+
+## 🙋 Needs human
+
+@cedricmendelin: provide/verify the registered HTTPS redirect, protected PWA
+client configuration, trusted ingress scheme forwarding and approved account,
+then perform real Entra sign-in/denial/sign-out and target-browser installation.
+Owner and Architect must review the proof before further journal UI work.
+Until then issue #10 remains open and delivery is `Completion: partial`.
+
+---
 
 **Status:** proposal for issue [#4](https://github.com/cedricmendelin/bujo-ai/issues/4),
 implementation plan v1; not an approved decision or proof of interoperability.

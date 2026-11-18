@@ -1,0 +1,49 @@
+@inherits LayoutComponentBase
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+<div class="app-shell">
+    <header class="site-header">
+        <a class="brand" href="/" aria-label="Bujo-AI home">Bujo-AI</a>
+        <nav aria-label="Primary navigation">
+            <a href="/">Home</a>
+            <a href="#proof-scope">About this proof</a>
+            <AuthorizeView>
+                <Authorized>
+                    <a href="/rendering-proof">Connection proof</a>
+                    <span class="account-state">Signed in</span>
+                    <a href="/auth/sign-out">Sign out</a>
+                </Authorized>
+                <NotAuthorized>
+                    <a href="/auth/sign-in">Sign in</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </nav>
+    </header>
+
+    <aside class="connection-panel" aria-label="Connection status">
+        <p data-connectivity-status role="status" aria-live="polite" aria-atomic="true">
+            Checking browser connection…
+        </p>
+        <p data-circuit-status role="status" aria-live="polite" aria-atomic="true" hidden></p>
+        <noscript>
+            <p>JavaScript is required for the interactive app and connection warnings.</p>
+        </noscript>
+    </aside>
+
+    <main id="main-content" tabindex="-1">
+        @Body
+        <section id="proof-scope" class="proof-scope" aria-labelledby="proof-scope-title">
+            <h2 id="proof-scope-title">Online-first application proof</h2>
+            <p>
+                This shell is used to evaluate sign-in, installation and connection behavior.
+                Journal screens await owner and Architect review.
+            </p>
+            <p>
+                Changes will only be saved after the server confirms them.
+                Offline or disconnected writes are not available and are never queued or replayed.
+                Reconnecting keeps this page in place; reloading loses unsaved input.
+            </p>
+        </section>
+    </main>
+    <footer>No journal data is stored offline. An internet connection is required to open the app.</footer>
+</div>

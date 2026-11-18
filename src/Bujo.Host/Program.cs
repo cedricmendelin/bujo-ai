@@ -1,10 +1,15 @@
 using Bujo.Domain;
 using Bujo.Host;
+using Bujo.Host.Authentication;
+using Bujo.Web;
+using Microsoft.AspNetCore.Authentication;
 using Bujo.Infrastructure;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -21,6 +26,7 @@ if (new[] { shouldMigrate, shouldMigrateOnly, shouldVerifyDatabase }.Count(enabl
 
 var builder = WebApplication.CreateBuilder(args.Where(argument =>
     argument is not "--migrate" and not "--migrate-only" and not "--verify-database").ToArray());
+builder.WebHost.UseStaticWebAssets();
 
 var tenantSetting = builder.Configuration["Auth:TenantId"];
 var tenantId = Guid.TryParse(tenantSetting, out var parsedTenantId)
@@ -56,7 +62,7 @@ builder.Services
     });
 
 var approvedPrincipal = new ApprovedPrincipalRequirement(builder.Configuration);
-var approvedPrincipalPolicy = new AuthorizationPolicyBuilder()
+var approvedPrincipalPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
     .RequireAuthenticatedUser()
     .AddRequirements(approvedPrincipal)
     .Build();
@@ -66,6 +72,37 @@ builder.Services.AddAuthorization(options =>
 {
     options.FallbackPolicy = approvedPrincipalPolicy;
     options.AddPolicy("ApprovedPrincipal", approvedPrincipalPolicy);
+});
+builder.Services.AddBff(builder.Configuration, tenantId);
+builder.Services.Configure<AuthenticationOptions>(options =>
+{
+    // Populate SSR account chrome from the UI cookie. API fallback explicitly selects bearer.
+    options.DefaultAuthenticateScheme = BffAuthentication.CookieScheme;
+    options.DefaultChallengeScheme = BffAuthentication.CookieScheme;
+});
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<CircuitHandler, ApprovedCircuitHandler>();
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = "__Host-Bujo.Antiforgery";
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+});
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    // Never trust arbitrary clients' forwarded scheme. Deployment must supply actual ingress IPs.
+    foreach (var value in (builder.Configuration["Hosting:KnownProxies"] ?? "")
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (System.Net.IPAddress.TryParse(value, out var address))
+            options.KnownProxies.Add(address);
+        else
+            throw new InvalidOperationException("Hosting:KnownProxies must contain only IP addresses.");
+    }
 });
 
 var connectionString = builder.Configuration.GetConnectionString("journal")
@@ -82,9 +119,44 @@ builder.Services.AddHealthChecks()
     .AddCheck<JournalDatabaseHealthCheck>("journal-database", tags: ["ready"]);
 
 var app = builder.Build();
+app.UseForwardedHeaders();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/auth/error");
+    app.UseHsts();
+}
+app.Use(async (context, next) =>
+{
+    // Chromium applies form-action to redirects of the sign-in POST as well.
+    var formAction = context.Request.Path.Equals("/auth/sign-in", StringComparison.OrdinalIgnoreCase)
+        ? "'self' https://login.microsoftonline.com" : "'self'";
+    context.Response.Headers.ContentSecurityPolicy =
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+        $"connect-src 'self'; object-src 'none'; base-uri 'self'; form-action {formAction}; frame-ancestors 'none'";
+    context.Response.Headers.XContentTypeOptions = "nosniff";
+    context.Response.Headers.XFrameOptions = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    if (!context.Request.Path.StartsWithSegments("/_content") &&
+        !context.Request.Path.StartsWithSegments("/_framework"))
+        context.Response.Headers.CacheControl = "no-store, private";
+    await next();
+});
 app.UseMcpRequestSecurity();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
+app.MapStaticAssets().AllowAnonymous();
+app.MapGet("/service-worker.js", (HttpContext context, IWebHostEnvironment environment) =>
+{
+    var file = environment.WebRootFileProvider.GetFileInfo("_content/Bujo.Web/service-worker.js");
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.Headers["Service-Worker-Allowed"] = "/";
+    return file.Exists ? Results.Stream(file.CreateReadStream(), "text/javascript") : Results.NotFound();
+}).AllowAnonymous();
+app.MapAccountEndpoints();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode()
+    .RequireAuthorization(BffAuthentication.UiPolicy);
 app.MapHealthChecks("/health/live", HealthOptions("live")).AllowAnonymous();
 app.MapHealthChecks("/health/ready", HealthOptions("ready"));
 

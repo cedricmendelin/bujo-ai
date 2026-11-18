@@ -298,7 +298,7 @@ jobs:
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
                     body: `${marker}\n@${actor} explicitly resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
                   if (pr.labels.some(label => label.name === 'needs:human')) {
-                    await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
+                    await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
                   }
                 }
                 comments = await getComments(number);

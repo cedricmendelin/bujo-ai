@@ -1,0 +1,6 @@
+@page "/rendering-proof"
+@attribute [Authorize(Policy = "ApprovedUi")]
+
+<PageTitle>Connection proof · Bujo-AI</PageTitle>
+
+<Bujo.Web.Components.ConnectionProof @rendermode="InteractiveServer" />

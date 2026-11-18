@@ -93,6 +93,11 @@ async function execute(state, step = 'evaluate') {
     if (state.fail === name) throw new Error(`API failure: ${name}`);
     return handler(args);
   }, { endpoint: name });
+  const removeLabel = args => {
+    state.pr.labels = state.pr.labels.filter(label => label.name !== args.name);
+    state.issue.labels = state.issue.labels.filter(label => label.name !== args.name);
+    return { data: {} };
+  };
   const rest = {
     actions: {
       listRepoWorkflows: endpoint('workflows', () => ({ data: { workflows: state.workflows } })),
@@ -149,9 +154,8 @@ async function execute(state, step = 'evaluate') {
         return { data: {} };
       }),
       removeLabel: endpoint('removeLabel', args => {
-        state.pr.labels = state.pr.labels.filter(label => label.name !== args.name);
-        state.issue.labels = state.issue.labels.filter(label => label.name !== args.name);
-        return { data: {} };
+        if (state.denyWorkflowPrLabelWrite) throw new Error('403 Resource not accessible by integration');
+        return removeLabel(args);
       }),
       addAssignees: endpoint('assignees', () => ({ data: {} })),
       removeAssignees: endpoint('removeAssignees', () => ({ data: {} })),
@@ -186,7 +190,13 @@ async function execute(state, step = 'evaluate') {
     throw new Error(`Unexpected request ${route}`);
   };
   const agent = {
-    rest,
+    rest: {
+      ...rest,
+      issues: {
+        ...rest.issues,
+        removeLabel: endpoint('agentRemoveLabel', removeLabel),
+      },
+    },
     graphql: async (query, args) => {
       calls.push({ name: 'mutation', query, args });
       if (state.fail === 'mutation') throw new Error('API failure: mutation');
@@ -781,21 +791,38 @@ test('missing capability and unattributable later sessions pause once without co
 
 test('explicit maintainer resume resets the repair episode but normal re-evaluation never clears the pause', async () => {
   const state = fixture();
+  state.denyWorkflowPrLabelWrite = true;
   cloud(state);
   state.pr.labels.push({ name: 'needs:human' });
   state.reviews = [humanReview()];
   state.comments = [fixComment(stamp(0))];
   state.runs.copilot = [{ id: 1, status: 'completed', conclusion: 'success', created_at: stamp(1) }];
   report(state, state.comments[0], state.runs.copilot[0], 'capability-blocked');
-  assert.equal((await execute(state)).calls.some(call => call.name === 'removeLabel'), false);
+  assert.equal((await execute(state)).calls.some(call => ['removeLabel', 'agentRemoveLabel'].includes(call.name)), false);
   state.context.eventName = 'workflow_dispatch';
   state.context.payload.inputs = { pr_number: '81', resume_repairs: true };
   const resumed = await execute(state);
+  assert.deepEqual(resumed.calls.filter(call => call.name === 'agentRemoveLabel').map(call => call.args), [
+    { owner, repo: 'bujo-ai', issue_number: 81, name: 'needs:human' },
+  ], 'an explicit PR resume must use the PR-write credential, not the workflow token that returned 403');
   assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), false);
   assert.equal(commentsFrom(resumed).filter(body => body.includes('@copilot Fix')).length, 1);
   assert.equal(commentsFrom(await execute(state)).length, 0, 'duplicate resume run must not reset again');
   state.pr.labels.push({ name: 'needs:human' });
-  assert.equal((await execute(state)).calls.some(call => call.name === 'removeLabel'), false, 'a rerun must not clear a newer pause');
+  assert.equal((await execute(state)).calls.some(call => ['removeLabel', 'agentRemoveLabel'].includes(call.name)), false, 'a rerun must not clear a newer pause');
+});
+
+test('using the workflow token for PR resume reproduces the live 403 and leaves the pause intact', async () => {
+  const state = fixture();
+  state.denyWorkflowPrLabelWrite = true;
+  state.pr.labels.push({ name: 'needs:human' });
+  state.context.eventName = 'workflow_dispatch';
+  state.context.payload.inputs = { pr_number: '81', resume_repairs: true };
+  state.mutateSource = code => code.replace("agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' })",
+    "github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' })");
+  await assert.rejects(execute(state), /403 Resource not accessible by integration/);
+  assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true);
+  assert.equal(readinessFrom(state).conclusion, undefined);
 });
 
 test('human-only specialist findings are not sent to the coding agent', async () => {

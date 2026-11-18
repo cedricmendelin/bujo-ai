@@ -166,12 +166,12 @@ class InfrastructurePlanTests(unittest.TestCase):
                 "minCapacity": 0.5,
                 "autoPauseDelay": 60,
                 "useFreeLimit": True,
-                "freeLimitExhaustionBehavior": "BillForUsage",
+                "freeLimitExhaustionBehavior": "BillOverUsage",
             },
         )
 
     def test_sql_free_limit_guard_rejects_auto_pause_missing_and_unknown_values(self):
-        for behavior in ("AutoPause", "Unexpected"):
+        for behavior in ("AutoPause", "BillForUsage", "Unexpected"):
             with self.subTest(behavior=behavior):
                 plan = self.plan("baseline_full_plan")
                 properties = resource(

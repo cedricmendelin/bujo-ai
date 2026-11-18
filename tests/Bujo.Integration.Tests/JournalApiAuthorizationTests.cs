@@ -264,6 +264,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
             }).AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
                 TestAuthenticationHandler.SchemeName,
                 _ => { });
+            services.PostConfigure<AuthenticationOptions>(options =>
+                options.Schemes.Single(scheme => scheme.Name == "Bearer").HandlerType = typeof(TestAuthenticationHandler));
             services.RemoveAll<IJournalRepository>();
                 if (FailQueries)
                 {

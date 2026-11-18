@@ -3,6 +3,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <ProjectReference Include="..\Bujo.Web\Bujo.Web.csproj" />
     <ProjectReference Include="..\Bujo.Application\Bujo.Application.csproj" />
     <ProjectReference Include="..\Bujo.Infrastructure\Bujo.Infrastructure.csproj" />
   </ItemGroup>
@@ -11,6 +13,8 @@
     <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Components live in the RCL, so SDK .razor-file autodetection cannot opt us in. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
 </Project>
