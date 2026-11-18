@@ -227,12 +227,20 @@ if not, the gate refuses to promote.
 
 The migration job runs `Bujo.Host.dll --migrate-only` from the release image
 with a separate managed identity, no automatic retries and a 30-minute replica
-timeout. The web host never migrates at startup. Migrations must be additive
+timeout. Both the migration job and web host use the SqlClient Azure extension
+for Microsoft Entra managed-identity authentication. The web host never
+migrates at startup. Migrations must be additive
 and backward-compatible so the current revision keeps serving while the
 migration runs and if promotion fails.
 
-If migration fails, inspect the execution logs privately, fix the cause (for
-example a missing SQL grant) and rerun with `workflow_dispatch`. Never start a
+If migration fails, inspect the execution logs privately. The job emits a
+console start marker and either a completion marker or a categorical failure
+for handled errors (including the SQL error number when available). If the
+console is empty, check `ContainerAppSystemLogs_CL` in the environment's
+Log Analytics workspace for `JobName_s` and `ExecutionName_s`; it can show
+image pull and container termination events even without console output.
+Fix the cause (for example a missing SQL grant) and rerun with
+`workflow_dispatch`. Never start a
 parallel execution. A failure before promotion leaves the current revision
 untouched. A failure after promotion does not restore the previous image or
 reverse schema changes: the app uses single-revision mode, so recover by

@@ -24,8 +24,14 @@ if (new[] { shouldMigrate, shouldMigrateOnly, shouldVerifyDatabase }.Count(enabl
     throw new InvalidOperationException("Migration and database verification modes cannot be combined.");
 }
 
-var builder = WebApplication.CreateBuilder(args.Where(argument =>
-    argument is not "--migrate" and not "--migrate-only" and not "--verify-database").ToArray());
+var hostArgs = args.Where(argument =>
+    argument is not "--migrate" and not "--migrate-only" and not "--verify-database").ToArray();
+if (shouldMigrateOnly)
+{
+    return await MigrationJob.RunAsync(hostArgs);
+}
+
+var builder = WebApplication.CreateBuilder(hostArgs);
 builder.WebHost.UseStaticWebAssets();
 
 var tenantSetting = builder.Configuration["Auth:TenantId"];
@@ -160,28 +166,17 @@ app.MapRazorComponents<App>().AddInteractiveServerRenderMode()
 app.MapHealthChecks("/health/live", HealthOptions("live")).AllowAnonymous();
 app.MapHealthChecks("/health/ready", HealthOptions("ready"));
 
-if (shouldMigrate || shouldMigrateOnly)
+if (shouldMigrate)
 {
-    if (shouldMigrate && !app.Environment.IsDevelopment())
+    if (!app.Environment.IsDevelopment())
     {
         throw new InvalidOperationException("Database migrations can only run in Development.");
-    }
-
-    if (shouldMigrateOnly && !app.Environment.IsProduction())
-    {
-        throw new InvalidOperationException("The migration job can only run in Production.");
     }
 
     await using var scope = app.Services.CreateAsyncScope();
     var contextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<JournalDbContext>>();
     await using var context = await contextFactory.CreateDbContextAsync();
     await context.Database.MigrateAsync();
-
-    if (shouldMigrateOnly)
-    {
-        await app.DisposeAsync();
-        return;
-    }
 }
 
 if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:VerifyDatabaseOnStart"))
@@ -197,7 +192,7 @@ if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:Ver
     if (shouldVerifyDatabase)
     {
         await app.DisposeAsync();
-        return;
+        return 0;
     }
 }
 
@@ -206,6 +201,7 @@ app.MapProtectedResourceMetadata();
 app.MapMcp("/mcp").RequireAuthorization("ApprovedPrincipal");
 
 app.Run();
+return 0;
 
 static HealthCheckOptions HealthOptions(string tag) => new()
 {
