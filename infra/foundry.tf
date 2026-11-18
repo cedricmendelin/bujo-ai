@@ -31,6 +31,19 @@ resource "azurerm_cognitive_account_project" "foundry" {
   }
 }
 
+resource "azurerm_role_assignment" "foundry_group" {
+  for_each = var.foundry_enabled && var.foundry_access_group != null ? toset([
+    "Cognitive Services OpenAI User",
+    "Foundry User",
+  ]) : toset([])
+
+  name                 = uuidv5("url", "${lower(azurerm_cognitive_account.foundry[0].id)}/${lower(var.foundry_access_group.object_id)}/${each.key}")
+  scope                = azurerm_cognitive_account.foundry[0].id
+  role_definition_name = each.key
+  principal_id         = var.foundry_access_group.object_id
+  principal_type       = "Group"
+}
+
 resource "azurerm_cognitive_deployment" "model" {
   for_each = var.foundry_enabled ? var.foundry_deployments : {}
 
