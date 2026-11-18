@@ -3,7 +3,7 @@ name_suffix    = "bujo001"
 key_vault_name = "bujo-ai-prod-kv"
 budget_amount  = 50
 
-foundry_enabled  = false
+foundry_enabled  = true
 foundry_location = "switzerlandnorth"
 foundry_deployments = {
   chat = {

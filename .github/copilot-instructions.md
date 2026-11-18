@@ -37,6 +37,9 @@ recorded decisions; read history only when prior work is relevant.
   `## Deviations from plan`; do not silently broaden scope.
 - Add focused tests for behavior changes. Run build/tests and `terraform
   fmt`/`validate` when infrastructure changes.
+- Do not add Python test suites for infrastructure or deployment behavior.
+  Keep verification in Terraform-native tests and `fmt`/`validate`, Node
+  workflow tests, and .NET tests as applicable.
 - Every journal capability ships on both the API and MCP. Plans and PRs name
   the API endpoint and MCP tool, or cite an explicit, justified, tested
   exception.

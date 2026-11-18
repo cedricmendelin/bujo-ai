@@ -6,10 +6,11 @@ The [deployment guide](../docs/deployment.md) describes automatic plan/apply for
 merged infrastructure changes, on-demand reconciliation, and the separate
 application migration and promotion gate. Deployment workflows use OIDC only.
 
-The optional Foundry account, project, and model deployments are disabled by
-default. Model/region/SKU choices and owner-only enablement requirements are
+The Foundry account, project, and model deployments are enabled in
+`prod.tfvars`; the Terraform variable default remains disabled. The approved
+model/region/SKU settings and owner-managed runtime identity grant are
 documented in [Optional Microsoft Foundry model provider](../docs/infrastructure.md#optional-microsoft-foundry-model-provider).
-No model inference or journal access is enabled by provisioning these resources.
+Provisioning these resources does not enable model inference or journal access.
 
 ## PWA BFF client
 

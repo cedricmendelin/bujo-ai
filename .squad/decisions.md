@@ -446,14 +446,15 @@
 
 ### 2026-11-18: Optional Foundry infrastructure boundary
 
-- The Foundry model resources remain disabled until the owner confirms the
-  model, region, deployment SKU, pricing and privacy terms.
+- At the time of this decision, Foundry model resources were disabled pending
+  owner confirmation of the model, region, deployment SKU, pricing and privacy
+  terms. The later approval below supersedes that pending status.
 - The runtime Container App identity is the intended model-inference principal.
-  The GitHub OIDC deployment identity remains resource-group Contributor and
-  does not receive model access or role-assignment administration rights.
-- Because Terraform's deployment identity cannot write role assignments, the
-  owner must grant `Cognitive Services OpenAI User` to the runtime identity at
-  the Foundry account scope before inference. Provisioning does not authorize
+  The intended GitHub OIDC deployment scope remains resource-group Contributor;
+  Contributor does not provide role-assignment administration rights or model
+  access, even if assigned at subscription scope.
+- The owner must grant `Cognitive Services OpenAI User` to the runtime identity
+  at the Foundry account scope before inference. Provisioning does not authorize
   sending journal content and does not enable the application adapter.
 - Data Zone Standard is EU-zone processing, not a Switzerland residency
   promise. No under-$50 monthly Foundry cost claim is made; the budget alerts
@@ -482,3 +483,27 @@
   clarifies the prior proposal in the issue #124 Copilot conversation.
 - Multiple weekly lists may therefore use the same ISO year/week key. Do not
   add a domain or database uniqueness constraint for the week key.
+
+### 2026-11-18: No Python infrastructure or deployment test suites
+
+- The owner directed the team to remove all Python tests for infrastructure and
+  deployment behavior and not add such suites again.
+- Keep appropriate Terraform-native tests and `fmt`/`validate`, Node workflow
+  tests, and .NET tests. Python implementation and CI reporting scripts are not
+  covered by this prohibition.
+
+### 2026-11-18: Foundry model provisioning approved
+
+- This supersedes the pending-approval status in the earlier Optional Foundry
+  infrastructure boundary decision.
+- The owner approved enabling production Foundry resources in `infra/prod.tfvars`
+  with the configured Switzerland North models and Data Zone Standard SKU at
+  capacity 1: chat `gpt-6.1-terra` / `2026-10-26`, decision `gpt-5-mini` /
+  `2025-08-07`, and embedding `text-embedding-3-small` / `1`.
+- The owner accepted the documented data-privacy and abuse-monitoring terms for
+  provisioning and approved the documented ~$9.10 usage illustration as a
+  planning assumption. It is not a cost cap; the $50 budget only alerts.
+- The owner will manually grant `Cognitive Services OpenAI User` to the runtime
+  Container App identity at the Foundry account scope before inference.
+  Terraform does not manage that role assignment; provisioning does not enable
+  the application adapter or authorize sending journal data.

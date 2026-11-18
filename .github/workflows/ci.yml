@@ -23,9 +23,6 @@ jobs:
       - name: Test workflow decision scripts
         run: node --test .github/scripts/*.test.*
 
-      - name: Test deployment migration gate
-        run: python3 -m unittest discover -s tests/deployment -p 'test_*.py'
-
       - name: Detect project types
         id: detect
         shell: bash
@@ -134,10 +131,6 @@ jobs:
           terraform fmt -check -recursive
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate
-
-      - name: Test bootstrap plan safety
-        if: steps.detect.outputs.terraform == 'true'
-        run: python3 -m unittest discover -s tests/infrastructure -p 'test_*.py'
 
       - name: Nothing to build yet
         if: steps.detect.outputs.dotnet != 'true' && steps.detect.outputs.terraform != 'true'
