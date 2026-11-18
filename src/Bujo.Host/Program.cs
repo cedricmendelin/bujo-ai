@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol.AspNetCore;
+using Bujo.Host.Mcp;
 
 var shouldMigrate = args.Contains("--migrate", StringComparer.Ordinal);
 var shouldMigrateOnly = args.Contains("--migrate-only", StringComparer.Ordinal);
@@ -60,14 +62,16 @@ builder.Services
     });
 
 var approvedPrincipal = new ApprovedPrincipalRequirement(builder.Configuration);
+var approvedPrincipalPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+    .RequireAuthenticatedUser()
+    .AddRequirements(approvedPrincipal)
+    .Build();
 builder.Services.AddSingleton(approvedPrincipal);
 builder.Services.AddSingleton<IAuthorizationHandler, ApprovedPrincipalHandler>();
 builder.Services.AddAuthorization(options =>
 {
-    options.FallbackPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
-        .RequireAuthenticatedUser()
-        .AddRequirements(approvedPrincipal)
-        .Build();
+    options.FallbackPolicy = approvedPrincipalPolicy;
+    options.AddPolicy("ApprovedPrincipal", approvedPrincipalPolicy);
 });
 builder.Services.AddBff(builder.Configuration, tenantId);
 builder.Services.Configure<AuthenticationOptions>(options =>
@@ -105,6 +109,11 @@ var connectionString = builder.Configuration.GetConnectionString("journal")
     ?? throw new InvalidOperationException("ConnectionStrings:journal must be configured.");
 builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
+builder.Services.AddMcpServer()
+    .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
+    .WithTools<JournalMcpTools>()
+    .WithPrompts<JournalMcpPrompts>()
+    .WithResources<JournalMcpResources>();
 builder.Services.AddHealthChecks()
     .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
     .AddCheck<JournalDatabaseHealthCheck>("journal-database", tags: ["ready"]);
@@ -133,6 +142,7 @@ app.Use(async (context, next) =>
         context.Response.Headers.CacheControl = "no-store, private";
     await next();
 });
+app.UseMcpRequestSecurity();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
@@ -192,6 +202,8 @@ if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:Ver
 }
 
 app.MapJournalEndpoints();
+app.MapProtectedResourceMetadata();
+app.MapMcp("/mcp").RequireAuthorization("ApprovedPrincipal");
 
 app.Run();
 

@@ -227,7 +227,14 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
 
 public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHealthCheck>
 {
+    private readonly InMemoryJournalRepository _sharedRepository =
+        InMemoryJournalRepository.CreateWithFutureLog(Guid.Parse("00000000-0000-0000-0000-000000000101"));
+
     public bool FailQueries { get; set; }
+
+    public bool ShareInMemoryRepository { get; set; }
+
+    public DateTimeOffset? FixedUtcNow { get; set; }
 
     private static readonly string TenantId = "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7";
     private static readonly string AllowedObjectId = "2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72";
@@ -237,6 +244,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
         Environment.SetEnvironmentVariable("Auth__TenantId", TenantId);
         Environment.SetEnvironmentVariable("Auth__Audience", "journal-api");
         Environment.SetEnvironmentVariable("Auth__AllowedPrincipals", $"{TenantId}:{AllowedObjectId}");
+        Environment.SetEnvironmentVariable("Mcp__PublicBaseUrl", "http://localhost");
+        Environment.SetEnvironmentVariable("Mcp__AllowedOrigins__0", "https://approved.example");
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__journal",
             "Server=localhost;Database=journal;Integrated Security=true;TrustServerCertificate=true");
@@ -262,13 +271,28 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
                 {
                     services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
                 }
+                else if (ShareInMemoryRepository)
+                {
+                    services.AddSingleton<IJournalRepository>(_sharedRepository);
+                }
                 else
                 {
                     services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
                         Guid.Parse("00000000-0000-0000-0000-000000000101")));
                 }
+
+            if (FixedUtcNow is { } fixedUtcNow)
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(new FixedTimeProvider(fixedUtcNow));
+            }
         });
     }
+}
+
+internal sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+{
+    public override DateTimeOffset GetUtcNow() => utcNow;
 }
 
 internal sealed class FailingReadJournalRepository : IJournalRepository

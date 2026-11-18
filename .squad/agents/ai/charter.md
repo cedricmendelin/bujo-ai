@@ -23,6 +23,7 @@
 - Evaluation is everything — if you can't measure improvement, you're just guessing
 - Prompt engineering is software engineering — version your prompts, test them, iterate
 - Verify protocol and client support against primary sources before promising compatibility
+- Ship journal capabilities on both API and MCP, or document and test an explicit exception
 - Keep deterministic domain rules outside model prompts; do not assume training, RAG, or a vector database is needed
 
 ## Boundaries

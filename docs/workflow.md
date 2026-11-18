@@ -24,6 +24,17 @@ cloud session success or local ready PR
 
 See [README → How we work](../README.md#how-we-work) for the day-to-day flow.
 
+## Journal API and MCP parity
+
+Every journal capability ships through both the API and MCP, using the same
+application services and domain rules. Plans and PRs must identify the API
+endpoint and MCP tool for each capability. If one surface is intentionally
+omitted, record the reason and test the exception; for example, list closure
+and reopening remain API-only until the concrete-proposal approval flow is
+available. Closure requires unresolved occurrences to be resolved first; it
+does not disposition them. The MCP operation-to-API parity test fails when an
+API endpoint is added without a tool mapping or explicit exception.
+
 ## Plan and approval
 
 `/plan`, `/plan revise <feedback>`, and `/plan route <member>` remain available.
