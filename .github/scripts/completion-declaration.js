@@ -65,6 +65,31 @@ function removeNonProse(body) {
   return stripInlineCode(withoutComments);
 }
 
+function remainingWork(body) {
+  const lines = stripFencedCode(body)
+    .split('<!-- START COPILOT CODING AGENT SUFFIX -->', 1)[0]
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+    .split('\n');
+  const sections = [];
+  for (let index = 0; index < lines.length; index++) {
+    const heading = lines[index].match(/^ {0,3}(#{1,6})[ \t]+Remaining work:?[ \t]*$/i);
+    const list = lines[index].match(/^( {0,3})[-*+][ \t]+(?:\*\*Remaining work:\*\*|\*\*Remaining work\*\*:|Remaining work:)[ \t]*(.*)$/i);
+    const inline = lines[index].match(/^ {0,3}Remaining work:[ \t]*(.*)$/i);
+    if (!heading && !list && !inline) continue;
+
+    let end = index + 1;
+    for (; end < lines.length; end++) {
+      const line = lines[end];
+      if (/^ {0,3}Completion[ \t]*:/i.test(line)) break;
+      const nextHeading = line.match(/^ {0,3}(#{1,6})[ \t]+/);
+      if (nextHeading && (!heading || nextHeading[1].length <= heading[1].length)) break;
+      if (list && line.trim() && line.search(/\S/) <= list[1].length) break;
+    }
+    sections.push([list?.[2] ?? inline?.[1] ?? '', ...lines.slice(index + 1, end)].join('\n').trim());
+  }
+  return sections.length === 1 ? sections[0] : '';
+}
+
 function hasPartialDeclaration(body) {
   if (typeof body !== 'string') return false;
   const declarations = [...removeNonProse(body).matchAll(/^\s*Completion\s*:\s*(full|partial)\s*$/gim)];
@@ -145,12 +170,11 @@ function evaluateCompletion(body, options = {}) {
 
     const completion = declarations[0];
     const hasClosingReference = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:https?:\/\/github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+\/issues\/\d+|[a-z0-9_.-]+\/[a-z0-9_.-]+#\d+|#\d+)\b/i.test(prose);
-    const hasRemainingWork = /^\s*#{0,6}\s*remaining\s+work\b/im.test(deliveryProse);
     const legacyPartialWording = /\b(?:partial(?:ly)?|remaining\s+(?:work|implementation)|follow[\s-]?up|not\s+implemented)\b/i.test(deliveryProse);
 
     if (completion === 'partial') {
       const findings = [];
-      if (!hasRemainingWork) {
+      if (!remainingWork(body)) {
         findings.push('`Completion: partial` requires a "Remaining work" section or line stating the unfinished work and its dependency.');
       }
       if (hasClosingReference) {
@@ -211,16 +235,7 @@ function partialHandoff(body, repository) {
   if (!refs.length || refs.some(match => match[1] && match[1].toLowerCase() !== repository.toLowerCase())) return null;
   const issues = [...new Set(refs.map(match => Number(match[2])))];
   if (issues.length !== 1 || !Number.isSafeInteger(issues[0])) return null;
-  const lines = stripFencedCode(body)
-    .split('<!-- START COPILOT CODING AGENT SUFFIX -->')[0]
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
-    .split('\n');
-  const start = lines.findIndex(line => /^#{1,6}\s+Remaining work\s*$/i.test(line));
-  if (start < 0) return null;
-  const level = lines[start].match(/^#+/)[0].length;
-  let end = start + 1;
-  while (end < lines.length && !new RegExp(`^#{1,${level}}\\s`).test(lines[end])) end++;
-  const remaining = lines.slice(start + 1, end).join('\n').trim();
+  const remaining = remainingWork(body);
   return remaining ? { issue: issues[0], remaining } : null;
 }
 

@@ -68,7 +68,13 @@ Copilot assignment if necessary, and reassigns the same approved scope. A rerun
 of that Actions run cannot create a duplicate session. If reassignment fails,
 inspect the admitted run before deliberately starting a new continuation.
 Dependency evidence is scope data, not permission to change the plan. Changed
-scope requires a new numbered plan and approval. No secrets belong in evidence.
+scope requires a new numbered plan and approval. When the plan hands the
+next milestone to a different role, publish and approve the routed plan
+(for example, `/plan route builder`). If Copilot is still assigned from the
+previous milestone, reapproval alone does not start a session. Dispatch
+continuation after the previous PR and dependency gates clear. The controller
+uses the latest approved plan's owner, not a role named in PR prose.
+No secrets belong in evidence.
 
 To publish and start local work:
 
@@ -276,7 +282,8 @@ blocked readiness, even if no specialist check has failed. They consume no
 code-repair budget. Correcting the description triggers re-evaluation.
 
 Use one unambiguous same-repository `Refs #N`, `Relates to #N`, or
-`Part of #N` and a nonempty `## Remaining work` section. Before requesting
+`Part of #N` and a nonempty `## Remaining work` section or `Remaining work:`
+entry (including a bold list label with nested bullets). Before requesting
 merge readiness, the delivery owner updates the single `## Acceptance tracking`
 checklist on that open issue. Convert or consolidate any earlier checklist
 rather than keeping two competing lists. For example:

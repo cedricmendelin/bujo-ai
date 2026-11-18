@@ -87,7 +87,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            const { approvalPath, isEligiblePermission, latestPlan } = require('./.github/scripts/plan-approval');
+            const { COPILOT_ASSIGNEE, approvalPath, isCopilotAssignee, isEligiblePermission, latestPlan } = require('./.github/scripts/plan-approval');
             const { owner, repo } = context.repo;
             const continuation = context.eventName === 'workflow_dispatch';
             const number = Number(continuation ? context.payload.inputs.issue_number : context.payload.issue.number);
@@ -115,7 +115,7 @@ jobs:
             }
             const path = approvalPath({
               labels: issue.labels.map(label => label.name),
-              assignees: issue.assignees.map(assignee => assignee.login),
+              assignees: issue.assignees,
             });
             if (path.action === 'local') return core.info('Local handoff selected; no cloud assignment made.');
             if (path.action === 'already-assigned' && !continuation) return core.info('Copilot is already assigned; duplicate label delivery is a no-op.');
@@ -160,9 +160,9 @@ jobs:
               if (liveIssue.labels.some(label => label.name === 'needs:human')) {
                 await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
               }
-              if (liveIssue.assignees.some(assignee => assignee.login === 'copilot-swe-agent[bot]')) {
+              if (liveIssue.assignees.some(isCopilotAssignee)) {
                 await agent.rest.issues.removeAssignees({
-                  owner, repo, issue_number: number, assignees: ['copilot-swe-agent[bot]'],
+                  owner, repo, issue_number: number, assignees: [COPILOT_ASSIGNEE],
                 });
               }
             }
@@ -180,7 +180,7 @@ jobs:
             ].join('\n');
             await agent.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
               owner, repo, issue_number: number,
-              assignees: ['copilot-swe-agent[bot]'],
+              assignees: [COPILOT_ASSIGNEE],
               agent_assignment: {
                 target_repo: `${owner}/${repo}`,
                 base_branch: context.payload.repository.default_branch,
