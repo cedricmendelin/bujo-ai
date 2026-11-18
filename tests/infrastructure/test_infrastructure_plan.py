@@ -139,6 +139,15 @@ class InfrastructurePlanTests(unittest.TestCase):
         self.assertEqual(app["after"]["id"], EXPECTED_APP_ID)
         self.assertEqual(plan["output_changes"]["container_app_id"]["after"], EXPECTED_APP_ID)
 
+    def test_log_analytics_plans_allow_public_ingestion_and_queries(self):
+        for run in ("baseline_full_plan", "baseline_infrastructure_plan"):
+            workspace = resource(
+                self.plan(run), "module.log_analytics.azurerm_log_analytics_workspace.this"
+            )["change"]["after"]
+            for setting in ("internet_ingestion_enabled", "internet_query_enabled"):
+                with self.subTest(run=run, setting=setting):
+                    self.assertIs(workspace[setting], True)
+
     def test_sql_database_body_update_is_allowed_but_replacement_is_rejected(self):
         plan = self.plan("baseline_full_plan")
         database = resource(plan, "azapi_resource.sql_database")

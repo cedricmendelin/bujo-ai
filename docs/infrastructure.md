@@ -45,7 +45,7 @@ Application health may be incomplete while the owner configures manual setup.
 | --- | --- |
 | User-assigned managed identity | `Azure/avm-res-managedidentity-userassignedidentity` |
 | Migration identity | `Azure/avm-res-managedidentity-userassignedidentity`, separate from runtime identity |
-| Log Analytics workspace | `Azure/avm-res-operationalinsights-workspace`, PerGB2018, 0.1 GB/day cap, 30-day retention |
+| Log Analytics workspace | `Azure/avm-res-operationalinsights-workspace`, PerGB2018, 0.1 GB/day cap, 30-day retention, public network access for ingestion and queries |
 | Container Apps environment | `Azure/avm-res-app-managedenvironment`, default Consumption profile |
 | Container app | `Azure/avm-res-app-containerapp`, public ingress, scale to zero, UAMI attached |
 | API registration | AzureAD provider, single-tenant delegated `journal.access` scope, assignment-required service principal |
@@ -59,6 +59,11 @@ Application health may be incomplete while the owner configures manual setup.
 All Terraform modules use exact versions in their `source` blocks. Provider
 requirements are constrained in `infra/versions.tf` and selected provider
 versions are recorded in `infra/.terraform.lock.hcl`.
+
+Terraform enables both Log Analytics public network endpoints without a network
+perimeter restriction. This does not grant anonymous access or change workspace
+authentication and permissions. Change these settings in Terraform, not in the
+portal, to keep them across applies.
 
 ## Non-AVM justification
 
