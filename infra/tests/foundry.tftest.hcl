@@ -122,4 +122,36 @@ run "foundry_enabled" {
     ])
     error_message = "The proposed deployments must use low-capacity Data Zone Standard pay-per-token SKUs."
   }
+
+  assert {
+    condition     = length(regexall("(?mi)^output\\s+\"[^\"]*(foundry|cognitive|model)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
+    error_message = "Foundry model endpoints, names, and credentials must not be added as Terraform outputs."
+  }
+}
+
+run "foundry_empty_deployments_rejected" {
+  command = plan
+
+  variables {
+    foundry_deployments = {}
+  }
+
+  expect_failures = [var.foundry_deployments]
+}
+
+run "foundry_invalid_sku_rejected" {
+  command = plan
+
+  variables {
+    foundry_deployments = {
+      invalid = {
+        model    = "model"
+        version  = "1"
+        sku      = "ProvisionedManaged"
+        capacity = 1
+      }
+    }
+  }
+
+  expect_failures = [var.foundry_deployments]
 }

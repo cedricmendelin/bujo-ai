@@ -126,6 +126,90 @@ backup, create a new database, restore the data, switch the application
 connection, verify operation, then remove the old database. Do not apply a
 replacement before that approval and migration plan.
 
+## Optional Microsoft Foundry model provider
+
+`infra/foundry.tf` defines one Azure AI Services account (`AIServices`), one
+Foundry project, and the `chat`, `decision`, and `embedding` model deployments.
+The deployment map is flat and can only use pay-per-token SKUs:
+`DataZoneStandard`, `GlobalStandard`, or `Standard`. The production setting is
+`foundry_enabled = false`; while disabled, Terraform creates none of these
+resources. The model names below are proposed defaults, not an owner-approved
+authorization to provision or send data.
+
+The following candidates were checked on 2026-11-18 against Microsoft's model
+catalog, regional availability and public pricing pages. Availability and prices
+change; recheck the selected model, version, region, SKU and Azure calculator
+estimate before enabling.
+
+| Purpose | Proposed model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
+| --- | --- | --- | ---: | --- | --- |
+| Chat | `gpt-6.1-terra` / `2026-10-26` | GA; catalog lists Data Zone Standard in Switzerland North | 1 | Input $1.10; output $5.50 | `GlobalStandard`, then `Standard`; owner approval required |
+| Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; confirm exact region/SKU in target subscription | 1 | Input $0.28 (cached $0.03); output $2.20 | `GlobalStandard`, then `Standard`; owner approval required |
+| Embedding | `text-embedding-3-small` / `1` | Azure model; Data Zone Standard listed; confirm exact region/SKU in target subscription | 1 | Input $0.022 | `GlobalStandard`, then `Standard`; owner approval required |
+
+The public Azure OpenAI pricing page supplies the model prices above. For an
+illustrative, **not capped**, usage of 1M uncached input and 1M output tokens
+for each text deployment plus 1M embedding input tokens, the estimate is about
+$9.10. This is not a monthly worst-case: standard deployments bill by token,
+capacity is a throughput/quota setting rather than a spend limit, and the
+existing $50 resource-group budget only alerts. No finite monthly maximum is
+enforced. Do not claim that Foundry fits the existing under-$50 target until
+the owner approves a usage assumption and a separate cost-control approach.
+
+Data Zone Standard processes prompts and responses within the Microsoft-defined
+EU data zone. The Foundry resource can be located in Switzerland North, but
+processing can take place elsewhere in the EU; this is **not Swiss data
+residency**. If a model requires `GlobalStandard`, processing can occur in any
+geography where that model is deployed. The official catalog and regional
+availability table must be checked again before enabling, because
+resource-region support and model SKU availability can change independently.
+
+For Azure-sold models, Microsoft describes the models as stateless and says
+prompts and completions are not used to train the base models without
+permission. Abuse monitoring can select samples for additional review,
+including human review, under Microsoft's terms. Do not represent this as a
+zero-retention or no-review guarantee; review the current [data privacy](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy)
+and [abuse monitoring](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/abuse-monitoring)
+terms before any sensitive content is sent.
+
+The account disables local/key authentication and keeps public network access
+enabled, consistent with the existing no-private-networking design. The
+Container App's runtime user-assigned identity is the only intended inference
+principal. Terraform does not grant Azure RBAC roles: the GitHub OIDC
+deployment identity is only resource-group Contributor and cannot create role
+assignments. Before use, the owner must grant **Cognitive Services OpenAI User**
+to the runtime identity at the Foundry account scope. Do not elevate the GitHub
+deployment identity or grant it model-inference access. Account creation alone
+does not enable the application adapter, inference, or authorization to send
+journal content.
+
+### Owner approval and teardown
+
+## 🙋 Needs human
+
+@cedricmendelin: before setting `foundry_enabled = true`, confirm whether
+`gpt-6-tera` meant `gpt-6.1-terra`, the decision and embedding model choices,
+the exact region and SKU for all three models, current pricing and accepted
+abuse-monitoring terms, and a monthly usage/cost assumption. Also confirm the
+owner-managed runtime identity role grant described above. The next action is a
+separate owner-approved `infra/prod.tfvars` change enabling Foundry after those
+checks; this infrastructure change does not enable chat.
+
+To tear down, set `foundry_enabled = false` and apply; Terraform removes the
+deployments, project and account. Remove the runtime identity's account-scoped
+inference role grant separately. If Azure retains the deleted Cognitive
+Services account as soft-deleted, use the Azure recovery/purge process only
+after confirming no recovery or retention requirement remains.
+
+Sources checked 2026-11-18:
+
+- [GPT-6.1 Terra model catalog](https://ai.azure.com/catalog/models/gpt-6.1-terra)
+- [GPT-5 mini model catalog](https://ai.azure.com/catalog/models/gpt-5-mini)
+- [Text embedding 3 small model catalog](https://ai.azure.com/catalog/models/text-embedding-3-small)
+- [Foundry Models region availability](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability)
+- [Azure OpenAI public pricing](https://azure.microsoft.com/en-us/pricing/details/azure-openai/)
+- [Data Zone Standard deployment type](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/deployment-types)
+
 ## Manual prerequisites (#24)
 
 The owner completes these steps once before using the deployment workflow.

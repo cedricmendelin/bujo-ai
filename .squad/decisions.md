@@ -443,3 +443,18 @@
   the head, base, substantive description, and selected roles. This covers
   the omitted review only; it does not bind or approve issue plans, bypass
   branch protections, or revive the previous approval-provenance protocol.
+
+### 2026-11-18: Optional Foundry infrastructure boundary
+
+- The Foundry model resources remain disabled until the owner confirms the
+  model, region, deployment SKU, pricing and privacy terms.
+- The runtime Container App identity is the intended model-inference principal.
+  The GitHub OIDC deployment identity remains resource-group Contributor and
+  does not receive model access or role-assignment administration rights.
+- Because Terraform's deployment identity cannot write role assignments, the
+  owner must grant `Cognitive Services OpenAI User` to the runtime identity at
+  the Foundry account scope before inference. Provisioning does not authorize
+  sending journal content and does not enable the application adapter.
+- Data Zone Standard is EU-zone processing, not a Switzerland residency
+  promise. No under-$50 monthly Foundry cost claim is made; the budget alerts
+  but does not cap pay-per-token usage.
