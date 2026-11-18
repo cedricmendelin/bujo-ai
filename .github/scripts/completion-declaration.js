@@ -65,6 +65,61 @@ function removeNonProse(body) {
   return stripInlineCode(withoutComments);
 }
 
+function hasPartialDeclaration(body) {
+  if (typeof body !== 'string') return false;
+  const declarations = [...removeNonProse(body).matchAll(/^\s*Completion\s*:\s*(full|partial)\s*$/gim)];
+  return declarations.length === 1 && declarations[0][1].toLowerCase() === 'partial';
+}
+
+function acceptanceTracking(body) {
+  const result = { ok: false, findings: [], criteria: [], incomplete: [] };
+  if (typeof body !== 'string') {
+    result.findings.push('The issue body is missing or is not text.');
+    return result;
+  }
+
+  const lines = removeNonProse(body).split('\n');
+  const headings = [];
+  for (let index = 0; index < lines.length; index++) {
+    if (/^##[ \t]+Acceptance tracking[ \t]*$/i.test(lines[index])) headings.push(index);
+  }
+  if (headings.length !== 1) {
+    result.findings.push('The issue must contain exactly one `## Acceptance tracking` section.');
+    if (!headings.length) return result;
+  }
+
+  for (const heading of headings) {
+    let end = heading + 1;
+    while (end < lines.length && !/^#{1,6}[ \t]+/.test(lines[end])) end++;
+    for (const line of lines.slice(heading + 1, end)) {
+      const match = line.match(/^[ \t]*-[ \t]+\[([ xX])\][ \t]*(.*?)[ \t]*$/);
+      if (!match) continue;
+      const checked = match[1].toLowerCase() === 'x';
+      const text = match[2].trim();
+      const criterion = { checked, text };
+      result.criteria.push(criterion);
+      if (!checked) result.incomplete.push(criterion);
+
+      if (!text) {
+        result.findings.push('Each acceptance-tracking checkbox must name a criterion.');
+      } else if (checked && !/\bevidence\s*:\s*\S/i.test(text)) {
+        result.findings.push('Each checked acceptance criterion must include nonempty `evidence:`.');
+      } else if (!checked) {
+        const hasStatus = /(?:^|[;—–])\s*(?:open(?=\s*(?:;|—|–|$))|blocked(?=\s*(?:on\b|;|—|–|$)))/i.test(text);
+        const owner = text.match(/\bowner\s*:\s*([^;—–]*)(?:[;—–]|$)/i);
+        const next = text.match(/\bnext\s*:\s*(.*)$/i);
+        if (!hasStatus || !owner?.[1].trim() || !next?.[1].trim() || /^[;—–\s]*$/.test(next[1])) {
+          result.findings.push('Each unchecked criterion must state `open` or `blocked`, a nonempty `owner:`, and a concrete `next:` action.');
+        }
+      }
+    }
+  }
+
+  if (!result.criteria.length) result.findings.push('The acceptance-tracking section must contain at least one checkbox criterion.');
+  result.ok = result.findings.length === 0;
+  return result;
+}
+
 function evaluateCompletion(body, options = {}) {
   try {
     if (typeof body !== 'string') {
@@ -151,20 +206,25 @@ function repairGeneratedClosingReferences(body, options) {
 function partialHandoff(body, repository) {
   if (typeof body !== 'string') return null;
   const prose = removeNonProse(body);
-  if (!/^\s*Completion:\s*partial\s*$/im.test(prose)) return null;
-  const refs = [...prose.matchAll(/\b(?:Refs|Relates to|Part of)\s+(?:([a-z0-9_.-]+\/[a-z0-9_.-]+))?#([1-9]\d*)\b/gi)]
-    .filter(match => !match[1] || match[1].toLowerCase() === repository.toLowerCase());
+  if (!hasPartialDeclaration(body)) return null;
+  const refs = [...prose.matchAll(/\b(?:Refs|Relates to|Part of)\s+(?:([a-z0-9_.-]+\/[a-z0-9_.-]+))?#([1-9]\d*)\b/gi)];
+  if (!refs.length || refs.some(match => match[1] && match[1].toLowerCase() !== repository.toLowerCase())) return null;
   const issues = [...new Set(refs.map(match => Number(match[2])))];
   if (issues.length !== 1 || !Number.isSafeInteger(issues[0])) return null;
-  const lines = body.split(/\r?\n/);
+  const lines = stripFencedCode(body)
+    .split('<!-- START COPILOT CODING AGENT SUFFIX -->')[0]
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+    .split('\n');
   const start = lines.findIndex(line => /^#{1,6}\s+Remaining work\s*$/i.test(line));
   if (start < 0) return null;
   const level = lines[start].match(/^#+/)[0].length;
   let end = start + 1;
-  while (end < lines.length && !new RegExp(`^#{1,${level}}\\s`).test(lines[end])
-    && !lines[end].includes('<!-- START COPILOT CODING AGENT SUFFIX -->')) end++;
+  while (end < lines.length && !new RegExp(`^#{1,${level}}\\s`).test(lines[end])) end++;
   const remaining = lines.slice(start + 1, end).join('\n').trim();
   return remaining ? { issue: issues[0], remaining } : null;
 }
 
-module.exports = { evaluateCompletion, repairGeneratedClosingReferences, partialHandoff, removeNonProse, LEGACY_PR_CUTOFF };
+module.exports = {
+  acceptanceTracking, evaluateCompletion, hasPartialDeclaration, repairGeneratedClosingReferences,
+  partialHandoff, removeNonProse, LEGACY_PR_CUTOFF,
+};

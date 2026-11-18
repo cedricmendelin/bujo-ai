@@ -93,6 +93,18 @@ test('controller preserves reviewer bypass boundaries, human blocks, CI, and no 
   assert.doesNotMatch(lifecycle, /workflow_run[\s\S]{0,300}schedule:/);
 });
 
+test('completed issue closure warning uses trusted code and issue-only write permission', () => {
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  assert.match(lifecycle, /issues:\r?\n\s+types:\s+\[closed\]/);
+  const closure = lifecycle.split('  completed-closure-guard:')[1].split('  lifecycle:')[0];
+  assert.match(closure, /github\.event\.issue\.state_reason == 'completed'/);
+  assert.match(closure, /github\.event\.repository\.default_branch/);
+  assert.match(closure, /contents: read[\s\S]*issues: write/);
+  assert.match(closure, /actions\/checkout@[a-f0-9]{40}/);
+  assert.match(closure, /actions\/github-script@[a-f0-9]{40}/);
+  assert.doesNotMatch(closure, /issues\.update|reopenIssue|pulls\.update|enablePullRequestAutoMerge/i);
+});
+
 test('review readers can inspect unmerged content only in this repository', () => {
   const shared = read('.github/workflows/shared/squad-review.md');
   assert.match(shared, /min-integrity: none/);

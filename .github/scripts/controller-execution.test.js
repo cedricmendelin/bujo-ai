@@ -30,6 +30,7 @@ function source(workflow, step) {
 const steps = {
   evaluate: ['squad-pr-lifecycle.yml', 'Evaluate readiness and bridge review findings'],
   route: ['squad-pr-lifecycle.yml', 'Route the event to pull request numbers (read only)'],
+  closure: ['squad-pr-lifecycle.yml', 'Warn when a completed issue retains unchecked criteria'],
   plan: ['squad-plan-approved.yml', 'Remove approval when a newer plan is published'],
   assign: ['squad-plan-approved.yml', 'Assign Copilot once unless local handoff is selected'],
 };
@@ -72,7 +73,15 @@ function fixture() {
       required_status_checks: [{ context: 'ci' }, { context: 'Squad Merge Readiness' }],
     } }],
     comments: [], reviews: [], threads: [], timeline: [],
-    permission: 'write', issue: { number: 81, state: 'open', labels: [], assignees: [] },
+    permission: 'write', issue: {
+      number: 11, state: 'open', state_reason: null, labels: [], assignees: [],
+      body: [
+        '## Acceptance tracking',
+        '',
+        '- [x] Local sign-in works — evidence: PR #125 and sign-in test.',
+        '- [ ] Browser installation — blocked on target selection; owner: Verifier; next: record evidence on agreed browsers.',
+      ].join('\n'),
+    },
     context: {
       repo: { owner, repo: 'bujo-ai' }, eventName: 'pull_request_target',
       payload: {
@@ -148,7 +157,8 @@ async function execute(state, step = 'evaluate') {
       listComments: endpoint('comments', () => ({ data: state.comments })),
       get: endpoint('issue', () => ({ data: state.issue })),
       createComment: endpoint('comment', args => {
-        state.comments.push({ ...args, id: 3000 + state.comments.length, user: { login: owner }, created_at: stamp(30) });
+        state.comments.push({ ...args, id: 3000 + state.comments.length,
+          user: { login: state.commentLogin || owner }, created_at: stamp(30) });
         return { data: {} };
       }),
       addLabels: endpoint('addLabels', args => {
@@ -806,6 +816,94 @@ test('partial handoff never reopens a closed issue or publishes merge readiness'
   assert.equal(enables(result).length, 0);
 });
 
+test('partial tracking blocks local and review:none readiness unless one open issue has a durable unchecked checklist', async () => {
+  for (const labels of [['handoff:local'], ['review:none']]) {
+    const state = fixture();
+    state.pr.labels.push(...labels.map(name => ({ name })));
+    state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
+    for (const role of ROLES) {
+      state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${reviewInputKey(state.pr.body)}`;
+    }
+    const result = await execute(state);
+    assert.equal(enables(result).length, 1, `${labels.join(',')}: ${readinessFrom(state).output.summary}`);
+    assert.equal(result.calls.filter(call => call.name === 'issue').length, 2, 'initial and final live issue reads');
+  }
+
+  for (const bypassLabel of ['handoff:local', 'review:none']) {
+    for (const problem of ['missing reference', 'foreign reference', 'missing checklist', 'all complete']) {
+      const state = fixture();
+      state.pr.labels.push({ name: bypassLabel });
+      state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
+      if (problem === 'missing reference') state.pr.body = state.pr.body.replace('Refs #11', 'Notes only');
+      if (problem === 'foreign reference') state.pr.body += '\nPart of other/repo#12';
+      if (problem === 'missing checklist') state.issue.body = '## Acceptance criteria\n- Browser installation';
+      if (problem === 'all complete') state.issue.body = '## Acceptance tracking\n- [x] Browser installation — evidence: PR #125 and test.';
+      const result = await execute(state);
+      assert.notEqual(readinessFrom(state).conclusion, 'success', `${bypassLabel}: ${problem}`);
+      assert.equal(enables(result).length, 0, `${bypassLabel}: ${problem}`);
+      assert.equal(result.calls.some(call => call.name === 'dispatch'), false, `${bypassLabel}: ${problem}`);
+    }
+  }
+});
+
+test('final readiness rechecks partial issue state and withholds success when the checklist goes stale', async () => {
+  const state = fixture();
+  state.pr.labels.push({ name: 'review:none' });
+  state.pr.body = 'Completion: partial\nRelates to #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
+  let issueReads = 0;
+  state.before = name => {
+    if (name === 'issue' && ++issueReads === 2) {
+      state.issue.body = '## Acceptance tracking\n- [x] Browser installation — evidence: PR #125 and test.';
+    }
+  };
+  const result = await execute(state);
+  assert.notEqual(readinessFrom(state).conclusion, 'success');
+  assert.equal(enables(result).length, 0);
+  assert.match(readinessFrom(state).output.summary, /no longer open with a valid acceptance checklist/i);
+});
+
+test('completed issue closure warns idempotently only for explicitly completed state with unchecked criteria', async () => {
+  const prepare = reason => {
+    const state = fixture();
+    state.commentLogin = 'github-actions[bot]';
+    state.context.eventName = 'issues';
+    state.context.payload = {
+      action: 'closed',
+      issue: { number: 11, state: 'closed', state_reason: reason },
+      repository: { default_branch: 'main' },
+    };
+    state.issue.state = 'closed';
+    state.issue.state_reason = reason;
+    return state;
+  };
+
+  const ignored = prepare('not_planned');
+  assert.equal(commentsFrom(await execute(ignored, 'closure')).length, 0);
+  assert.equal(ignored.comments.length, 0);
+
+  const completed = prepare('completed');
+  const warning = await execute(completed, 'closure');
+  assert.equal(commentsFrom(warning).length, 1);
+  assert.match(commentsFrom(warning)[0], /closed as completed.*1 acceptance-tracking criterion/i);
+  assert.match(commentsFrom(warning)[0], /does not reopen the issue or authorize/i);
+  assert.equal(warning.calls.some(call => /update/i.test(call.name)), false);
+  const duplicate = await execute(completed, 'closure');
+  assert.equal(commentsFrom(duplicate).length, 0);
+
+  const allComplete = prepare('completed');
+  allComplete.issue.body = '## Acceptance tracking\n- [x] Browser installation — evidence: PR #125 and test.';
+  assert.equal(commentsFrom(await execute(allComplete, 'closure')).length, 0);
+
+  const stale = prepare('completed');
+  stale.issue.state_reason = 'not_planned';
+  assert.equal(commentsFrom(await execute(stale, 'closure')).length, 0);
+
+  const failedPersistence = prepare('completed');
+  failedPersistence.fail = 'comment';
+  await assert.rejects(execute(failedPersistence, 'closure'), /API failure: comment/);
+  assert.equal(failedPersistence.comments.length, 0);
+});
+
 test('metadata preflight stops on a changed description before writing and does not mutate paused PRs', async () => {
   for (const paused of [false, true]) {
     const state = fixture();
@@ -992,7 +1090,7 @@ test('production-source mutations expose missing review-input and completion-pre
   assert.equal(enables(await execute(state)).length, 0, 'final live input guard must still reject the stale result');
   const bypass = fixture();
   bypass.pr.body = 'Completion: partial\nFixes #11';
-  bypass.mutateSource = code => code.replace('if (!completion.ok) {', 'if (false) {');
+  bypass.mutateSource = code => code.replace('if (!completion.ok || referenceFinding) {', 'if (false) {');
   const result = await execute(bypass);
   assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4,
     'removing preflight incorrectly spends reviews; the preflight regression test asserts zero');
