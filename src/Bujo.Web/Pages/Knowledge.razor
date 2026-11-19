@@ -1,10 +1,13 @@
 @page "/knowledge"
 @using System.Text
 @using System.Text.Json
+@using Bujo.Infrastructure.Persistence
 @attribute [Authorize(Policy = "ApprovedUi")]
 @rendermode InteractiveServer
 @inherits JournalPage
 @inject KnowledgeApplicationService KnowledgeService
+@inject JournalBackupApplicationService BackupService
+@inject JournalBackupSerializer BackupSerializer
 
 <PageTitle>Knowledge · Bujo-AI</PageTitle>
 <div data-requires-circuit>
@@ -16,9 +19,9 @@
     @if (Ready)
     {
         <section aria-labelledby="knowledge-backup-heading">
-            <h2 id="knowledge-backup-heading">Knowledge backup</h2>
-            <button type="button" disabled="@Busy" @onclick="ExportBackupAsync">Export knowledge backup</button>
-            <label for="knowledge-backup-file">Restore from a knowledge backup</label>
+            <h2 id="knowledge-backup-heading">Journal backup</h2>
+            <button type="button" disabled="@Busy" @onclick="ExportBackupAsync">Export journal backup</button>
+            <label for="knowledge-backup-file">Restore the journal from a backup</label>
             <InputFile id="knowledge-backup-file" accept="application/json,.json"
                        disabled="@Busy" OnChange="RestoreBackupAsync" />
         </section>
@@ -102,8 +105,6 @@
     private string _indexMessage = string.Empty;
     private KnowledgeSearchResult[] _results = [];
     private KnowledgeTagInfo[] _tags = [];
-    private static readonly JsonSerializerOptions BackupJsonOptions = new(JsonSerializerDefaults.Web);
-
     private string IndexMessage => _indexMessage;
 
     protected override void Read()
@@ -163,16 +164,12 @@
         if (Busy || !Ready) return;
         try
         {
-            var backup = KnowledgeService.ExportBackup();
-            var json = JsonSerializer.Serialize(backup, BackupJsonOptions);
-            if (backup.Entries.Count > DomainLimits.KnowledgeBackupEntries ||
-                Encoding.UTF8.GetByteCount(json) > DomainLimits.KnowledgeBackupBytes)
-            {
-                SetError("The knowledge collection is too large to export as one backup.");
-                return;
-            }
-
-            await JS.InvokeVoidAsync("bujoPwa.downloadText", "bujo-knowledge-backup.json", json);
+            var json = BackupSerializer.Serialize(BackupService.ExportBackup());
+            await JS.InvokeVoidAsync("bujoPwa.downloadText", "bujo-journal-backup.json", json);
+        }
+        catch (JsonException)
+        {
+            SetError("The journal is too large to export as one backup.");
         }
         catch (JSDisconnectedException)
         {
@@ -182,20 +179,21 @@
 
     private async Task RestoreBackupAsync(InputFileChangeEventArgs args)
     {
-        KnowledgeBackupSnapshot? backup;
+        JournalBackupSnapshot? backup;
         try
         {
-            await using var stream = args.File.OpenReadStream(DomainLimits.KnowledgeBackupBytes);
-            backup = await JsonSerializer.DeserializeAsync<KnowledgeBackupSnapshot>(stream, BackupJsonOptions);
+            await using var stream = args.File.OpenReadStream(DomainLimits.JournalBackupBytes);
+            using var reader = new StreamReader(stream);
+            backup = BackupSerializer.Deserialize(await reader.ReadToEndAsync());
         }
         catch (JsonException)
         {
-            SetError("The knowledge backup is invalid.");
+            SetError("The journal backup is invalid.");
             return;
         }
         catch (IOException)
         {
-            SetError("The knowledge backup exceeds the supported size.");
+            SetError("The journal backup exceeds the supported size.");
             return;
         }
 
@@ -222,8 +220,8 @@
         }
 
         await SaveAsync(
-            () => KnowledgeService.RestoreBackup(backup),
-            _ => "Knowledge backup restored.");
+            () => BackupService.RestoreBackup(backup),
+            _ => "Journal backup restored.");
     }
 
     private static IReadOnlyList<string> ParseTags(string value) =>

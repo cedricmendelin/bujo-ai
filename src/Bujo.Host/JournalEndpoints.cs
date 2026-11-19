@@ -1,6 +1,8 @@
 using Bujo.Application;
 using Bujo.Domain;
+using Bujo.Infrastructure.Persistence;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Bujo.Host;
 
@@ -11,6 +13,45 @@ public static class JournalEndpoints
         var api = endpoints.MapGroup("/api");
 
         api.MapGet("/journal", (JournalApplicationService journal) => Results.Ok(journal.GetSnapshot()));
+        api.MapGet("/journal/export", (
+            JournalBackupApplicationService backupService,
+            JournalBackupSerializer serializer) =>
+        {
+            try
+            {
+                return Results.Content(serializer.Serialize(backupService.ExportBackup()), "application/json");
+            }
+            catch (JsonException)
+            {
+                return Results.StatusCode(StatusCodes.Status413RequestEntityTooLarge);
+            }
+        });
+        api.MapPost("/journal/restore", async (
+            HttpRequest request,
+            JournalBackupApplicationService backupService,
+            JournalBackupSerializer serializer,
+            CancellationToken cancellationToken) =>
+        {
+            if (request.ContentLength is > DomainLimits.JournalBackupBytes)
+            {
+                return Results.StatusCode(StatusCodes.Status413RequestEntityTooLarge);
+            }
+
+            try
+            {
+                using var reader = new StreamReader(request.Body);
+                var backup = serializer.Deserialize(await reader.ReadToEndAsync(cancellationToken));
+                return ToHttpResult(backupService.RestoreBackup(backup));
+            }
+            catch (JsonException)
+            {
+                return Results.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "InvalidInput",
+                    detail: "The journal backup is invalid.",
+                    extensions: new Dictionary<string, object?> { ["code"] = "InvalidInput" });
+            }
+        });
         api.MapGet("/daily-start", (
             string? timeZone,
             JournalApplicationService journal,

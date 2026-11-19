@@ -85,7 +85,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
 
         await page.GotoAsync("/knowledge");
         var downloadTask = page.WaitForDownloadAsync();
-        await Button(page, "Export knowledge backup").ClickAsync();
+        await Button(page, "Export journal backup").ClickAsync();
         var download = await downloadTask;
         await using var backupStream = await download.CreateReadStreamAsync();
         using var backupContent = new MemoryStream();
@@ -93,11 +93,11 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         page.Dialog += async (_, dialog) => await dialog.AcceptAsync();
         await page.Locator("#knowledge-backup-file").SetInputFilesAsync(new FilePayload
         {
-            Name = "knowledge.json",
+            Name = "journal.json",
             MimeType = "application/json",
             Buffer = backupContent.ToArray()
         });
-        await Expect(page.GetByText("Knowledge backup restored.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText("Journal backup restored.", new() { Exact = true })).ToBeVisibleAsync();
     }
 
     [Theory]

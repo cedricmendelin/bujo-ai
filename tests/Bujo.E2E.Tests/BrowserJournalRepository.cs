@@ -11,6 +11,8 @@ internal sealed class BrowserJournalRepository : IJournalRepository
 
     public void LoseNextMoveReply() => Interlocked.Exchange(ref _loseMoveReply, 1);
     public JournalSnapshot GetSnapshot() => _inner.GetSnapshot();
+    public DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot) =>
+        _inner.RestoreSnapshot(snapshot);
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) => _inner.CreateList(command);
     public DomainResult<CaptureResult> Capture(CaptureCommand command) => _inner.Capture(command);
     public DomainResult<MoveResult> Move(MoveCommand command)

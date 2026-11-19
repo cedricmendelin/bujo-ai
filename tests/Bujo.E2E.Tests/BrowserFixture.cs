@@ -114,6 +114,10 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton<IJournalRepository>(Journal);
             services.RemoveAll<IKnowledgeRepository>();
             services.AddSingleton<IKnowledgeRepository>(Knowledge);
+            services.RemoveAll<IJournalBackupRepository>();
+            services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
+                provider.GetRequiredService<IJournalRepository>(),
+                provider.GetRequiredService<IKnowledgeRepository>()));
             services.AddSingleton<TimeProvider>(new BrowserClock());
             services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
             {

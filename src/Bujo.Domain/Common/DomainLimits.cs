@@ -20,6 +20,7 @@ public static class DomainLimits
     public const int KnowledgeFallbackEntries = 500;
     public const int KnowledgeBackupEntries = 10_000;
     public const int KnowledgeBackupBytes = 25_000_000;
+    public const int JournalBackupBytes = 50_000_000;
 
     internal static string RequiredVerbatimText(string? value, int maxLength, string field)
     {

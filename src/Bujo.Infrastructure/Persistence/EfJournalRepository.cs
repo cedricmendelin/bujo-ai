@@ -15,6 +15,38 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
         return LoadSnapshot(context, tracked: false);
     }
 
+    public DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot)
+    {
+        try
+        {
+            InMemoryJournalRepository.ValidateSnapshot(snapshot);
+            using var strategyContext = contextFactory.CreateDbContext();
+            var strategy = strategyContext.Database.CreateExecutionStrategy();
+            return strategy.Execute(() =>
+            {
+                using var context = contextFactory.CreateDbContext();
+                using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
+                ReplaceJournal(context, snapshot);
+                context.SaveChanges();
+                transaction.Commit();
+                return DomainResult<JournalSnapshot>.Success(LoadSnapshot(context, tracked: false));
+            });
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or DomainException or InvalidOperationException)
+        {
+            return DomainResult<JournalSnapshot>.Failure(new DomainError(
+                DomainErrorCode.InvalidInput,
+                "The journal backup is invalid."));
+        }
+        catch (DbUpdateException)
+        {
+            return DomainResult<JournalSnapshot>.Failure(new DomainError(
+                DomainErrorCode.InvariantViolation,
+                "The journal backup could not be restored."));
+        }
+    }
+
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) =>
         Execute((_, repository) => repository.CreateList(command));
 
@@ -224,7 +256,7 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
             proposal.ApprovedDigest,
             proposal.AppliedAt);
 
-    private static JournalSnapshot LoadSnapshot(JournalDbContext context, bool tracked)
+    internal static JournalSnapshot LoadSnapshot(JournalDbContext context, bool tracked)
     {
         var lists = (tracked ? context.Lists : context.Lists.AsNoTracking())
             .OrderBy(item => item.Id)
@@ -293,7 +325,19 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
         return JournalSnapshot.Restore(items, listSnapshots, occurrences, history);
     }
 
-    private static void SaveRepository(JournalDbContext context, JournalSnapshot snapshot)
+    internal static void ReplaceJournal(JournalDbContext context, JournalSnapshot snapshot)
+    {
+        context.MoveOperations.ExecuteDelete();
+        context.ReviewProposals.ExecuteDelete();
+        context.JournalEvents.ExecuteDelete();
+        context.Occurrences.ExecuteDelete();
+        context.ItemTags.ExecuteDelete();
+        context.Items.ExecuteDelete();
+        context.Lists.ExecuteDelete();
+        SaveRepository(context, snapshot);
+    }
+
+    internal static void SaveRepository(JournalDbContext context, JournalSnapshot snapshot)
     {
         var lists = context.Lists.Local.ToDictionary(item => item.Id);
         foreach (var list in snapshot.Lists)

@@ -39,6 +39,28 @@ jobs:
         with:
           dotnet-version: 11.0.x
 
+      - name: Start SQL Server test container
+        if: steps.detect.outputs.dotnet == 'true'
+        run: |
+          credential="$(openssl rand -hex 24)A!"
+          docker run --detach --name bujo-sql-test \
+            --env ACCEPT_EULA=Y \
+            --env MSSQL_SA_PASSWORD="$credential" \
+            --publish 127.0.0.1::1433 \
+            mcr.microsoft.com/mssql/server:2022-latest
+          port="$(docker port bujo-sql-test 1433/tcp | sed 's/.*://')"
+          for attempt in {1..60}; do
+            if docker exec bujo-sql-test \
+              /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa \
+              -P "$credential" -C -Q 'SELECT 1' >/dev/null 2>&1; then
+              echo "BUJO_TEST_SQL_CONNECTION=Server=127.0.0.1,${port};Database=BujoKnowledgeTests;User Id=sa;$(printf 'Pass%s=%s' 'word' "$credential");TrustServerCertificate=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs bujo-sql-test
+          exit 1
+
       - name: Build and test
         if: steps.detect.outputs.dotnet == 'true'
         run: |

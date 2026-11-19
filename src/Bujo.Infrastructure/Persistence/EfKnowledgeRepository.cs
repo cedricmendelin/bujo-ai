@@ -452,7 +452,7 @@ public sealed class EfKnowledgeRepository(
                 .ToDictionary(entry => entry.Id);
     }
 
-    private static KnowledgeEntryEntity ToEntity(KnowledgeEntrySnapshot snapshot)
+    internal static KnowledgeEntryEntity ToEntity(KnowledgeEntrySnapshot snapshot)
     {
         var entity = new KnowledgeEntryEntity { Content = snapshot.Content };
         ApplySnapshot(entity, snapshot);
@@ -494,7 +494,7 @@ public sealed class EfKnowledgeRepository(
         }
     }
 
-    private static KnowledgeEntrySnapshot ToSnapshot(KnowledgeEntryEntity entity) =>
+    internal static KnowledgeEntrySnapshot ToSnapshot(KnowledgeEntryEntity entity) =>
         new(
             entity.Id,
             entity.Content,

@@ -62,6 +62,8 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         var requests = new[]
         {
             new HttpRequestMessage(HttpMethod.Get, "/api/journal"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/journal/export"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/journal/restore"),
             new HttpRequestMessage(HttpMethod.Post, "/api/knowledge")
             {
                 Content = JsonContent.Create(new { content = "Knowledge" })
@@ -150,7 +152,9 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
             new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/tags"),
             new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/search-status"),
             new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/export"),
-            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge/restore")
+            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge/restore"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/journal/export"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/journal/restore")
         };
 
         foreach (var request in requests)
@@ -587,6 +591,7 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
                 options.Schemes.Single(scheme => scheme.Name == "Bearer").HandlerType = typeof(TestAuthenticationHandler));
             services.RemoveAll<IJournalRepository>();
             services.RemoveAll<IKnowledgeRepository>();
+            services.RemoveAll<IJournalBackupRepository>();
             services.AddSingleton<IKnowledgeRepository>(_sharedKnowledgeRepository);
                 if (FailQueries)
                 {
@@ -601,6 +606,9 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
                     services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
                         Guid.Parse("00000000-0000-0000-0000-000000000101")));
                 }
+            services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
+                provider.GetRequiredService<IJournalRepository>(),
+                provider.GetRequiredService<IKnowledgeRepository>()));
 
             if (FixedUtcNow is { } fixedUtcNow)
             {
@@ -619,6 +627,7 @@ internal sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
 internal sealed class FailingReadJournalRepository : IJournalRepository
 {
     public JournalSnapshot GetSnapshot() => throw new InvalidOperationException("Simulated repository failure.");
+    public DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot) => throw new NotSupportedException();
 
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) => throw new NotSupportedException();
 

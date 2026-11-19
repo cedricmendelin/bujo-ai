@@ -23,6 +23,8 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["GET /api/journal"] = ["get_journal"],
+            ["GET /api/journal/export"] = ["export_journal_backup"],
+            ["POST /api/journal/restore"] = ["restore_journal_backup"],
             ["GET /api/daily-start"] = ["get_daily_start"],
             ["GET /api/planning/upcoming"] = ["get_upcoming"],
             ["POST /api/lists"] = ["create_list"],
@@ -57,6 +59,8 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     private static readonly string[] ExpectedTools =
     [
         "get_journal",
+        "export_journal_backup",
+        "restore_journal_backup",
         "get_daily_start",
         "get_upcoming",
         "find_lists",
