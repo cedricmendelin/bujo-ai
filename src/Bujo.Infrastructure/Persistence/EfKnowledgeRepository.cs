@@ -229,6 +229,86 @@ public sealed class EfKnowledgeRepository(
         }
     }
 
+    public KnowledgeBackupSnapshot ExportBackup()
+    {
+        using var context = contextFactory.CreateDbContext();
+        return new KnowledgeBackupSnapshot(1, context.KnowledgeEntries.AsNoTracking()
+            .Include(entry => entry.Tags)
+            .OrderBy(entry => entry.Id)
+            .ToArray()
+            .Select(ToSnapshot)
+            .Select(entry => new KnowledgeBackupEntry(
+                entry.Id,
+                entry.Content,
+                entry.Title,
+                entry.SourceReference,
+                entry.Tags.Select(tag => tag.Value).ToArray(),
+                entry.CreatedAt,
+                entry.UpdatedAt,
+                entry.ArchivedAt,
+                entry.Version))
+            .ToArray());
+    }
+
+    public DomainResult<KnowledgeBackupSnapshot> RestoreBackup(KnowledgeBackupSnapshot backup)
+    {
+        if (backup is null || backup.SchemaVersion != 1 || backup.Entries is null ||
+            backup.Entries.Count > DomainLimits.KnowledgeBackupEntries)
+        {
+            return Failure<KnowledgeBackupSnapshot>(
+                DomainErrorCode.InvalidInput,
+                "The knowledge backup version or entry count is invalid.");
+        }
+
+        var restored = new Dictionary<Guid, KnowledgeEntry>();
+        try
+        {
+            foreach (var item in backup.Entries)
+            {
+                if (item is null)
+                {
+                    return Failure<KnowledgeBackupSnapshot>(
+                        DomainErrorCode.InvalidInput,
+                        "The knowledge backup contains an empty entry.");
+                }
+
+                var entry = KnowledgeEntry.FromBackup(item);
+                if (!restored.TryAdd(entry.Id, entry))
+                {
+                    return Failure<KnowledgeBackupSnapshot>(
+                        DomainErrorCode.InvalidInput,
+                        "The knowledge backup contains duplicate entry IDs.");
+                }
+            }
+        }
+        catch (DomainException exception)
+        {
+            return DomainResult<KnowledgeBackupSnapshot>.Failure(exception.ToError());
+        }
+
+        try
+        {
+            using var strategyContext = contextFactory.CreateDbContext();
+            var strategy = strategyContext.Database.CreateExecutionStrategy();
+            strategy.Execute(() =>
+            {
+                using var context = contextFactory.CreateDbContext();
+                using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
+                context.KnowledgeEntries.ExecuteDelete();
+                context.KnowledgeEntries.AddRange(restored.Values.Select(entry => ToEntity(entry.ToSnapshot())));
+                context.SaveChanges();
+                transaction.Commit();
+            });
+            return DomainResult<KnowledgeBackupSnapshot>.Success(ExportBackup());
+        }
+        catch (DbUpdateException)
+        {
+            return Failure<KnowledgeBackupSnapshot>(
+                DomainErrorCode.InvariantViolation,
+                "The knowledge backup could not be restored.");
+        }
+    }
+
     private DomainResult<KnowledgeSearchPage> SearchFullText(KnowledgeSearchCriteria criteria)
     {
         using var context = contextFactory.CreateDbContext();

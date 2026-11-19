@@ -14,6 +14,7 @@ public static class DependencyInjection
             options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure()));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
         services.AddScoped<IKnowledgeRepository, EfKnowledgeRepository>();
+        services.AddSingleton<KnowledgeBackupSerializer>();
         return services;
     }
 

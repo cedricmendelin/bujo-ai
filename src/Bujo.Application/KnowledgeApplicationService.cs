@@ -71,4 +71,9 @@ public sealed class KnowledgeApplicationService
     public IReadOnlyList<KnowledgeTagInfo> GetTags() => _repository.GetTags();
 
     public KnowledgeIndexState GetIndexState() => _repository.GetIndexState();
+
+    public KnowledgeBackupSnapshot ExportBackup() => _repository.ExportBackup();
+
+    public DomainResult<KnowledgeBackupSnapshot> RestoreBackup(KnowledgeBackupSnapshot backup) =>
+        _repository.RestoreBackup(backup);
 }

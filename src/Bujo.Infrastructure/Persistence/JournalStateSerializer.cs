@@ -23,6 +23,13 @@ internal static class JournalStateSerializer
         JsonSerializer.Deserialize<ReviewChange[]>(changes, Options)
         ?? throw new JsonException("Stored review proposal changes are empty.");
 
+    public static string SerializeKnowledgeBackup(KnowledgeBackupSnapshot backup) =>
+        JsonSerializer.Serialize(backup, Options);
+
+    public static KnowledgeBackupSnapshot DeserializeKnowledgeBackup(string backup) =>
+        JsonSerializer.Deserialize<KnowledgeBackupSnapshot>(backup, Options)
+        ?? throw new JsonException("Knowledge backup is empty.");
+
     private static JsonSerializerOptions CreateOptions()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);

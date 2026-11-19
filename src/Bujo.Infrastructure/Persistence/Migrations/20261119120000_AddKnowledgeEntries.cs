@@ -57,22 +57,24 @@ public sealed class AddKnowledgeEntries : Migration
         migrationBuilder.Sql("""
             IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') = 1
             BEGIN
-                IF NOT EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N'KnowledgeCatalog')
-                    CREATE FULLTEXT CATALOG [KnowledgeCatalog];
+                EXEC(N'
+                    IF NOT EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N''KnowledgeCatalog'')
+                        CREATE FULLTEXT CATALOG [KnowledgeCatalog];
 
-                IF NOT EXISTS (
-                    SELECT 1 FROM sys.fulltext_indexes
-                    WHERE object_id = OBJECT_ID(N'dbo.KnowledgeEntries'))
-                BEGIN
-                    CREATE FULLTEXT INDEX ON dbo.KnowledgeEntries
-                    (
-                        Content LANGUAGE 1033,
-                        Title LANGUAGE 1033
-                    )
-                    KEY INDEX PK_KnowledgeEntries
-                    ON [KnowledgeCatalog]
-                    WITH CHANGE_TRACKING AUTO;
-                END
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.fulltext_indexes
+                        WHERE object_id = OBJECT_ID(N''dbo.KnowledgeEntries''))
+                    BEGIN
+                        CREATE FULLTEXT INDEX ON dbo.KnowledgeEntries
+                        (
+                            Content LANGUAGE 1033,
+                            Title LANGUAGE 1033
+                        )
+                        KEY INDEX PK_KnowledgeEntries
+                        ON [KnowledgeCatalog]
+                        WITH CHANGE_TRACKING AUTO;
+                    END
+                ');
             END
             """);
     }
@@ -80,14 +82,19 @@ public sealed class AddKnowledgeEntries : Migration
     protected override void Down(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.Sql("""
-            IF OBJECT_ID(N'dbo.KnowledgeEntries', N'U') IS NOT NULL
-               AND EXISTS (
-                   SELECT 1 FROM sys.fulltext_indexes
-                   WHERE object_id = OBJECT_ID(N'dbo.KnowledgeEntries'))
-                DROP FULLTEXT INDEX ON dbo.KnowledgeEntries;
+            IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') = 1
+            BEGIN
+                EXEC(N'
+                    IF OBJECT_ID(N''dbo.KnowledgeEntries'', N''U'') IS NOT NULL
+                       AND EXISTS (
+                           SELECT 1 FROM sys.fulltext_indexes
+                           WHERE object_id = OBJECT_ID(N''dbo.KnowledgeEntries''))
+                        DROP FULLTEXT INDEX ON dbo.KnowledgeEntries;
 
-            IF EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N'KnowledgeCatalog')
-                DROP FULLTEXT CATALOG [KnowledgeCatalog];
+                    IF EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N''KnowledgeCatalog'')
+                        DROP FULLTEXT CATALOG [KnowledgeCatalog];
+                ');
+            END
             """);
         migrationBuilder.DropTable(name: "KnowledgeEntryTags");
         migrationBuilder.DropTable(name: "KnowledgeEntries");

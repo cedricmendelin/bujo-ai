@@ -200,6 +200,80 @@ public sealed class InMemoryKnowledgeRepository : IKnowledgeRepository
 
     public KnowledgeIndexState GetIndexState() => _indexState;
 
+    public KnowledgeBackupSnapshot ExportBackup()
+    {
+        lock (_gate)
+        {
+            return new KnowledgeBackupSnapshot(1, _entries.Values
+                .OrderBy(entry => entry.Id)
+                .Select(entry =>
+                {
+                    var snapshot = entry.ToSnapshot();
+                    return new KnowledgeBackupEntry(
+                        snapshot.Id,
+                        snapshot.Content,
+                        snapshot.Title,
+                        snapshot.SourceReference,
+                        snapshot.Tags.Select(tag => tag.Value).ToArray(),
+                        snapshot.CreatedAt,
+                        snapshot.UpdatedAt,
+                        snapshot.ArchivedAt,
+                        snapshot.Version);
+                })
+                .ToArray());
+        }
+    }
+
+    public DomainResult<KnowledgeBackupSnapshot> RestoreBackup(KnowledgeBackupSnapshot backup)
+    {
+        lock (_gate)
+        {
+            var restored = new Dictionary<Guid, KnowledgeEntry>();
+            try
+            {
+                if (backup is null ||
+                    backup.SchemaVersion != 1 ||
+                    backup.Entries is null ||
+                    backup.Entries.Count > DomainLimits.KnowledgeBackupEntries)
+                {
+                    return Failure<KnowledgeBackupSnapshot>(
+                        DomainErrorCode.InvalidInput,
+                        "The knowledge backup version or entry count is invalid.");
+                }
+
+                foreach (var item in backup.Entries)
+                {
+                    if (item is null)
+                    {
+                        return Failure<KnowledgeBackupSnapshot>(
+                            DomainErrorCode.InvalidInput,
+                            "The knowledge backup contains an empty entry.");
+                    }
+
+                    var entry = KnowledgeEntry.FromBackup(item);
+                    if (!restored.TryAdd(entry.Id, entry))
+                    {
+                        return Failure<KnowledgeBackupSnapshot>(
+                            DomainErrorCode.InvalidInput,
+                            "The knowledge backup contains duplicate entry IDs.");
+                    }
+                }
+            }
+            catch (DomainException exception)
+            {
+                return DomainResult<KnowledgeBackupSnapshot>.Failure(exception.ToError());
+            }
+
+            _entries.Clear();
+            foreach (var entry in restored)
+            {
+                _entries.Add(entry.Key, entry.Value);
+            }
+
+            return DomainResult<KnowledgeBackupSnapshot>.Success(ExportBackupUnsafe());
+        }
+    }
+
     private static int CountMatches(KnowledgeEntrySnapshot entry, IReadOnlyList<string> terms)
     {
         var text = $"{entry.Title}\n{entry.Content}";
@@ -241,4 +315,23 @@ public sealed class InMemoryKnowledgeRepository : IKnowledgeRepository
 
     private static DomainResult<T> Failure<T>(DomainErrorCode code, string message) =>
         DomainResult<T>.Failure(new DomainError(code, message));
+
+    private KnowledgeBackupSnapshot ExportBackupUnsafe() =>
+        new(1, _entries.Values
+            .OrderBy(entry => entry.Id)
+            .Select(entry =>
+            {
+                var snapshot = entry.ToSnapshot();
+                return new KnowledgeBackupEntry(
+                    snapshot.Id,
+                    snapshot.Content,
+                    snapshot.Title,
+                    snapshot.SourceReference,
+                    snapshot.Tags.Select(tag => tag.Value).ToArray(),
+                    snapshot.CreatedAt,
+                    snapshot.UpdatedAt,
+                    snapshot.ArchivedAt,
+                    snapshot.Version);
+            })
+            .ToArray());
 }

@@ -127,6 +127,7 @@ builder.Services.AddJournalApplication();
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
     .WithTools<JournalMcpTools>()
+    .WithTools<KnowledgeMcpTools>()
     .WithPrompts<JournalMcpPrompts>()
     .WithResources<JournalMcpResources>();
 builder.Services.AddHealthChecks()
@@ -222,6 +223,7 @@ if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:Ver
 }
 
 app.MapJournalEndpoints();
+app.MapKnowledgeEndpoints();
 app.MapProtectedResourceMetadata();
 app.MapMcp("/mcp").RequireAuthorization("ApprovedPrincipal");
 
@@ -231,7 +233,22 @@ return 0;
 static HealthCheckOptions HealthOptions(string tag) => new()
 {
     Predicate = check => check.Tags.Contains(tag),
-    ResponseWriter = static (_, _) => Task.CompletedTask
+    ResponseWriter = static async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        await System.Text.Json.JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            new
+            {
+                status = report.Status.ToString(),
+                checks = report.Entries.Select(entry => new
+                {
+                    name = entry.Key,
+                    status = entry.Value.Status.ToString(),
+                    data = entry.Value.Data
+                })
+            });
+    }
 };
 
 public partial class Program { }

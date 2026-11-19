@@ -110,17 +110,33 @@ Search results carry the stable entry ID, original content passage, title,
 source reference, tags, and timestamps so an assistant can identify saved
 evidence. Saved entries are untrusted user data, not tool instructions.
 
-Backups include a versioned knowledge section with original content, IDs,
-source, tags, archive state, and timestamps. Restore accepts older snapshots
-without this section, validates the complete incoming knowledge set before
-writing, rejects duplicate IDs/tags, and preserves IDs and original text.
+Knowledge export currently uses a versioned knowledge snapshot containing
+original content, IDs, source, tags, archive state, timestamps, and concurrency
+versions. The authenticated API exposes `GET /api/knowledge/export` and
+`POST /api/knowledge/restore`; the PWA provides export and restore controls.
+Restore validates the complete knowledge snapshot before writing, rejects
+duplicate IDs/tags, and replaces the knowledge set atomically.
+Snapshots are limited to 10,000 entries and 25 MB; export reports an explicit
+size error rather than emitting a snapshot that restore cannot accept.
 
-The SQL Server migration will create a full-text catalog and an English
-full-text index when the database supports full-text search. This is guarded
+The repository did not have a journal-wide backup/export/restore contract when
+this capability was implemented. The knowledge-only endpoints therefore do
+not claim to back up or restore journal lists and items, nor do they yet make
+knowledge a section of a whole-journal backup. Integrating this versioned
+knowledge section with a journal-wide backup format remains required before
+the full backup acceptance criterion is complete. Older full-journal snapshots
+are not currently accepted by these knowledge-only endpoints.
+
+The SQL Server migration creates a full-text catalog and English (LCID 1033)
+full-text index when the database supports full-text search. The DDL is guarded
 so unsupported local SQL Server installations remain usable with the explicit
-fallback. Local container support, population behavior, and parity with the
-selected Azure SQL free-offer configuration remain verification gates; no
-Azure result is claimed until it is observed and recorded.
+fallback. A local SQL Server 2022 container verified migration and persistence;
+its full-text service was unavailable, so readiness reported `Unavailable` and
+the bounded fallback retrieved newly saved entries across repository restart.
+That check does not verify full-text population or parity with Azure SQL. The
+selected Azure SQL free-offer tier, region, LCID availability and population
+latency remain unverified; no Azure result is claimed until it is observed and
+recorded.
 
 ## Additional Agent Finder discovery
 

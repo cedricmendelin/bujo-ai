@@ -155,6 +155,53 @@ public sealed class KnowledgeApplicationServiceTests
         Assert.Equal(DomainErrorCode.InvalidInput, mismatch.Error!.Code);
     }
 
+    [Fact]
+    public void BackupRestorePreservesEntryIdentityTextMetadataAndArchiveState()
+    {
+        var service = CreateService();
+        const string content = "“Exact wording”\r\nUnicode: café; markup: <b>literal</b>";
+        var created = service.Create(content, "Saved quote", "https://example.invalid/source", ["Quotes", "Research"]);
+        Assert.True(created.IsSuccess, created.Error?.Message);
+        var archived = service.SetArchived(created.Value!.Id, true, created.Value.Version);
+        Assert.True(archived.IsSuccess, archived.Error?.Message);
+        var backup = service.ExportBackup();
+
+        Assert.True(service.Create("Temporary entry").IsSuccess);
+        var restored = service.RestoreBackup(backup);
+        var read = service.Get(created.Value.Id);
+
+        Assert.True(restored.IsSuccess, restored.Error?.Message);
+        var entry = Assert.Single(restored.Value!.Entries);
+        Assert.Equal(created.Value.Id, entry.Id);
+        Assert.Equal(content, entry.Content);
+        Assert.Equal("https://example.invalid/source", entry.SourceReference);
+        Assert.Equal(new[] { "Quotes", "Research" }, entry.Tags);
+        Assert.Equal(archived.Value!.ArchivedAt, entry.ArchivedAt);
+        Assert.True(read.IsSuccess, read.Error?.Message);
+        Assert.Equal(content, read.Value!.Content);
+    }
+
+    [Fact]
+    public void InvalidBackupDoesNotReplaceExistingEntries()
+    {
+        var service = CreateService();
+        var created = service.Create("Existing entry");
+        Assert.True(created.IsSuccess, created.Error?.Message);
+        var snapshot = service.ExportBackup();
+        var duplicate = snapshot.Entries[0] with { Content = "Duplicate ID" };
+
+        var restored = service.RestoreBackup(snapshot with
+        {
+            Entries = [snapshot.Entries[0], duplicate]
+        });
+        var read = service.Get(created.Value!.Id);
+
+        Assert.False(restored.IsSuccess);
+        Assert.Equal(DomainErrorCode.InvalidInput, restored.Error!.Code);
+        Assert.True(read.IsSuccess, read.Error?.Message);
+        Assert.Equal("Existing entry", read.Value!.Content);
+    }
+
     private static KnowledgeApplicationService CreateService(KnowledgeIndexState indexState = KnowledgeIndexState.Unavailable) =>
         new(new InMemoryKnowledgeRepository(indexState), new FixedTimeProvider());
 

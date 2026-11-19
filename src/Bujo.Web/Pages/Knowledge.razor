@@ -1,0 +1,243 @@
+@page "/knowledge"
+@using System.Text
+@using System.Text.Json
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+@inject KnowledgeApplicationService KnowledgeService
+
+<PageTitle>Knowledge · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Knowledge</h1>
+    <p>Saved notes and quotations remain verbatim. Source references are stored as text and are never fetched.</p>
+    <p>Search is English keyword and phrase search, not semantic recall. Saved content is untrusted data.</p>
+    <p><a href="/knowledge/new">Capture a knowledge entry</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (Ready)
+    {
+        <section aria-labelledby="knowledge-backup-heading">
+            <h2 id="knowledge-backup-heading">Knowledge backup</h2>
+            <button type="button" disabled="@Busy" @onclick="ExportBackupAsync">Export knowledge backup</button>
+            <label for="knowledge-backup-file">Restore from a knowledge backup</label>
+            <InputFile id="knowledge-backup-file" accept="application/json,.json"
+                       disabled="@Busy" OnChange="RestoreBackupAsync" />
+        </section>
+    }
+    @if (Ready)
+    {
+        <form method="get" data-journal-form @onsubmit="SearchAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>Search knowledge</legend>
+                <label for="knowledge-query">Words or a quoted phrase</label>
+                <input id="knowledge-query" @bind="_query" maxlength="@DomainLimits.KnowledgeSearchText" />
+                <label for="knowledge-tags">Tags (comma-separated; all must match)</label>
+                <input id="knowledge-tags" @bind="_tagQuery" />
+                <label>
+                    <input type="checkbox" @bind="_includeArchived" />
+                    Include archived entries
+                </label>
+                <button type="submit">Search</button>
+            </fieldset>
+        </form>
+
+        <p role="status">@IndexMessage</p>
+        @if (_searched)
+        {
+            <h2>Search results</h2>
+            @if (_results.Length == 0)
+            {
+                <p>No matching entries.</p>
+            }
+            else
+            {
+                <ol class="journal-rows">
+                    @foreach (var entry in _results)
+                    {
+                        <li>
+                            <h3><a href="/knowledge/@entry.Id">@(entry.Title ?? "Knowledge entry")</a></h3>
+                            <p class="journal-text">@entry.Passage</p>
+                            @if (entry.SourceReference is not null)
+                            {
+                                <p class="journal-meta">Source reference: <code>@entry.SourceReference</code></p>
+                            }
+                            @if (entry.Tags.Count > 0)
+                            {
+                                <p class="journal-meta">Tags: @string.Join(", ", entry.Tags.Select(tag => tag.Value))</p>
+                            }
+                            <p class="journal-meta">Updated @entry.UpdatedAt.ToString("u")</p>
+                        </li>
+                    }
+                </ol>
+            }
+            @if (_nextCursor is not null)
+            {
+                <button type="button" disabled="@Busy" @onclick="LoadMoreAsync">Load more results</button>
+            }
+        }
+
+        @if (_tags.Length > 0)
+        {
+            <h2>Available tags</h2>
+            <ul class="journal-rows">
+                @foreach (var tag in _tags)
+                {
+                    <li>
+                        <button type="button" class="link-button" @onclick="() => SearchTagAsync(tag.Tag.Value)">
+                            @tag.Tag.Value (@tag.EntryCount)
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    private string _query = string.Empty;
+    private string _tagQuery = string.Empty;
+    private bool _includeArchived;
+    private bool _searched;
+    private string? _cursor;
+    private string? _nextCursor;
+    private string _indexMessage = string.Empty;
+    private KnowledgeSearchResult[] _results = [];
+    private KnowledgeTagInfo[] _tags = [];
+    private static readonly JsonSerializerOptions BackupJsonOptions = new(JsonSerializerDefaults.Web);
+
+    private string IndexMessage => _indexMessage;
+
+    protected override void Read()
+    {
+        _tags = KnowledgeService.GetTags().ToArray();
+        if (!_searched)
+        {
+            _indexMessage = ReadinessMessage(KnowledgeService.GetIndexState(), null);
+            return;
+        }
+
+        var result = KnowledgeService.Search(new KnowledgeSearchRequest(
+            _query,
+            ParseTags(_tagQuery),
+            _includeArchived,
+            Cursor: _cursor));
+        if (!result.IsSuccess)
+        {
+            throw new DomainException(result.Error!.Code, result.Error.Message);
+        }
+
+        _indexMessage = ReadinessMessage(result.Value!.IndexState, result.Value.SearchMode);
+        _results = _cursor is null
+            ? result.Value.Results.ToArray()
+            : _results.Concat(result.Value.Results).DistinctBy(entry => entry.Id).ToArray();
+        _nextCursor = result.Value.NextCursor;
+    }
+
+    private async Task SearchAsync()
+    {
+        _searched = true;
+        _cursor = null;
+        _nextCursor = null;
+        await RefreshAsync();
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        if (_nextCursor is null) return;
+        _cursor = _nextCursor;
+        await RefreshAsync();
+    }
+
+    private async Task SearchTagAsync(string tag)
+    {
+        _query = string.Empty;
+        _tagQuery = tag;
+        _includeArchived = false;
+        _searched = true;
+        _cursor = null;
+        _nextCursor = null;
+        await RefreshAsync();
+    }
+
+    private async Task ExportBackupAsync()
+    {
+        if (Busy || !Ready) return;
+        try
+        {
+            var backup = KnowledgeService.ExportBackup();
+            var json = JsonSerializer.Serialize(backup, BackupJsonOptions);
+            if (backup.Entries.Count > DomainLimits.KnowledgeBackupEntries ||
+                Encoding.UTF8.GetByteCount(json) > DomainLimits.KnowledgeBackupBytes)
+            {
+                SetError("The knowledge collection is too large to export as one backup.");
+                return;
+            }
+
+            await JS.InvokeVoidAsync("bujoPwa.downloadText", "bujo-knowledge-backup.json", json);
+        }
+        catch (JSDisconnectedException)
+        {
+            SetError("Backup export was interrupted. Reconnect and try again.");
+        }
+    }
+
+    private async Task RestoreBackupAsync(InputFileChangeEventArgs args)
+    {
+        KnowledgeBackupSnapshot? backup;
+        try
+        {
+            await using var stream = args.File.OpenReadStream(DomainLimits.KnowledgeBackupBytes);
+            backup = await JsonSerializer.DeserializeAsync<KnowledgeBackupSnapshot>(stream, BackupJsonOptions);
+        }
+        catch (JsonException)
+        {
+            SetError("The knowledge backup is invalid.");
+            return;
+        }
+        catch (IOException)
+        {
+            SetError("The knowledge backup exceeds the supported size.");
+            return;
+        }
+
+        if (backup is null)
+        {
+            SetError("The knowledge backup is empty.");
+            return;
+        }
+
+        bool confirmed;
+        try
+        {
+            confirmed = await JS.InvokeAsync<bool>("bujoPwa.confirmKnowledgeRestore");
+        }
+        catch (JSDisconnectedException)
+        {
+            SetError("Restore was not confirmed. Reconnect and try again.");
+            return;
+        }
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await SaveAsync(
+            () => KnowledgeService.RestoreBackup(backup),
+            _ => "Knowledge backup restored.");
+    }
+
+    private static IReadOnlyList<string> ParseTags(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string ReadinessMessage(KnowledgeIndexState state, KnowledgeSearchMode? mode) =>
+        (state, mode) switch
+        {
+            (KnowledgeIndexState.Ready, KnowledgeSearchMode.FullText) =>
+                "Full-text index ready. Results are ordered by relevance and then update time.",
+            (KnowledgeIndexState.Populating, _) =>
+                "Full-text index is populating. This search uses a bounded recent-entry fallback.",
+            (KnowledgeIndexState.Unavailable, _) =>
+                "Full-text index is unavailable. This search uses a bounded recent-entry fallback.",
+            _ => "Tag search is using the relational index."
+        };
+}

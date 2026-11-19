@@ -21,4 +21,8 @@ public interface IKnowledgeRepository
     IReadOnlyList<KnowledgeTagInfo> GetTags();
 
     KnowledgeIndexState GetIndexState();
+
+    KnowledgeBackupSnapshot ExportBackup();
+
+    DomainResult<KnowledgeBackupSnapshot> RestoreBackup(KnowledgeBackupSnapshot backup);
 }

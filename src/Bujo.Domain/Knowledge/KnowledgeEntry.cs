@@ -82,6 +82,46 @@ public sealed class KnowledgeEntry
             snapshot.ArchivedAt,
             snapshot.Version);
 
+    internal static KnowledgeEntry FromBackup(KnowledgeBackupEntry backup)
+    {
+        if (backup.Id == Guid.Empty || backup.Version < 1 ||
+            backup.CreatedAt > backup.UpdatedAt ||
+            backup.ArchivedAt is { } archivedAt &&
+                (archivedAt < backup.CreatedAt || archivedAt > backup.UpdatedAt))
+        {
+            throw DomainLimits.Invalid("The knowledge backup contains invalid entry metadata.");
+        }
+
+        var exactContent = DomainLimits.RequiredVerbatimText(
+            backup.Content,
+            DomainLimits.KnowledgeContent,
+            "Content");
+        var title = DomainLimits.OptionalText(backup.Title, DomainLimits.KnowledgeTitle, "Title");
+        var sourceReference = DomainLimits.OptionalText(
+            backup.SourceReference,
+            DomainLimits.KnowledgeSourceReference,
+            "Source reference");
+        var tags = (backup.Tags ?? [])
+            .Select(Tag.Create)
+            .ToArray();
+        if (tags.Length > DomainLimits.KnowledgeTagsPerEntry ||
+            tags.Select(tag => tag.NormalizedValue).Distinct(StringComparer.Ordinal).Count() != tags.Length)
+        {
+            throw DomainLimits.Invalid("The knowledge backup contains invalid or duplicate tags.");
+        }
+
+        return new KnowledgeEntry(
+            backup.Id,
+            exactContent,
+            title,
+            sourceReference,
+            tags,
+            backup.CreatedAt,
+            backup.UpdatedAt,
+            backup.ArchivedAt,
+            backup.Version);
+    }
+
     internal KnowledgeEntrySnapshot Edit(
         string content,
         string? title,
@@ -172,6 +212,21 @@ public sealed record KnowledgeEntrySnapshot(
     string? Title,
     string? SourceReference,
     IReadOnlyList<Tag> Tags,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? ArchivedAt,
+    long Version);
+
+public sealed record KnowledgeBackupSnapshot(
+    int SchemaVersion,
+    IReadOnlyList<KnowledgeBackupEntry> Entries);
+
+public sealed record KnowledgeBackupEntry(
+    Guid Id,
+    string Content,
+    string? Title,
+    string? SourceReference,
+    IReadOnlyList<string> Tags,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? ArchivedAt,

@@ -1,0 +1,129 @@
+@page "/knowledge/{Id:guid}"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+@inject KnowledgeApplicationService Knowledge
+@inject NavigationManager Navigation
+
+<PageTitle>Knowledge entry · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">@(Entry?.Title ?? "Knowledge entry")</h1>
+    <p><a href="/knowledge">Search knowledge</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (Entry is { } entry && Ready)
+    {
+        <p>Created @entry.CreatedAt.ToString("u") · Updated @entry.UpdatedAt.ToString("u") · Version @entry.Version</p>
+        @if (entry.ArchivedAt is { } archivedAt)
+        {
+            <p class="journal-meta">Archived @archivedAt.ToString("u")</p>
+        }
+        @if (entry.SourceReference is not null)
+        {
+            <p class="journal-meta">Source reference (not fetched): <code>@entry.SourceReference</code></p>
+        }
+        @if (entry.Tags.Count > 0)
+        {
+            <p class="journal-meta">Tags: @string.Join(", ", entry.Tags.Select(tag => tag.Value))</p>
+        }
+        <h2>Saved content</h2>
+        <p class="journal-text">@entry.Content</p>
+        <form method="post" data-journal-write data-journal-form @onsubmit="UpdateAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>Edit entry</legend>
+                <label for="edit-content">Content</label>
+                <textarea id="edit-content" @bind="_content" maxlength="@DomainLimits.KnowledgeContent" required></textarea>
+                <label for="edit-title">Title (optional)</label>
+                <input id="edit-title" @bind="_title" maxlength="@DomainLimits.KnowledgeTitle" />
+                <label for="edit-source">Source reference (optional)</label>
+                <input id="edit-source" @bind="_sourceReference" maxlength="@DomainLimits.KnowledgeSourceReference" />
+                <label for="edit-tags">Tags (comma-separated)</label>
+                <input id="edit-tags" @bind="_tags" />
+                <button type="submit">Save changes</button>
+            </fieldset>
+        </form>
+        <div class="journal-actions" data-journal-write data-journal-form>
+            <button type="button" disabled="@Busy" @onclick="ToggleArchiveAsync">
+                @(entry.ArchivedAt is null ? "Archive entry" : "Restore entry")
+            </button>
+            @if (!_confirmDelete)
+            {
+                <button type="button" disabled="@Busy" @onclick="() => _confirmDelete = true">Delete permanently</button>
+            }
+            else
+            {
+                <p role="alert">This permanently deletes the entry. Only a backup restore can recover it.</p>
+                <button type="button" disabled="@Busy" @onclick="DeleteAsync">Confirm permanent delete</button>
+                <button type="button" disabled="@Busy" @onclick="() => _confirmDelete = false">Cancel</button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private KnowledgeEntrySnapshot? Entry { get; set; }
+    private string _content = string.Empty;
+    private string? _title;
+    private string? _sourceReference;
+    private string _tags = string.Empty;
+    private bool _confirmDelete;
+    private bool _deleted;
+    private long _draftVersion = -1;
+
+    protected override void Read()
+    {
+        if (_deleted) return;
+        var result = Knowledge.Get(Id);
+        if (!result.IsSuccess)
+        {
+            throw new DomainException(result.Error!.Code, result.Error.Message);
+        }
+
+        var entry = result.Value!;
+        if (_draftVersion != entry.Version)
+        {
+            _content = entry.Content;
+            _title = entry.Title;
+            _sourceReference = entry.SourceReference;
+            _tags = string.Join(", ", entry.Tags.Select(tag => tag.Value));
+            _draftVersion = entry.Version;
+        }
+
+        Entry = entry;
+    }
+
+    private Task UpdateAsync() => SaveAsync(
+        () => Knowledge.Update(
+            Id,
+            _content,
+            _title,
+            _sourceReference,
+            ParseTags(_tags),
+            Entry!.Version),
+        saved =>
+        {
+            _draftVersion = -1;
+            return "Knowledge entry updated.";
+        });
+
+    private Task ToggleArchiveAsync() => SaveAsync(
+        () => Knowledge.SetArchived(Id, Entry!.ArchivedAt is null, Entry.Version),
+        saved =>
+        {
+            _draftVersion = -1;
+            return saved.ArchivedAt is null ? "Knowledge entry restored." : "Knowledge entry archived.";
+        });
+
+    private Task DeleteAsync() => SaveAsync(
+        () => Knowledge.Delete(Id, Entry!.Version),
+        _ =>
+        {
+            _deleted = true;
+            Navigation.NavigateTo("/knowledge");
+            return "Knowledge entry permanently deleted.";
+        });
+
+    private static IReadOnlyList<string> ParseTags(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Bujo.Application;
 using Bujo.Domain;
@@ -61,6 +62,25 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         var requests = new[]
         {
             new HttpRequestMessage(HttpMethod.Get, "/api/journal"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge")
+            {
+                Content = JsonContent.Create(new { content = "Knowledge" })
+            },
+            new HttpRequestMessage(HttpMethod.Get, $"/api/knowledge/{id}"),
+            new HttpRequestMessage(HttpMethod.Put, $"/api/knowledge/{id}")
+            {
+                Content = JsonContent.Create(new { content = "Edited", expectedVersion = 1 })
+            },
+            new HttpRequestMessage(HttpMethod.Post, $"/api/knowledge/{id}/archive")
+            {
+                Content = JsonContent.Create(new { archived = true, expectedVersion = 1 })
+            },
+            new HttpRequestMessage(HttpMethod.Delete, $"/api/knowledge/{id}?expectedVersion=1"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/search?text=note"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/tags"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/search-status"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/export"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge/restore"),
             new HttpRequestMessage(HttpMethod.Post, "/api/lists")
             {
                 Content = JsonContent.Create(new { name = "Custom", kind = JournalListKind.Custom })
@@ -111,6 +131,35 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
             using (var response = await _client.SendAsync(request))
             {
                 Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EveryKnowledgeEndpointRejectsAuthenticatedNonAllowlistedPrincipal()
+    {
+        var id = Guid.NewGuid();
+        var requests = new[]
+        {
+            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge"),
+            new HttpRequestMessage(HttpMethod.Get, $"/api/knowledge/{id}"),
+            new HttpRequestMessage(HttpMethod.Put, $"/api/knowledge/{id}"),
+            new HttpRequestMessage(HttpMethod.Post, $"/api/knowledge/{id}/archive"),
+            new HttpRequestMessage(HttpMethod.Delete, $"/api/knowledge/{id}?expectedVersion=1"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/search?text=note"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/tags"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/search-status"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/knowledge/export"),
+            new HttpRequestMessage(HttpMethod.Post, "/api/knowledge/restore")
+        };
+
+        foreach (var request in requests)
+        {
+            using (request)
+            {
+                request.Headers.Add("Authorization", "Test deny");
+                using var response = await _client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             }
         }
     }
@@ -391,6 +440,78 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task KnowledgeApiPreservesContentAndSharesSearchLifecycle()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        const string content = "“Exact wording”\r\nUnicode: café; markup: <b>literal</b>";
+        using var created = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/knowledge",
+            new
+            {
+                content,
+                title = "A quote",
+                sourceReference = "https://example.invalid/source",
+                tags = new[] { "Ideas", "Quotes" }
+            }));
+        using var createdBody = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var id = createdBody.RootElement.GetProperty("id").GetGuid();
+        using var read = await client.SendAsync(AuthenticatedGet($"/api/knowledge/{id}"));
+        using var readBody = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+        using var updated = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Put,
+            $"/api/knowledge/{id}",
+            new
+            {
+                content = "Edited “exactly”",
+                title = "Updated quote",
+                sourceReference = "source:reference",
+                tags = new[] { "Ideas" },
+                expectedVersion = 1
+            }));
+        using var updatedBody = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
+        using var search = await client.SendAsync(AuthenticatedGet(
+            "/api/knowledge/search?text=exactly&tags=ideas"));
+        using var searchBody = JsonDocument.Parse(await search.Content.ReadAsStringAsync());
+        using var archived = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            $"/api/knowledge/{id}/archive",
+            new { archived = true, expectedVersion = 2 }));
+        using var defaultSearch = await client.SendAsync(AuthenticatedGet(
+            "/api/knowledge/search?text=exactly"));
+        using var archivedSearch = await client.SendAsync(AuthenticatedGet(
+            "/api/knowledge/search?text=exactly&includeArchived=true"));
+        using var defaultSearchBody = JsonDocument.Parse(await defaultSearch.Content.ReadAsStringAsync());
+        using var archivedSearchBody = JsonDocument.Parse(await archivedSearch.Content.ReadAsStringAsync());
+        using var exported = await client.SendAsync(AuthenticatedGet("/api/knowledge/export"));
+        var backupJson = await exported.Content.ReadAsStringAsync();
+        using var restoreRequest = new HttpRequestMessage(HttpMethod.Post, "/api/knowledge/restore")
+        {
+            Content = new StringContent(backupJson, Encoding.UTF8, "application/json")
+        };
+        restoreRequest.Headers.Add("Authorization", "Test allow");
+        using var restored = await client.SendAsync(restoreRequest);
+        using var restoredRead = await client.SendAsync(AuthenticatedGet($"/api/knowledge/{id}"));
+        using var restoredBody = JsonDocument.Parse(await restoredRead.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        Assert.Equal(content, createdBody.RootElement.GetProperty("content").GetString());
+        Assert.Equal(content, readBody.RootElement.GetProperty("content").GetString());
+        Assert.Equal(id, updatedBody.RootElement.GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.OK, search.StatusCode);
+        Assert.Equal(id, Assert.Single(searchBody.RootElement.GetProperty("results").EnumerateArray())
+            .GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+        Assert.Empty(defaultSearchBody.RootElement.GetProperty("results").EnumerateArray());
+        Assert.Single(archivedSearchBody.RootElement.GetProperty("results").EnumerateArray());
+        Assert.Equal(HttpStatusCode.OK, exported.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+        Assert.Equal("Edited “exactly”", restoredBody.RootElement.GetProperty("content").GetString());
+        Assert.Equal("source:reference", restoredBody.RootElement.GetProperty("sourceReference").GetString());
+    }
+
+    [Fact]
     public async Task PlannedQueryRepositoryFailureReturnsAnExplicitServerError()
     {
         using var factory = new JournalApiFactory { FailQueries = true };
@@ -426,6 +547,7 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
 {
     private readonly InMemoryJournalRepository _sharedRepository =
         InMemoryJournalRepository.CreateWithFutureLog(Guid.Parse("00000000-0000-0000-0000-000000000101"));
+    private readonly InMemoryKnowledgeRepository _sharedKnowledgeRepository = new();
 
     public bool FailQueries { get; set; }
 
@@ -464,6 +586,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
             services.PostConfigure<AuthenticationOptions>(options =>
                 options.Schemes.Single(scheme => scheme.Name == "Bearer").HandlerType = typeof(TestAuthenticationHandler));
             services.RemoveAll<IJournalRepository>();
+            services.RemoveAll<IKnowledgeRepository>();
+            services.AddSingleton<IKnowledgeRepository>(_sharedKnowledgeRepository);
                 if (FailQueries)
                 {
                     services.AddScoped<IJournalRepository, FailingReadJournalRepository>();

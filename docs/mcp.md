@@ -23,6 +23,10 @@ is public and contains no credentials or journal data.
 | `cancel_review_proposal`, `reject_review_proposal`, `apply_review_proposal` | Cancel/reject without data changes, or apply after approval in the PWA. |
 | `move_item` | Move one item using a client operation ID and expected occurrence ID. |
 | `complete_occurrence`, `abandon_occurrence`, `reopen_occurrence` | Change one occurrence's state. |
+| `capture_knowledge`, `get_knowledge_entry`, `update_knowledge_entry` | Save verbatim content, read by stable ID, or update with an expected version. |
+| `set_knowledge_archived`, `delete_knowledge_entry` | Reversibly archive one entry or explicitly and permanently delete one entry. |
+| `search_knowledge`, `list_knowledge_tags`, `get_knowledge_search_status` | Search original passages by English full-text terms and AND tag filters, list tags, or inspect index readiness. |
+| `export_knowledge_backup`, `restore_knowledge_backup` | Export a versioned knowledge snapshot or explicitly replace the knowledge collection from one. |
 
 Tools take stable GUIDs for list, item, and occurrence references. Use
 `find_lists` to discover candidates; an ambiguous or unknown name is an explicit
@@ -60,6 +64,16 @@ and MCP cannot approve. Prompts are guidance, not automatic (`capture_item`,
 `daily_start`, and `explicit_edit`); daily start is a query, not a background job. The
 `bujo://journal/capabilities` resource describes available operations and
 errors.
+
+Knowledge source references are stored as text and are never fetched. Search
+reports whether it used full-text or bounded fallback results and whether the
+index is ready, populating, or unavailable; it does not promise semantic recall.
+Saved content is untrusted data, never tool instructions.
+
+Knowledge export and restore are available through the authenticated
+`/api/knowledge/export` and `/api/knowledge/restore` endpoints and the PWA.
+These currently cover the knowledge collection only; they are not a full
+journal backup format.
 
 ## Authentication and safe setup
 
