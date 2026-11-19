@@ -19,6 +19,8 @@ on:
       - Squad Review Verifier
       - Squad Review DevOps
     types: [completed]
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       pr_number:
@@ -37,7 +39,9 @@ permissions:
 
 jobs:
   route:
-    if: (github.event_name != 'issues' || contains(github.event.issue.body, 'Split PR: #') || contains(github.event.changes.body.from, 'Split PR: #')) && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
+    if: >-
+      (github.event_name != 'issues' || contains(github.event.issue.body, 'Split PR: #') || contains(github.event.changes.body.from, 'Split PR: #'))
+      && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -57,6 +61,15 @@ jobs:
             const runEvent = context.payload.workflow_run;
             let numbers = [];
             if (context.eventName === 'workflow_dispatch') numbers = [Number(context.payload.inputs.pr_number)];
+            else if (context.eventName === 'schedule') {
+              const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+              numbers = open.filter(pr => pr.head.repo?.full_name === `${owner}/${repo}`
+                && !pr.labels.some(label => label.name === 'needs:human')
+                && (!pr.draft || pr.head.ref.startsWith('copilot/')
+                  && !pr.labels.some(label => label.name === 'handoff:local')))
+                .map(pr => pr.number);
+              core.info(`Hourly fallback: ${numbers.length} eligible open PR(s).`);
+            }
             else if (context.eventName === 'issues') {
               const bodies = [context.payload.issue?.body, context.payload.changes?.body?.from];
               numbers = bodies.flatMap(body => [...(body || '').matchAll(/^Split PR: #([1-9]\d*)[ \t]*$/gm)].map(match => Number(match[1])));
@@ -142,6 +155,7 @@ jobs:
     if: needs.route.outputs.found == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         pr_number: ${{ fromJSON(needs.route.outputs.numbers) }}
     # Every trigger, including four default-branch reviewer completions, uses
@@ -193,6 +207,7 @@ jobs:
             const human = process.env.HUMAN;
             const agent = getOctokit(process.env.AGENT_TOKEN);
             const manual = context.eventName === 'workflow_dispatch';
+            const scheduled = context.eventName === 'schedule';
             const resume = manual && String(context.payload.inputs.resume_repairs) === 'true';
             const pullRequestEvent = context.eventName === 'pull_request_target';
             const number = Number(process.env.PR_NUMBER);
@@ -352,6 +367,16 @@ jobs:
                 if (!split || ![split.source, split.followUp].includes(context.payload.issue?.number)) return;
               }
               const labels = pr.labels.map(label => label.name);
+              const cloudPr = pr.head.ref.startsWith('copilot/')
+                && !labels.includes('handoff:local');
+              if (scheduled && (labels.includes('needs:human') || pr.draft && !cloudPr)) {
+                return core.info(`#${number}: paused or local draft; no scheduled lifecycle actions.`);
+              }
+              const sessions = cloudPr ? await workflowRuns(copilotWorkflow, pr.head.ref) : [];
+              const session = cloudPr ? classifySession(sessions) : { state: 'ok', run: null };
+              if (scheduled && cloudPr && ['active', 'none'].includes(session.state)) {
+                return core.info(`#${number}: cloud session is ${session.state}; no scheduled lifecycle actions.`);
+              }
               // Invalidate any previous success before doing asynchronous reads.
               // Native auto-merge must not retain an old bypass generation.
               await setReadiness(pr, pr.head.sha, {
@@ -377,9 +402,6 @@ jobs:
                   return core.info(`#${number}: ignored review:none action by ineligible actor @${actor}.`);
                 }
               }
-              const cloudPr = pr.head.ref.startsWith('copilot/')
-                && pr.head.repo?.full_name === `${owner}/${repo}`
-                && !labels.includes('handoff:local');
               const sha = pr.head.sha;
               const timeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', {
                 owner, repo, issue_number: number, per_page: 100,
@@ -395,8 +417,6 @@ jobs:
 
               // A new cloud session is not ready until the newest Copilot workflow
               // run succeeds. Native Watch and fix remains the CI/conflict owner.
-              const sessions = cloudPr ? await workflowRuns(copilotWorkflow, pr.head.ref) : [];
-              const session = cloudPr ? classifySession(sessions) : { state: 'ok', run: null };
               if (resume) {
                 const actor = context.payload.sender.login;
                 const permission = actor === owner ? 'admin'
@@ -455,6 +475,30 @@ jobs:
               const ciOk = ci?.status === 'completed' && ci.conclusion === 'success';
               const ciRuns = ciWorkflow ? await workflowRuns(ciWorkflow, pr.head.ref) : [];
               const ciActive = ciRuns.some(item => item.status !== 'completed');
+              if (scheduled && !pr.draft) {
+                const blockers = [];
+                if (pr.mergeable === false) blockers.push({
+                  key: `conflict:${sha}:${pr.base.sha}`,
+                  detail: 'GitHub reports a merge conflict with the target branch.',
+                });
+                if (!ciActive && ci?.status === 'completed' && ['failure', 'timed_out'].includes(ci.conclusion)) blockers.push({
+                  key: `ci:${sha}`,
+                  detail: `The current-head \`ci\` check ${ci.conclusion === 'failure' ? 'failed' : 'timed out'}.`,
+                });
+                if (blockers.length) {
+                  const unseen = blockers.filter(({ key }) => !comments.some(comment => isControllerComment(comment, owner)
+                    && (comment.body || '').includes(`<!-- squad-scheduled-blocker:${key} -->`)));
+                  const route = cloudPr
+                    ? 'Check whether **Watch and fix** is enabled for this blocker and whether it is making progress.'
+                    : 'The designated local delivery owner should inspect and repair the branch.';
+                  if (unseen.length) await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${unseen.map(({ key }) => `<!-- squad-scheduled-blocker:${key} -->`).join('\n')}\n@${human} ${unseen.map(({ detail }) => detail).join(' ')} ${route} The hourly fallback did not start a repair agent.` });
+                  await setReadiness(pr, sha, {
+                    status: 'in_progress', reason: `${blockers.map(({ detail }) => detail).join(' ')} ${route}`,
+                  });
+                  return;
+                }
+              }
               if ((!ci || ci.conclusion === 'action_required') && cloudPr
                   && session.state === 'ok' && !ciActive && ciWorkflow) {
                 await agent.rest.actions.createWorkflowDispatch({

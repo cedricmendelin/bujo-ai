@@ -8,12 +8,13 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('one privileged event-driven lifecycle replaces shepherd, gate, and binding schedules', () => {
+test('one privileged lifecycle handles events and the hourly fallback', () => {
   const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
-  assert.match(lifecycle, /pull_request_target:/);
+  assert.match(lifecycle, /pull_request_target:\r?\n\s+types: \[[^\]\r\n]*\bsynchronize\b/);
   assert.match(lifecycle, /pull_request_review:/);
   assert.match(lifecycle, /workflow_run:/);
-  assert.doesNotMatch(lifecycle, /schedule:/);
+  assert.match(lifecycle, /^  schedule:\r?\n    - cron: '\d+ \* \* \* \*'/m);
+  assert.match(lifecycle, /^  lifecycle:\r?\n    needs: route\r?\n    if: needs\.route\.outputs\.found == 'true'$/m);
   assert.doesNotMatch(lifecycle, /plan:waived|Plan Binding|metadata-proposal|attestation/i);
   assert.match(lifecycle, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
   assert.doesNotMatch(lifecycle, /actions\/checkout[^]*?ref: \$\{\{ github\.event\.pull_request\.head\.ref/);
@@ -23,6 +24,12 @@ test('one privileged event-driven lifecycle replaces shepherd, gate, and binding
   for (const obsolete of ['squad-pr-shepherd.yml', 'squad-review-gate.yml', 'squad-plan-binding.yml']) {
     assert.equal(fs.existsSync(path.join(root, '.github/workflows', obsolete)), false);
   }
+});
+
+test('route condition containing the split marker is a YAML scalar', () => {
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  const route = lifecycle.split('  route:')[1].split('    runs-on:')[0];
+  assert.match(route, /^\s*if: >-\r?\n {6}[^\r\n]*'Split PR: #'/);
 });
 
 test('approval is ordinary permission + label state and honors local/idempotent dispatch', () => {
@@ -90,7 +97,6 @@ test('controller preserves reviewer bypass boundaries, human blocks, CI, and no 
   assert.match(lifecycle, /expectedHeadOid/);
   assert.match(lifecycle, /workflow_dispatch/);
   assert.match(lifecycle, /manual recovery entry point/);
-  assert.doesNotMatch(lifecycle, /workflow_run[\s\S]{0,300}schedule:/);
 });
 
 test('completed issue closure warning uses trusted code and issue-only write permission', () => {

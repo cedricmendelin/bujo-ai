@@ -713,6 +713,71 @@ test('read-only router maps PR, manual, all reviewer, CI and cloud events to the
   assert.doesNotMatch(workflow, /group:.*(?:head_branch|run_id)/);
 });
 
+test('hourly router skips the matrix when idle and selects only eligible open PRs', async () => {
+  const state = fixture();
+  state.context.eventName = 'schedule';
+  const idle = await execute(state, 'route');
+  assert.deepEqual(idle.outputs, { numbers: '[]', found: 'false' });
+  assert.deepEqual(idle.calls.map(call => call.name), ['pulls']);
+  assert.equal(idle.calls[0].args.state, 'open');
+
+  const local = state.pr;
+  const draft = { ...local, number: 82, draft: true, head: { ...local.head, ref: 'copilot/issue-11' } };
+  state.associated = [
+    local, draft,
+    { ...local, number: 83, draft: true },
+    { ...draft, number: 84, labels: [{ name: 'handoff:local' }] },
+    { ...local, number: 85, labels: [{ name: 'needs:human' }] },
+    { ...local, number: 86, head: { ...local.head, repo: null } },
+  ];
+  assert.deepEqual((await execute(state, 'route')).outputs, { numbers: '[81,82]', found: 'true' });
+});
+
+test('hourly fallback recovers a completed cloud draft without bypassing partial issue tracking', async () => {
+  const state = fixture();
+  cloud(state);
+  state.context.eventName = 'schedule';
+  state.pr.draft = true;
+  state.pr.body = '- **Remaining work:** Builder to run SQL verification after access.\n\n'
+    + 'Completion: partial\n\n<!-- START COPILOT CODING AGENT SUFFIX -->\n- Fixes #11';
+  const validTracking = state.issue.body;
+  state.issue.body = '## Acceptance criteria\n- Run SQL verification.';
+  const blocked = await execute(state);
+  assert.equal(state.pr.draft, false);
+  assert.match(state.pr.body, /- Refs #11$/);
+  assert.equal(readinessFrom(state).conclusion, 'failure');
+  assert.match(readinessFrom(state).output.summary, /Acceptance tracking.*#11/);
+  assert.equal(blocked.calls.some(call => call.name === 'dispatch'), false);
+  assert.equal(enables(blocked).length, 0);
+
+  state.issue.body = validTracking;
+  const resumed = await execute(state);
+  assert.deepEqual(resumed.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ROLES);
+  assert.equal(enables(resumed).length, 0, 'reviews still need to pass');
+});
+
+test('hourly fallback leaves active sessions alone and deduplicates conflict and CI notices', async () => {
+  const state = fixture();
+  cloud(state);
+  state.context.eventName = 'schedule';
+  state.pr.mergeable = false;
+  state.checks.find(check => check.name === 'ci').conclusion = 'failure';
+  state.runs.copilot[0].status = 'in_progress';
+  const active = await execute(state);
+  assert.deepEqual(active.calls.map(call => call.name), ['workflows', 'pr', 'runs']);
+  state.runs.copilot[0].status = 'completed';
+  const blocked = await execute(state);
+  assert.match(commentsFrom(blocked)[0], /merge conflict.*`ci` check failed.*Watch and fix/s);
+  assert.equal(blocked.calls.some(call => call.name === 'dispatch' || call.name === 'mutation'), false);
+  assert.equal(commentsFrom(await execute(state)).length, 0);
+
+  state.pr.base.sha = 'c'.repeat(40);
+  const changedBase = commentsFrom(await execute(state));
+  assert.equal(changedBase.length, 1);
+  assert.match(changedBase[0], /merge conflict/);
+  assert.doesNotMatch(changedBase[0], /`ci` check failed/);
+});
+
 test('first valid plan clears existing approval; malformed and gapped history clear approval and report failure', async () => {
   for (const version of ['1', '3', 'oops']) {
     const state = fixture();
