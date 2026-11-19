@@ -3,12 +3,9 @@ name_suffix    = "bujo001"
 key_vault_name = "bujo-ai-prod-kv"
 budget_amount  = 50
 
-foundry_enabled  = false
-foundry_location = "switzerlandnorth"
-foundry_access_group = {
-  object_id    = "42c2dcb8-689b-4c8a-b711-59b44a4f4e03"
-  display_name = "bujo-ai-foundry-admins"
-}
+foundry_enabled      = true
+foundry_location     = "switzerlandnorth"
+foundry_access_group = null
 foundry_deployments = {
   chat = {
     model    = "gpt-6.1-terra"

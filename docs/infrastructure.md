@@ -132,45 +132,41 @@ replacement before that approval and migration plan.
 Foundry project, and the `chat`, `decision`, and `embedding` model deployments.
 The deployment map is flat and can only use pay-per-token SKUs:
 `DataZoneStandard`, `GlobalStandard`, or `Standard`. The production setting is
-`foundry_enabled = false`; while disabled, Terraform creates none of these
-resources or group role assignments. The owner
-[confirmed `gpt-6.1-terra` and the existing access group](https://github.com/cedricmendelin/bujo-ai/issues/128#issuecomment-6975784638);
-[issue #128 plan v1](https://github.com/cedricmendelin/bujo-ai/issues/128#issuecomment-6975892384)
-authorizes milestone A only: disabled infrastructure code, not provisioning or
-sending data. Decision and embedding defaults remain unchanged.
+`foundry_enabled = true` in `infra/prod.tfvars`; the variable default remains
+`false`, so other configurations create none of these resources unless enabled.
+The owner approved provisioning these model selections in this PR. Issue #128
+plan v1 authorizes milestone A only; this follows the owner's later direct
+instruction to enable the production configuration. Neither approval authorizes
+sending journal data.
 
-Evidence review dated 2026-11-18: indexed Microsoft catalog, GA announcement,
-pricing and privacy excerpts support the model choices below, but direct live
-page retrieval was blocked in the implementation environment. This is not a
-fresh subscription availability, quota or quote verification. In particular,
-the exact Switzerland North / Data Zone Standard combination for each version
-and the Terra Data Zone price row still need owner verification. Retain the
-configured defaults while disabled; do not silently substitute another model
-or deployment type.
+Evidence reviewed on 2026-11-18 includes indexed Microsoft catalog, GA,
+pricing and privacy excerpts; direct live-page retrieval was blocked. This is
+not fresh verification of target-subscription availability, quota or a quote.
+In particular, verify the Switzerland North / Data Zone Standard combination
+for each version and the Terra Data Zone price before apply. Do not silently
+substitute another model or deployment type.
 
-| Purpose | Proposed model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
+| Purpose | Approved model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
 | --- | --- | --- | ---: | --- | --- |
 | Chat | `gpt-6.1-terra` / `2026-10-26` | Microsoft GA announcement lists EU Data Zone Standard; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $1.10; output $5.50; Data Zone row not independently verified | No automatic fallback; owner must verify and approve an available alternative |
 | Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; exact Switzerland North version/SKU/quota not verified | 1 | Indexed pricing: input $0.28 (cached $0.03); output $2.20 | No automatic fallback; do not assume `Standard` is offered for GPT models in Switzerland North |
 | Embedding | `text-embedding-3-small` / `1` | Azure model; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $0.022; verify billing units and Data Zone price row | No automatic fallback; owner must verify and approve an available alternative |
 
 The public Azure OpenAI pricing page is the source to recheck these assumptions;
-the figures above are not an approved quote. For an
-illustrative, **not capped**, usage of 1M uncached input and 1M output tokens
-for each text deployment plus 1M embedding input tokens, the estimate is about
-$9.10. This is not a monthly worst-case: standard deployments bill by token,
-capacity is a throughput/quota setting rather than a spend limit, and the
-existing $50 resource-group budget only alerts. No finite monthly maximum is
-enforced. Do not claim that Foundry fits the existing under-$50 target until
-the owner approves a usage assumption and a separate cost-control approach.
+the figures above are not an approved quote. The owner approved a monthly
+planning illustration of 1M uncached input and 1M output tokens for each text
+deployment plus 1M embedding input tokens, estimated at about $9.10. This is
+not a monthly worst-case or cap: standard deployments bill by token, capacity
+is a throughput/quota setting rather than a spend limit, and the existing $50
+resource-group budget only alerts. No finite monthly maximum is enforced.
 
 Data Zone Standard processes prompts and responses within the Microsoft-defined
 EU data zone. The Foundry resource can be located in Switzerland North, but
 processing can take place elsewhere in the EU; this is **not Swiss data
 residency**. If a model requires `GlobalStandard`, processing can occur in any
-geography where that model is deployed. The official catalog and regional
-availability table must be checked again before enabling, because
-resource-region support and model SKU availability can change independently.
+geography where that model is deployed. Before an apply, check the official
+catalog and regional availability because resource-region support and model
+SKU availability can change independently.
 
 For Azure-sold models, Microsoft describes the models as stateless and says
 prompts and completions are not used to train the base models without
@@ -180,25 +176,32 @@ zero-retention or no-review guarantee; review the current [data privacy](https:/
 and [abuse monitoring](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/abuse-monitoring)
 terms before any sensitive content is sent.
 
+The owner accepted these documented terms for provisioning only; this does not
+authorize sending journal content.
+
 The account disables local/key authentication and keeps public network access
 enabled, consistent with the existing no-private-networking design. The
 Container App's runtime user-assigned identity remains the intended application
 inference principal. Before use, the owner must grant or verify **Cognitive
 Services OpenAI User** for that identity at the Foundry account scope. This
 remains external to Terraform; the group grants below do not replace it.
-Account creation alone
-does not enable the application adapter, inference, or authorization to send
-journal content.
+The GitHub OIDC deployment identity's built-in Contributor role, even at
+subscription scope, cannot create role assignments. The production
+`foundry_access_group` is set to `null` so Terraform does not attempt group
+assignments. Do not add role-assignment permissions to GitHub OIDC. Account
+creation alone does not enable the application adapter, inference, or
+authorization to send journal content.
 
 ### Existing group access
 
 `foundry_access_group` is a nullable object containing `object_id` (GUID) and
 `display_name` (non-blank descriptive metadata, not used to resolve the group).
-`infra/prod.tfvars` references the owner-supplied `bujo-ai-foundry-admins`
-group. Its directory object ID is a non-secret group identifier, not a tenant
-or subscription ID. Terraform never creates, imports, looks up, or manages
-the group or its membership. No new `azuread` dependency is added; the existing
-provider is still needed for application registrations.
+When populated, it refers to an owner-supplied Entra group. Its directory
+object ID is a non-secret group identifier, not a tenant or subscription ID.
+Terraform never creates, imports, looks up, or manages the group or its
+membership. The production variables set it to `null`, so Terraform does not
+create group role assignments. No new `azuread` dependency is added; the
+existing provider is still needed for application registrations.
 
 Only when Foundry is enabled and the group is non-null does Terraform assign:
 
@@ -220,51 +223,45 @@ derived from the account ID, group ID and role. The group name does not imply
 management rights: no Contributor, Owner or RBAC administration role is granted.
 The deployment identity receives neither of these model roles.
 
-The GitHub OIDC deployment identity currently has resource-group Contributor,
-which cannot write role assignments. **This PR does not change its permissions.**
-Before enablement, @cedricmendelin must arrange an out-of-band, explicitly
-approved **Role Based Access Control Administrator** grant constrained by an
-Azure RBAC condition to these two roles and this group, at the narrowest
-applicable scope (the resource group before the account exists, or account
-after creation). Include deletion rights for rollback; do not grant unrestricted
-Owner or User Access Administrator. If that privilege increase is not approved,
-set `foundry_access_group = null` before enabling and have an authorized Azure
-administrator create and verify the same account-scoped group assignments
-manually. Review any existing managed grants before switching to manual mode:
-setting the variable to null removes Terraform-managed assignments on apply.
+Contributor cannot write role assignments, even at subscription scope, and
+this PR does not change GitHub OIDC permissions. If group access is needed,
+have an authorized Azure administrator create and verify the two account-scoped
+group assignments manually. Do not populate `foundry_access_group` in the
+production configuration unless a separately approved deployment identity
+permission path is established.
 
 ### Owner approval and teardown
 
 ## 🙋 Needs human
 
-@cedricmendelin: before setting `foundry_enabled = true`, approve the decision
-and embedding model choices,
-the exact region and SKU for all three models, current pricing and accepted
-abuse-monitoring terms, and a monthly usage/cost assumption. Also confirm the
-deployment identity's constrained role-write grant (or manual group-role
-fallback) and the separate runtime identity role grant described above. The next action is a
-separate owner-approved `infra/prod.tfvars` change enabling Foundry after those
-checks; this infrastructure change does not enable chat.
+@cedricmendelin: before the next apply, verify current model availability,
+region/SKU support, subscription quota and pricing. After the account is
+provisioned, manually grant **Cognitive Services OpenAI User** to the runtime
+Container App identity at the Foundry account scope before inference. If group
+access is needed, assign its roles manually as described above. This
+configuration does not enable chat or authorize sending journal content.
 
 ### Remaining work and acceptance evidence
 
-Milestone A is partial; keep the rollout issue open. No live enabled plan,
-apply or role verification is claimed by mocked Terraform tests.
+Issue #128 milestone A remains partial; keep the rollout issue open. This PR
+enables the production configuration by the owner's later direct instruction,
+but no live plan, apply or role verification is claimed by mocked Terraform
+tests.
 
-- [ ] @cedricmendelin: record written approval of all model versions,
-  Switzerland North / `DataZoneStandard`, privacy/abuse-monitoring terms and
-  usage/cost assumptions, with dated catalog/pricing and subscription quota
-  evidence. Any model, region or SKU fallback needs separate owner approval.
-- [ ] @cedricmendelin / Azure administrator: authorize the constrained RBAC
-  grant above, or choose manual assignments with the variable unset.
-- [ ] DevOps: after those gates, open a separate authorized
-  `infra/prod.tfvars` enablement PR with a sanitized enabled plan showing only
-  intended changes. Record the merged PR, reviewed revision and successful
-  existing workflow apply evidence; do not attach state or binary plan files.
-- [ ] @cedricmendelin / Azure administrator: once the account exists, verify
-  both group roles and the runtime identity's OpenAI User role at the exact
-  account scope. Link sanitized role-name, principal-type and scope evidence,
-  redacting real subscription/tenant/principal IDs, before claiming completion.
+- [ ] @cedricmendelin / Azure administrator: verify dated model availability,
+  pricing and subscription quota evidence before an apply. Any model, region or
+  SKU fallback needs separate owner approval.
+- [ ] @cedricmendelin / Azure administrator: manually assign the runtime
+  identity's OpenAI User role before inference. If group access is needed,
+  manually assign both group roles at account scope.
+- [ ] DevOps: review a sanitized enabled plan showing only intended changes and
+  record the existing workflow apply evidence; do not attach state or binary
+  plan files.
+- [ ] @cedricmendelin / Azure administrator: after provisioning, verify the
+  runtime identity's OpenAI User role at the exact account scope. If group
+  access is needed, verify both group roles too. Link sanitized role-name,
+  principal-type and scope evidence, redacting real subscription/tenant/
+  principal IDs, before claiming completion.
 
 For each intended principal, an authorized administrator can inspect direct
 account-scoped assignments locally (substitute IDs without posting them):
@@ -277,9 +274,9 @@ az role assignment list --assignee-object-id "<principal-object-id>" \
 ```
 
 Tests: `terraform fmt -check -recursive`, `terraform validate` and
-`terraform test` in `infra/`; the existing infrastructure Python CI suite also
-runs `tests/foundry.tftest.hcl`. No journal capability is added, so no API
-endpoint or MCP tool is required.
+`terraform test` in `infra/`. These are Terraform-native checks; the team does
+not use Python test suites for infrastructure or deployment behavior. No
+journal capability is added, so no API endpoint or MCP tool is required.
 
 To tear down, set `foundry_enabled = false` and apply; Terraform removes the
 managed group roles, deployments, project and account. Have the administrator
