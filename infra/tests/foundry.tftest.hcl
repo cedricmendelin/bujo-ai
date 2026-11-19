@@ -141,6 +141,20 @@ run "foundry_enabled" {
   }
 
   assert {
+    condition = (
+      azurerm_cognitive_deployment.model["chat"].model[0].name == "gpt-6.1-terra"
+      && azurerm_cognitive_deployment.model["chat"].model[0].version == "2026-10-26"
+      && azurerm_cognitive_deployment.model["sol"].model[0].name == "gpt-6.2-sol"
+      && azurerm_cognitive_deployment.model["sol"].model[0].version == "2026-11-17"
+      && azurerm_cognitive_deployment.model["astra"].model[0].name == "gpt-6.2-astra"
+      && azurerm_cognitive_deployment.model["astra"].model[0].version == "2026-11-17"
+      && azurerm_cognitive_deployment.model["embedding"].model[0].name == "text-embedding-3-large"
+      && azurerm_cognitive_deployment.model["embedding"].model[0].version == "1"
+    )
+    error_message = "The approved Foundry model names and versions must be preserved."
+  }
+
+  assert {
     condition     = length(regexall("(?mi)^output\\s+\"[^\"]*(foundry|cognitive|model)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
     error_message = "Foundry model endpoints, names, and credentials must not be added as Terraform outputs."
   }
