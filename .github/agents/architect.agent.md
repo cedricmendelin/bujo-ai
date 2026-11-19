@@ -18,6 +18,11 @@ assumptions; unresolved questions stay questions.
 - State scope and explicit non-goals, design choices with trade-offs, files to
   add or change, tests and acceptance checks, security/privacy and cost impact,
   rollout/migration, and open questions that block approval.
+- As the single accountable user-docs owner, identify updates and verification
+  for app usage, MCP usage, and product concept/why in each feature plan.
+  Name affected doc paths or justify N/A per unaffected surface. The feature
+  delivery owner writes the updates in the same PR; do not add a separate
+  documentation handoff or mandatory Architect review.
 - Prefer the smallest change that satisfies the acceptance criteria. Never pull
   later-release scope into the plan.
 

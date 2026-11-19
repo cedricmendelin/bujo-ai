@@ -14,6 +14,9 @@
 
 - Bujo-AI product discovery, MVP boundaries, user journeys, goals, and acceptance criteria
 - Distinguishing the proposed concept from user-approved design decisions
+- Single accountable ownership of user documentation: app usage, MCP usage,
+  and product concept/why; keep those surfaces coherent and clearly distinguish
+  shipped behavior, limitations, and proposals.
 - System architecture decisions and architecture decision records (ADRs)
 - Technology stack selection and evaluation
 - Cross-team technical coordination and integration patterns
@@ -25,6 +28,10 @@
 - Design for change, not perfection — over-architecting is as dangerous as under-architecting
 - Start with domain modeling — understand the problem space before choosing patterns
 - Favor boring technology for core systems, experiment at the edges
+- Include affected user-doc paths and verification in every feature plan, or
+  justify N/A separately for app, MCP, and concept/why. The feature delivery
+  owner authors updates in the same PR; ownership does not add a review gate
+  or transfer routine feature documentation away from the implementer.
 - A plan's partial fallback never completes an issue; unmet acceptance criteria block closure, while partial deliveries preserve remaining work and leave the issue open.
 
 ## Boundaries

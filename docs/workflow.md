@@ -42,6 +42,38 @@ available. Closure requires unresolved occurrences to be resolved first; it
 does not disposition them. The MCP operation-to-API parity test fails when an
 API endpoint is added without a tool mapping or explicit exception.
 
+## User documentation with every feature
+
+Architect is the single accountable owner for user-documentation coherence:
+how to use the app, how to use MCP, and the product concept and why it exists.
+This uses the existing role, not a separate documentation agent or review gate.
+The feature's delivery owner authors affected documentation in the **same PR**
+as the feature, including changes to existing behavior and limitations.
+
+- **Plan:** For app usage, MCP usage, and product concept/why, identify the
+  affected guide paths and how accuracy will be verified, or state **N/A with
+  a reason** for each unaffected surface. This belongs in the feature plan,
+  not a later documentation issue.
+- **Implement:** Update affected instructions, examples, prerequisites, and
+  limitations alongside the implementation. Keep product intent consistent
+  with approved decisions; distinguish shipped capabilities from proposals or
+  later-release ideas. Do not silently turn the concept into committed scope.
+- **PR evidence:** Under `User documentation`, link each surface's updates
+  and verification evidence, or give its justified N/A. A missing section or
+  an empty checkbox is not an N/A. Non-feature PRs may explain why none of the
+  three surfaces changes.
+- **Verify:** Verifier checks the affected guidance against delivered behavior
+  and acceptance evidence, including examples and links, and accepts only
+  diff-supported N/A reasons. Missing or misleading affected guidance and
+  unsupported N/A claims are blocking within the existing acceptance review.
+  Do not require unrelated rewrites or docs for features not being delivered.
+
+Standalone user-documentation work routes to Architect. Feature implementers
+retain their delivery ownership; Architect's accountability does not require
+an additional reviewer on every PR. Existing review routing and owner-controlled
+`review:none` behavior remain unchanged. No new label, CI check, or automated
+gate is introduced.
+
 ## Plan and approval
 
 `/plan`, `/plan revise <feedback>`, and `/plan route <member>` remain available.
