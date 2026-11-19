@@ -163,12 +163,12 @@ limited proof to unblock UI work; final owner/Architect review remains pending.
 It does not establish live sign-in, installation, or journal-persistence
 verification.
 
-The manifest and icons support an installable online-first shell. The service
+The manifest and icons support an installable online-only journal. The service
 worker caches only explicitly listed public static assets, never navigations,
 account pages, journal responses, or API responses. There is no offline capture,
-write queue, or automatic replay. Disconnecting preserves the current document
-while the circuit remains recoverable; a host restart, circuit expiration, or
-scale-to-zero can require a reload and lose unsaved input. The local browser
+write queue, or automatic replay. The journal does not show network status
+banners. A circuit loss shows a short recovery message; if the circuit cannot
+recover, the app offers Reload. Saves still require server confirmation. The local browser
 suite uses a synthetic identity and in-memory repository; it does not verify
 SQL persistence across a host restart or contact Entra.
 

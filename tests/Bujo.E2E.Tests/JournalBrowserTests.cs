@@ -8,6 +8,48 @@ namespace Bujo.E2E.Tests;
 
 public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<BrowserFixture>
 {
+    [Fact]
+    public async Task OnlineStartupAndEnhancedJournalNavigationDoNotBlockWrites()
+    {
+        await using var context = await fixture.CreateContextAsync();
+        var startCircuit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await context.RouteAsync("**/_blazor/negotiate?*", async route =>
+        {
+            await startCircuit.Task;
+            await route.ContinueAsync();
+        });
+        var page = await context.NewPageAsync();
+        try
+        {
+            await page.GotoAsync("/lists", new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+            await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Lists", Level = 1 })).ToBeVisibleAsync();
+            await AssertOnlineLayoutAsync(page);
+        }
+        finally
+        {
+            startCircuit.TrySetResult();
+        }
+
+        await Expect(Button(page, "Create list")).ToBeEnabledAsync();
+        await page.EvaluateAsync("window.journalDocument = true");
+        await Link(page, "Today").ClickAsync();
+        await Expect(page.GetByText("Local date:", new() { Exact = false })).ToBeVisibleAsync();
+        await AssertOnlineLayoutAsync(page);
+        await Link(page, "Lists").ClickAsync();
+        await Expect(Button(page, "Create list")).ToBeEnabledAsync();
+        await AssertOnlineLayoutAsync(page);
+        await Link(page, "Future Log").ClickAsync();
+        await Expect(Button(page, "Save goal")).ToBeEnabledAsync();
+        await AssertOnlineLayoutAsync(page);
+        await page.GetByLabel("Goal (optional)").FillAsync("Online navigation goal");
+        await Button(page, "Save goal").ClickAsync();
+        await Expect(page.GetByText("Saved goal: Online navigation goal")).ToBeVisibleAsync();
+        await Link(page, "Capture").ClickAsync();
+        await Expect(Button(page, "Capture item")).ToBeEnabledAsync();
+        await AssertOnlineLayoutAsync(page);
+        Assert.True(await page.EvaluateAsync<bool>("window.journalDocument === true"));
+    }
+
     [Theory]
     [InlineData(null, "/auth/sign-in")]
     [InlineData("deny", "/auth/denied")]
@@ -104,19 +146,20 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await page.GotoAsync("/lists");
         await CreateList(page, "Lifecycle list");
         await Link(page, "Lifecycle list").ClickAsync();
-        await page.GetByLabel("Goal (optional)").FillAsync("A saved goal");
+        var goal = page.GetByRole(AriaRole.Group, new() { Name = "Edit list goal" }).GetByLabel("Goal (optional)");
+        await goal.FillAsync("A saved goal");
         await Button(page, "Save goal").ClickAsync();
         await Expect(page.GetByText("Saved goal: A saved goal")).ToBeVisibleAsync();
         await CaptureAsync(page, "Lifecycle item", "Lifecycle list");
         await Link(page, "Lists").ClickAsync();
         await Link(page, "Lifecycle list").ClickAsync();
-        await page.GetByLabel("Goal (optional)").FillAsync("An unsaved goal");
+        await goal.FillAsync("An unsaved goal");
         await Button(page, "Close list").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Resolve all open occurrences");
         await Expect(page.GetByText("List closed.", new() { Exact = true })).ToHaveCountAsync(0);
         await Button(page, "Refresh journal").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
-        await Expect(page.GetByLabel("Goal (optional)")).ToHaveValueAsync("An unsaved goal");
+        await Expect(goal).ToHaveValueAsync("An unsaved goal");
         await Link(page, "Lifecycle item").ClickAsync();
         await Button(page, "Abandon item").ClickAsync();
         await Expect(page.GetByText("Item is now abandoned.")).ToBeVisibleAsync();
@@ -328,23 +371,77 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Fact]
-    public async Task OfflineCaptureDoesNotSubmitOrReplayAndRetainsText()
+    public async Task LostTransportBlocksCaptureUntilTheSameJournalPageReconnects()
     {
         await using var context = await fixture.CreateContextAsync();
+        IWebSocketRoute? active = null;
+        var blockReconnect = false;
+        await context.RouteAsync("**/_blazor/negotiate?*", route =>
+            Volatile.Read(ref blockReconnect) ? route.AbortAsync() : route.ContinueAsync());
+        await context.RouteWebSocketAsync(new System.Text.RegularExpressions.Regex(@"/_blazor\?"), async socket =>
+        {
+            if (Volatile.Read(ref blockReconnect))
+                await socket.CloseAsync(new() { Code = 1011 });
+            else
+            {
+                socket.ConnectToServer();
+                active = socket;
+            }
+        });
         var page = await context.NewPageAsync();
         await page.GotoAsync("/capture");
-        await page.GetByLabel("Item name").FillAsync("Keep this offline draft");
-        await context.SetOfflineAsync(true);
-        await Expect(page.Locator("[data-connectivity-status]")).ToContainTextAsync("nothing will be queued");
-        await Expect(page.Locator("[data-circuit-status]")).ToContainTextAsync("reloading loses it");
-        await Expect(page.Locator("form[data-journal-write]")).ToHaveAttributeAsync("inert", "");
-        await page.Keyboard.PressAsync("Enter");
-        await context.SetOfflineAsync(false);
-        await Expect(page.Locator("[data-circuit-status]")).ToBeHiddenAsync();
-        await Expect(page.GetByLabel("Item name")).ToHaveValueAsync("Keep this offline draft");
-        Assert.DoesNotContain(fixture.Journal.GetSnapshot().Items, item => item.Name == "Keep this offline draft");
+        const string draft = "Capture after reconnect";
+        var name = page.GetByLabel("Item name");
+        await name.FillAsync(draft);
+        await page.EvaluateAsync("window.journalDocument = true");
+        var before = fixture.Journal.GetSnapshot().Items.Count;
+        Assert.NotNull(active);
+        Volatile.Write(ref blockReconnect, true);
+        await active.CloseAsync(new() { Code = 1011, Reason = "Synthetic server transport failure" });
+
+        var modal = page.Locator("#components-reconnect-modal");
+        await Expect(modal).ToBeVisibleAsync();
+        await Expect(modal.GetByText("Connection lost. Reconnecting...", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(modal.Locator("button")).ToBeHiddenAsync();
+        var form = page.Locator("form[data-journal-write]");
+        await Expect(form).ToHaveAttributeAsync("inert", "");
+        await AssertNoConnectionStatusAsync(page);
+        Assert.True(await page.EvaluateAsync<bool>("navigator.onLine"));
+        Assert.False(await page.EvaluateAsync<bool>("window.bujoPwa.writesAvailable()"));
+        var submitted = await form.EvaluateAsync<bool>(
+            "element => element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))");
+        Assert.False(submitted);
+
+        Volatile.Write(ref blockReconnect, false);
+        await Expect(modal).ToBeHiddenAsync(new() { Timeout = 60000 });
+        await Expect(name).ToBeEditableAsync();
+        await Expect(name).ToHaveValueAsync(draft);
+        Assert.True(await page.EvaluateAsync<bool>("window.journalDocument === true"));
+        await AssertOnlineLayoutAsync(page);
+        Assert.Equal(before, fixture.Journal.GetSnapshot().Items.Count);
+        await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToHaveCountAsync(0);
         await Button(page, "Capture item").ClickAsync();
         await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToBeVisibleAsync();
+        var items = fixture.Journal.GetSnapshot().Items;
+        Assert.Equal(before + 1, items.Count);
+        Assert.Single(items, item => item.Name == draft);
+    }
+
+    private static async Task AssertOnlineLayoutAsync(IPage page)
+    {
+        await AssertNoConnectionStatusAsync(page);
+        await Expect(page.Locator("#components-reconnect-modal")).ToBeHiddenAsync();
+        await page.WaitForFunctionAsync("() => !!window.bujoPwa");
+        Assert.True(await page.EvaluateAsync<bool>("window.bujoPwa.writesAvailable()"));
+    }
+
+    private static async Task AssertNoConnectionStatusAsync(IPage page)
+    {
+        await Expect(page.Locator("[data-connectivity-status], [data-circuit-status]")).ToHaveCountAsync(0);
+        await Expect(page.Locator("body")).Not.ToContainTextAsync(new System.Text.RegularExpressions.Regex(
+            "Server connection lost or awaiting reconnection|Browser network available|Saves still require server confirmation|" +
+            "No journal data is stored offline|retain unsaved input|saved or replayed|Reloading loses unsaved",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase));
     }
 
     private static ILocator Link(IPage page, string name) => page.GetByRole(AriaRole.Link, new() { Name = name, Exact = true });

@@ -1,40 +1,22 @@
 (() => {
     "use strict";
 
-    let circuitConnected = false;
-    let hasConfirmedCircuit = false;
+    let circuitConnected = navigator.onLine;
     let circuitProbe;
     let connectionGeneration = 0;
     let modalWasDisconnected = false;
     const blockedElements = new Map();
     const writeSelector = "[data-journal-write]";
     const controlSelector = "button, input, select, textarea, fieldset";
+    const disconnectedClasses = ["show", "retrying", "failed", "rejected", "paused", "resume-failed"]
+        .map(state => `components-reconnect-${state}`);
 
     function writesAvailable() {
         return navigator.onLine && circuitConnected;
     }
 
-    function setText(element, text) {
-        if (element.textContent !== text) element.textContent = text;
-    }
-
     function update() {
         const available = writesAvailable();
-        const requiresCircuit = document.querySelector("[data-journal-write], [data-requires-circuit]") !== null;
-        document.querySelectorAll("[data-connectivity-status]").forEach(element => {
-            setText(element, navigator.onLine
-                ? "Browser network available. Saves still require server confirmation."
-                : "Offline. Writes are disabled; nothing will be queued. Reloading loses unsaved input.");
-            element.dataset.offline = String(!navigator.onLine);
-        });
-        document.querySelectorAll("[data-circuit-status]").forEach(element => {
-            const hidden = circuitConnected || !requiresCircuit;
-            if (element.hidden !== hidden) element.hidden = hidden;
-            setText(element, circuitConnected ? "" :
-                "Server connection lost or awaiting reconnection. Writes are disabled. " +
-                "Keep this page open to retain unsaved input; reloading loses it. " +
-                "No writes are replayed. A missing save confirmation means the outcome is unknown.");
-        });
 
         if (!available) {
             document.querySelectorAll(writeSelector).forEach(region => {
@@ -75,8 +57,6 @@
     }
 
     function circuitUp() {
-        if (!navigator.onLine) return update();
-        hasConfirmedCircuit = true;
         connectionGeneration++;
         circuitConnected = true;
         update();
@@ -84,7 +64,7 @@
 
     async function checkConnection() {
         update();
-        if (!navigator.onLine || !circuitProbe) return;
+        if (writesAvailable() || !navigator.onLine || !circuitProbe) return;
         const generation = connectionGeneration;
         try {
             // Read-only round trip: this never submits or replays journal changes.
@@ -98,10 +78,7 @@
     function inspectReconnectModal() {
         const modal = document.getElementById("components-reconnect-modal");
         if (modal) {
-            const disconnected = ["components-reconnect-show", "components-reconnect-retrying",
-                "components-reconnect-failed", "components-reconnect-rejected",
-                "components-reconnect-paused", "components-reconnect-resume-failed"]
-                .some(name => modal.classList.contains(name));
+            const disconnected = disconnectedClasses.some(name => modal.classList.contains(name));
             if (disconnected) {
                 if (!modalWasDisconnected) {
                     modalWasDisconnected = true;
@@ -109,7 +86,7 @@
                 }
             } else if (modalWasDisconnected && modal.classList.contains("components-reconnect-hide")) {
                 modalWasDisconnected = false;
-                if (hasConfirmedCircuit) circuitUp();
+                circuitUp();
             }
         }
         update();
@@ -127,11 +104,9 @@
     window.bujoPwa = Object.freeze({
         getTimeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
         writesAvailable,
-        circuitDown,
-        circuitUp,
         registerCircuitProbe: reference => {
             circuitProbe = reference;
-            circuitUp();
+            void checkConnection();
         }
     });
 
@@ -141,22 +116,13 @@
         if (event.target instanceof Element && event.target.closest("[data-reload-page]")) location.reload();
     });
     document.addEventListener("components-reconnect-state-changed", event => {
-        if (event.detail?.state === "hide") {
-            if (modalWasDisconnected) {
-                modalWasDisconnected = false;
-                if (hasConfirmedCircuit) circuitUp();
-            }
-        } else {
-            modalWasDisconnected = true;
-            circuitDown();
-        }
+        if (event.target === document.getElementById("components-reconnect-modal")) inspectReconnectModal();
     }, true);
     for (const name of ["click", "submit", "keydown", "beforeinput"]) {
         document.addEventListener(name, blockDisconnectedWrite, true);
     }
 
     function start() {
-        if (!navigator.onLine) circuitConnected = false;
         inspectReconnectModal();
         new MutationObserver(inspectReconnectModal).observe(document.documentElement, {
             childList: true,
@@ -166,12 +132,7 @@
         });
         if ("serviceWorker" in navigator && window.isSecureContext) {
             navigator.serviceWorker.register("/service-worker.js", { scope: "/", updateViaCache: "none" })
-                .catch(() => {
-                    document.querySelectorAll("[data-connectivity-status]").forEach(element => {
-                        setText(element, element.textContent +
-                            " App installation assets are unavailable; the online app can still be used.");
-                    });
-                });
+                .catch(() => { /* Installation is optional for online use. */ });
         }
     }
 

@@ -108,9 +108,9 @@ the Web App template's PWA option is still tracked in
 [Microsoft's issue](https://github.com/dotnet/aspnetcore/issues/48935). A
 manifest, icons, HTTPS and browser-specific installation checks are therefore
 implementation work for the selected Web App, not a claimed template feature.
-Installability **does not mean offline editing**. Show an explicit offline or
-disconnected state, never queue offline writes, and confirm saves only after
-server persistence. Avoid caching authenticated journal responses or secrets
+Installability **does not mean offline editing**. The online-only journal shows
+only actionable circuit-loss recovery, never queues offline writes, and confirms
+saves only after server persistence. Avoid caching authenticated journal responses or secrets
 in a service worker; a cached shell must not imply data is current.
 
 Interactive Server minimizes client-side execution and keeps UI and application
@@ -271,7 +271,7 @@ deployments.
 | Application | Shared use cases, authorization and explicit approval rules. |
 | Persistence integration | SQL Server integration tests cover empty-database migration, normalized journal rows, multi-hop persistence across restarts, idempotency, transactional rollback, concurrent moves and close/move races. Azure SQL parity, full-text behavior and restore/recovery checks remain unverified. |
 | API / MCP contract | Authentication, approved-account restriction, error and shared behavior contracts; actual MCP clients under the separate auth issue. |
-| PWA / E2E smoke, later | Target-browser installation, login, server-confirmed saves, offline indicator, disconnect/reconnect and resume behavior. |
+| PWA / E2E smoke, later | Target-browser installation, login, server-confirmed saves, and disconnect/reconnect recovery. |
 
 ## Consequences, risks and approval
 
