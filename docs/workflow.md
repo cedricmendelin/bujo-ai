@@ -2,8 +2,8 @@
 
 The workflow keeps human approval of issue plans, four independent specialist
 reviews by default, bounded review repair, and GitHub-protected auto-merge. It
-removes cryptographic approval records, plan binding, review attestations,
-scheduled reconciliation, and duplicate lifecycle controllers.
+removes cryptographic approval records, plan binding, review attestations, and
+duplicate lifecycle controllers.
 
 ```text
 issue ── /plan ──▶ Architect posts visible plan v1
@@ -133,15 +133,27 @@ PRs remain required.
 | Specialist reviews and aggregate decision | Architect, Security, Verifier, DevOps; one `Squad PR Lifecycle` controller |
 | Actual merge | GitHub auto-merge under branch protections; never a direct REST merge |
 
-The only custom lifecycle is the event-driven
+The only custom lifecycle is
 `.github/workflows/squad-pr-lifecycle.yml`. It reads and writes PR metadata,
 checks, comments, and labels using default-branch code. It never checks out or
-executes PR code in a privileged job. It makes no scheduled sweeps. It marks a
+executes PR code in a privileged job. It marks a
 successful cloud PR ready, dispatches initial CI if the Copilot approval gate
 prevented CI from starting, starts selected reviews, forwards actionable review
 findings, publishes `Squad Merge Readiness`, and enables native GitHub squash
 auto-merge only when eligible. `workflow_dispatch` with a PR number remains the
 manual recovery/re-evaluation entry point.
+
+PR and workflow events are the primary triggers. An hourly GitHub Actions
+fallback lists open PRs to recover missed handoffs, including a cloud draft
+whose session succeeded without triggering the controller. An empty list
+starts no per-PR jobs; GitHub still runs the read-only lookup. The fallback
+skips forks, local drafts, `needs:human` pauses, and active or unverified cloud
+sessions. It uses the same per-PR lock and readiness gates as event runs.
+If GitHub reports a conflict or a current-head CI failure with no retry running,
+the fallback names the existing repair owner instead of starting another
+agent. It notifies once per conflict head/base or failing CI head; an unknown
+mergeability result is not treated as a conflict. An issue checklist correction
+is picked up on the next eligible pass or by manual re-evaluation.
 
 When all inputs pass and the required rules are present, the controller keeps
 `Squad Merge Readiness` pending while enabling GitHub squash auto-merge, then
@@ -341,8 +353,8 @@ The controller checks that the issue is open and
 has an outstanding checklist before it reports merge readiness, including on
 the `review:none` path. It copies a quoted handoff once per changed
 remaining-work text as history; it does not edit the issue checklist or
-validate evidence on its own. If you corrected only the issue, re-run **Squad
-PR Lifecycle** with the PR number to re-evaluate readiness.
+validate evidence on its own. If you corrected only the issue, the hourly fallback re-evaluates eligible
+PRs, or you can run **Squad PR Lifecycle** with the PR number immediately.
 
 If GitHub records the issue as completed while the checklist still has
 unchecked criteria, the closure check posts a warning. It does not reopen
