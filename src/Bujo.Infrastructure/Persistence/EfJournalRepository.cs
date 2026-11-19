@@ -278,7 +278,8 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
                 item.Tags.OrderBy(tag => tag.NormalizedValue).Select(tag => Tag.Create(tag.Value)).ToArray(),
                 ToPlannedPeriod(item),
                 item.CurrentOccurrenceId,
-                item.Version))
+                item.Version,
+                item.Type))
             .ToArray();
 
         var listSnapshots = lists.Select(item => new JournalListSnapshot(
@@ -376,6 +377,7 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
 
             entity.Name = item.Name;
             entity.Description = item.Description;
+            entity.Type = item.Type;
             entity.CurrentOccurrenceId = item.CurrentOccurrenceId;
             entity.Version = item.Version;
             SetPlannedPeriod(entity, item.PlannedPeriod);

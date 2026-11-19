@@ -7,7 +7,8 @@ public sealed record ItemSnapshot(
     IReadOnlyList<Tag> Tags,
     PlannedPeriod PlannedPeriod,
     Guid CurrentOccurrenceId,
-    long Version);
+    long Version,
+    ItemType Type = ItemType.Task);
 
 public sealed record JournalListSnapshot(
     Guid Id,

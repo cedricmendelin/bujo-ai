@@ -46,6 +46,9 @@ public sealed class PeriodDraft
 
 internal static class JournalLabels
 {
+    public static string State(ItemType type, OccurrenceState state) =>
+        type == ItemType.Thought && state == OccurrenceState.Open ? "Reflection" : state.ToString();
+
     public static string Period(PlannedPeriod period) => period.Kind switch
     {
         PlannedPeriodKind.Day => $"{period.Day:yyyy-MM-dd}",

@@ -7,7 +7,7 @@
 <div data-requires-circuit>
     <h1 tabindex="-1">Capture</h1>
     <NotationLegend />
-    <p>Capture a task or thought. Without a destination or planned period it goes to the Future Log, unplanned.</p>
+    <p>An item is either a task (something to do) or a thought (a reflection to keep). Without a destination or planned period it goes to the Future Log, unplanned.</p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_saved is { } saved)
     {
@@ -19,6 +19,11 @@
             <fieldset class="journal-form" disabled="@Busy">
                 <legend>New item</legend>
                 <ItemFields Draft="_draft" />
+                <label for="capture-type">Item type</label>
+                <select id="capture-type" @bind="_type">
+                    <option value="@ItemType.Task">Task</option>
+                    <option value="@ItemType.Thought">Thought</option>
+                </select>
                 <label for="capture-list">Destination list</label>
                 <select id="capture-list" @key="_destinations" @bind="_destination">
                     <option value="">Future Log (default)</option>
@@ -40,6 +45,7 @@
 
 @code {
     private ItemDraft _draft = new();
+    private ItemType _type = ItemType.Task;
     private PeriodDraft _period = new();
     private Guid? _destination;
     private Guid? _saved;
@@ -54,12 +60,13 @@
         () =>
         {
             _saved = null;
-            return Journal.Capture(_draft.Name, _draft.Description, _draft.TagNames, _period.Build(), _destination);
+            return Journal.Capture(_draft.Name, _draft.Description, _draft.TagNames, _period.Build(), _destination, _type);
         },
         saved =>
         {
             _saved = saved.Occurrence.Id;
             _draft = new();
+            _type = ItemType.Task;
             _period = new();
             _destination = null;
             return saved.PeriodConflict is null

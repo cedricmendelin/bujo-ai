@@ -8,10 +8,10 @@ else
         @foreach (var item in Items)
         {
             <li class="journal-entry">
-                <JournalMarker State="@(Enum.Parse<OccurrenceState>(item.Destination.State))" />
+                <JournalMarker Type="@item.Type.ToString()" State="@(Enum.Parse<OccurrenceState>(item.Destination.State))" />
                 <a class="journal-entry-text" href="/items/@item.Destination.OccurrenceId">@item.Text</a>
                 <span class="journal-meta"> · @JournalLabels.Period(item.PlannedPeriod)</span>
-                <div>@item.Reason <a href="/lists/@item.Destination.ListId">@item.Destination.ListName</a></div>
+                <div>@(item.Type == ItemType.Thought && item.ReasonCode == "FutureLog" ? "Reflection in the Future Log." : item.Reason) <a href="/lists/@item.Destination.ListId">@item.Destination.ListName</a></div>
                 @if (item.Conflict)
                 {
                     <strong>Planned period conflicts with the destination week.</strong>

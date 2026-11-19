@@ -1,10 +1,17 @@
 using System.Globalization;
+using Bujo.Application.Chat;
 using Bujo.Domain;
 
 namespace Bujo.Host;
 
 internal static class JournalContract
 {
+    public static DomainResult<ItemType> ParseItemType(string? type) =>
+        CaptureItemType.TryParse(type, out var itemType)
+            ? DomainResult<ItemType>.Success(itemType)
+            : DomainResult<ItemType>.Failure(
+                new DomainError(DomainErrorCode.InvalidInput, CaptureItemType.InvalidMessage));
+
     public static string ErrorCode(DomainErrorCode code) => code.ToString();
 
     public static int StatusCode(DomainErrorCode code) =>

@@ -36,7 +36,8 @@ public sealed class JournalExport(TimeProvider clock) : IJournalExport
                     item.PlannedPeriod.Month,
                     item.PlannedPeriod.Quarter,
                     item.CurrentOccurrenceId,
-                    item.Version))
+                    item.Version,
+                    item.Type.ToString()))
                 .ToArray(),
             snapshot.Occurrences
                 .OrderBy(occurrence => occurrence.Sequence)

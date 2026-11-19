@@ -55,8 +55,9 @@ public sealed class JournalApplicationService
         string? description,
         IReadOnlyList<string>? tags,
         PlannedPeriod? plannedPeriod,
-        Guid? listId) =>
-        _journal.Capture(name, description, tags, plannedPeriod, listId);
+        Guid? listId,
+        ItemType type = ItemType.Task) =>
+        _journal.Capture(name, description, tags, plannedPeriod, listId, type);
 
     public DomainResult<MoveResult> Move(
         Guid operationId,

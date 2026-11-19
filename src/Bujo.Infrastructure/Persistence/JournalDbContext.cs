@@ -51,6 +51,7 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Name).HasMaxLength(DomainLimits.ItemName).IsRequired();
             entity.Property(item => item.Description).HasColumnType("nvarchar(max)");
+            entity.Property(item => item.Type).HasConversion<int>().HasDefaultValue(ItemType.Task);
             entity.Property(item => item.PlannedPeriodKind).HasConversion<int>();
             entity.Property(item => item.PlannedDay).HasColumnType("date");
             entity.Property(item => item.Version).IsRequired();
@@ -187,6 +188,8 @@ public sealed class ItemEntity
     public required string Name { get; set; }
 
     public string? Description { get; set; }
+
+    public ItemType Type { get; set; }
 
     public PlannedPeriodKind PlannedPeriodKind { get; set; }
 

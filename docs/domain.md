@@ -8,7 +8,9 @@ Knowledge entries have a separate contract and are not journal occurrences.
 
 ## Identity and lists
 
-- An **item** is the canonical task or thought: it has an identity, name,
+- An **item** is the canonical record, not a third type. Its type is either
+  **Task** (something to do) or **Thought** (a reflection or learning to keep).
+  It has an identity, name,
   description, customizable tags, a planned period, and a reference to its
   current occurrence. It has no global status. Tags are free-form, normalized,
   and unique per item without regard to case. Domain inputs have length limits.
@@ -26,13 +28,23 @@ Knowledge entries have a separate contract and are not journal occurrences.
   those states the item has no active occurrence.
 
 Captures without an explicit list create an occurrence in the Future Log.
+Captures without an explicit type, and legacy stored items, remain Tasks; text
+is not used to reclassify them.
+The additive SQL type column survives an application rollback, but an older
+binary cannot distinguish Thoughts from Tasks. In particular, its full restore
+deletes and reinserts items without their type, defaulting Thoughts to Tasks.
+Do not use the older application's restore or other writes that replace Thought
+rows after rollback; retain a type-aware backup and restore with a type-aware
+version.
 Unless a planned period is supplied, the item is `Unplanned`. Item text and
 tags remain canonical: historical views show their current values, not snapshots.
 Auditing text edits is outside the MVP.
 
 ## Occurrence transitions
 
-`Planned` is not an occurrence state. Planning into a weekly list is a move;
+`Planned` is not an occurrence state. The completion, abandonment and reopen
+transitions below are task actions; a Thought cannot change completion state.
+Planning into a weekly list is a move;
 the item's planned period is independent of its list.
 
 ```text
@@ -80,19 +92,21 @@ the repository port must guarantee at most one `Open` occurrence per item and
 an optimistic version check. The later SQL persistence implementation must
 enforce this with a unique filtered index; the domain module does not create it.
 
-Closing a list is rejected with its unresolved `Open` occurrences. Move,
+Closing a list is rejected with its unresolved `Open` Task occurrences. Move,
 complete, or abandon each explicitly before closing; historical `Moved` links
-do not block closure. A closed list accepts no new occurrences, and an
-occurrence cannot be reopened there. A closed list can itself be explicitly
-reopened. Closure and concurrent writes must be coordinated so that a closed
-list cannot acquire an `Open` occurrence.
+do not block closure. Thoughts need no disposition and remain readable in a
+closed list with their occurrence history intact. A closed list accepts no new
+occurrences, and an occurrence cannot be reopened there. A closed list can
+itself be explicitly reopened. Closure and concurrent writes must be
+coordinated so that a closed list cannot acquire a new `Open` occurrence.
 
 ## Manual list review proposals
 
-A list review presents unfinished `Open` occurrences separately from historical
-`Moved` links, which include their resolved final destination and state.
+A list review presents unfinished `Open` Tasks and retained Thoughts separately
+from historical `Moved` links, which include their resolved final destination
+and state.
 `Done` and `Abandoned` occurrences appear as resolved history. Moved links do
-not block closure; every unfinished occurrence must have an explicit move,
+not block closure; every unfinished Task must have an explicit move,
 done, or abandon disposition before a closure proposal can be created.
 
 Bulk, ceremony-generated, destructive, and disposition-plus-closure changes
@@ -143,8 +157,8 @@ September, October–December), and years use local calendar-date ranges,
 inclusive of both endpoints. Event instants remain UTC; daylight-saving
 transitions do not change period membership.
 
-Daily start considers only items whose current occurrence is `Open`. It groups
-them in this order:
+Daily start considers only Tasks whose current occurrence and list are `Open`;
+its actionable counts exclude Thoughts. It groups them in this order:
 
 1. `Overdue`: a planned day before today, a planned week ending before the
    current ISO week's Monday, or a planned month, quarter, or year whose final

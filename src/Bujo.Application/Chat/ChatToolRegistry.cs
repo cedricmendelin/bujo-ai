@@ -54,8 +54,8 @@ public static class ChatToolRegistry
         Read("get_list_review", "GET /api/lists/{id}/review", "Returns unfinished list-review entries.", ["listId"]),
         Read("get_review_proposal", "GET /api/review-proposals/{id}", "Returns an owner-bound review proposal.", ["proposalId"]),
 
-        Write("capture_item", "POST /api/items", "Captures an item.", false,
-            ["name", "description?", "tags?", "plannedPeriod?", "listId?"]),
+        Write("capture_item", "POST /api/items", "Captures a Task or Thought.", false,
+            ["name", "description?", "tags?", "plannedPeriod?", "listId?", "type?"]),
         Write("create_list", "POST /api/lists", "Creates a journal list.", false,
             ["name", "kind", "goalText?", "weekKey?"]),
         Write("edit_item", "PUT /api/items/{id}", "Explicitly edits an item.", false,
@@ -142,7 +142,10 @@ public static class ChatToolRegistry
     {
         var optional = text.EndsWith('?', StringComparison.Ordinal);
         var name = text.TrimEnd('?');
-        return new ChatToolParameter(name, InferJsonType(name), $"{name} input.", !optional);
+        var description = name == "type"
+            ? "Item type: Task or Thought. Omitted or null defaults to Task."
+            : $"{name} input.";
+        return new ChatToolParameter(name, InferJsonType(name), description, !optional);
     }
 
     private static string InferJsonType(string name) => name switch

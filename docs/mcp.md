@@ -37,13 +37,20 @@ values rather than phrases such as “today” or “next week.” Daily-start a
 upcoming queries require an explicit IANA time zone; the server does not fall
 back to its local time zone or UTC.
 
+`POST /api/items` and `capture_item` accept an optional `type` of `Task` or
+`Thought`; omission defaults to `Task` for existing clients. An Item is the
+shared record for either type. Thoughts are reflections, not actionable tasks,
+and completion is rejected through both the API transition and MCP
+`complete_occurrence`. Existing journal reads and exports include the type.
+
 `move_item` retries with the same `operationId` return the original result, and
 `expectedOccurrenceId` detects stale moves. Capture does not yet accept an
 operation ID, so a client that loses the response and retries may create a
 duplicate. Other writes use the domain's existing concurrency checks.
 
 `close_list` accepts only a list ID, and the domain rejects closing the Future
-Log or a list with unresolved occurrences. Use `get_list_review` to see active
+Log or a list with unresolved Tasks. Thoughts remain readable without a
+disposition. Use `get_list_review` to see active
 occurrences separately from moved links. A proposal captures exact item and
 occurrence IDs, expected versions, destinations, requested closure, and a
 server-computed SHA-256 digest; proposals expire after 24 hours and cannot be

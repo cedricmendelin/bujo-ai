@@ -13,7 +13,8 @@ public sealed record CaptureCommand(
     PlannedPeriod PlannedPeriod,
     Guid ListId,
     long ExpectedListVersion,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    ItemType Type = ItemType.Task);
 
 public sealed record CaptureResult(
     ItemSnapshot Item,
