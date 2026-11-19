@@ -64,12 +64,9 @@ ${{ github.repository }}. Follow your custom agent's review rules above.
    work, not implementation defects in that milestone.
 6. Classify findings as **blocking** (must fix before merge) or **advisory**.
    Only findings within the reviewer's scope may block.
-7. Post up to 10 inline comments for concrete findings using
-   `create_pull_request_review_comment`, prefixing each with `[blocking]` or
-   `[advisory]`. Then call `submit_pull_request_review` once with a short
-   summary (event COMMENT).
-8. Call `create_check_run` exactly once with `pull_request_number` set to the PR
-   number:
+7. Publish the machine-readable verdict **before any review comments**. Call
+   `create_check_run` exactly once with `pull_request_number` set to the PR
+   number. A PR review comment is not a substitute for this check:
    - `conclusion: success` when there are no blocking findings (including "not
      applicable"), otherwise `conclusion: failure`.
    - `title`: one line, e.g. `No blocking findings` or `2 blocking findings`.
@@ -85,6 +82,10 @@ ${{ github.repository }}. Follow your custom agent's review rules above.
      if there are no blockers. If formally rejecting the artifact rather than
      requesting ordinary changes, add the exact line `Revision: independent`
      and state the expertise required. Never name the author as revision owner.
+8. After recording the check, optionally post up to 10 inline comments for
+   concrete findings using `create_pull_request_review_comment`, prefixing each
+   with `[blocking]` or `[advisory]`. If posting inline comments, call
+   `submit_pull_request_review` once to publish them (event COMMENT).
 
 The default-branch Squad PR lifecycle controller aggregates the selected
 current-head review checks with CI and trusted human feedback. It forwards

@@ -166,8 +166,12 @@ case GitHub rejects the auto-merge request. An arming failure must not publish
 green readiness; no direct-merge fallback is permitted.
 
 A reviewer startup failure or timeout gets one deduplicated automatic retry
-for that head and review input. A persistent failure or a human approval block
-pauses with `needs:human`. Fix the cause, remove the label, and re-evaluate.
+for that head and review input. A completed DevOps run with no matching check
+gets the same bounded retry; a green Actions run or PR comment cannot stand in
+for the check. DevOps dispatch keys include the PR head so older runs cannot
+consume the new head's retry. A persistent failure or a human approval block
+pauses with `needs:human`. Fix the cause, remove the label, and manually
+re-evaluate.
 Resolving a blocking inline thread without another PR/review event requires
 a manual lifecycle dispatch; there is no polling loop.
 
