@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -25,11 +26,22 @@ REDACT_ENVIRONMENT_KEYS = (
 )
 
 
-def redact_output(text):
+def redact_output(text, env=None):
+    environment = env if env is not None else os.environ
     for key in REDACT_ENVIRONMENT_KEYS:
-        value = os.environ.get(key)
+        value = environment.get(key)
         if value:
-            text = text.replace(value, "[REDACTED]")
+            values = [value]
+            if key == "TF_VAR_auth_allowed_principal_object_ids":
+                values = [item.strip() for item in value.split(",") if item.strip()]
+                try:
+                    decoded = json.loads(value)
+                    if isinstance(decoded, list):
+                        values = [str(item).strip() for item in decoded if str(item).strip()]
+                except json.JSONDecodeError:
+                    pass
+            for sensitive in values:
+                text = re.sub(re.escape(sensitive), "[REDACTED]", text, flags=re.IGNORECASE)
     return text
 
 
@@ -37,15 +49,18 @@ def command(label, args, *, env=None, visible=False):
     result = subprocess.run(
         args,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
         env=env,
         timeout=1800,
     )
-    output = redact_output(result.stdout or "")
+    output = redact_output(result.stdout or "", env)
+    error = redact_output(result.stderr or "", env)
     if visible:
         if output:
             print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        if error:
+            print(error, end="" if error.endswith("\n") else "\n", file=os.sys.stderr, flush=True)
     if result.returncode:
         raise InfrastructureError(f"{label} failed (exit {result.returncode}).")
     return result.stdout
