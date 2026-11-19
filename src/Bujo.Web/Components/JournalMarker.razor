@@ -1,0 +1,17 @@
+<span class="journal-marker" data-state="@State.ToString().ToLowerInvariant()">
+    <span class="journal-glyph" aria-hidden="true">@Glyph</span>
+    <span class="journal-marker-label">@Label, @State.ToString().ToLowerInvariant()</span>
+</span>
+
+@code {
+    [Parameter] public string? Type { get; set; }
+    [Parameter] public OccurrenceState State { get; set; }
+
+    private string Label => Type is "Task" or "Thought" ? Type : "Item";
+    private string Glyph => State switch
+    {
+        OccurrenceState.Done => "x",
+        OccurrenceState.Moved => ">",
+        _ => Type switch { "Task" => "•", "Thought" => "−", _ => "○" }
+    };
+}

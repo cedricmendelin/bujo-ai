@@ -4,12 +4,13 @@
 }
 else
 {
-    <ul class="journal-rows">
+    <ul class="journal-rows" role="list">
         @foreach (var item in Items)
         {
-            <li>
-                <a href="/items/@item.Destination.OccurrenceId">@item.Text</a>
-                <span> · @JournalLabels.Period(item.PlannedPeriod) · @item.Destination.State</span>
+            <li class="journal-entry">
+                <JournalMarker State="@(Enum.Parse<OccurrenceState>(item.Destination.State))" />
+                <a class="journal-entry-text" href="/items/@item.Destination.OccurrenceId">@item.Text</a>
+                <span class="journal-meta"> · @JournalLabels.Period(item.PlannedPeriod)</span>
                 <div>@item.Reason <a href="/lists/@item.Destination.ListId">@item.Destination.ListName</a></div>
                 @if (item.Conflict)
                 {

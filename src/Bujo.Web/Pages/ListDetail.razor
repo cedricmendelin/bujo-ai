@@ -6,6 +6,7 @@
 <PageTitle>List · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">@(_list?.Name ?? "List details")</h1>
+    <NotationLegend />
     <p><a href="/lists">All lists</a></p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_list is { } list)
@@ -22,11 +23,12 @@
         }
         else
         {
-            <ul class="journal-rows">
+            <ul class="journal-rows" role="list">
                 @foreach (var row in _rows)
                 {
-                    <li>
-                        <a href="/items/@row.Occurrence.Id">@row.ItemName</a> · @row.Occurrence.State
+                    <li class="journal-entry">
+                        <JournalMarker State="row.Occurrence.State" />
+                        <a class="journal-entry-text @(row.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@row.Occurrence.Id">@row.ItemName</a>
                         @if (row.Latest is { } latest)
                         {
                             <div>Latest: <a href="/items/@latest.CurrentOccurrence.Id">@latest.CurrentList.Name · @latest.CurrentOccurrence.State</a></div>

@@ -10,6 +10,10 @@
 {
     <p role="status">Loading the journal…</p>
 }
+else if (Busy)
+{
+    <p class="journal-busy" role="status">Working… Waiting for the server.</p>
+}
 
 @code {
     [Parameter] public string? Error { get; set; }

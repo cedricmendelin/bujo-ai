@@ -1,6 +1,7 @@
 @inherits PlanningPage
 
 <div data-requires-circuit>
+    <NotationLegend />
     <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_review is { } review)
     {

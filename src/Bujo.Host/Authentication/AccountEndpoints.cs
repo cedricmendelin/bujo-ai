@@ -68,7 +68,12 @@ public static class AccountEndpoints
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{title} — Bujo-AI</title><link rel="stylesheet" href="/_content/Bujo.Web/pwa.css">
         <link rel="icon" type="image/png" href="/_content/Bujo.Web/icons/icon-192.png">
-        </head><body><main><h1>{title}</h1>{body}<p><a href="/">Home</a></p></main></body></html>
+        </head><body class="auth-page"><div class="auth-shell">
+        <header class="auth-header"><a class="brand" href="/">Bujo-AI</a></header>
+        <main class="auth-card" id="main-content" tabindex="-1">
+        <p class="eyebrow">Your journal, kept private</p>
+        <h1>{title}</h1>{body}<p><a class="button-link button-secondary" href="/">Home</a></p>
+        </main></div></body></html>
         """, "text/html");
 
     private static async Task<bool> ValidAntiforgeryAsync(HttpContext context, IAntiforgery antiforgery)

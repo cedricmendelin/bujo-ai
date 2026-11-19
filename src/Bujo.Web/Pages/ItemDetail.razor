@@ -5,11 +5,13 @@
 
 <PageTitle>Item · Bujo-AI</PageTitle>
 <div data-requires-circuit>
-    <h1 tabindex="-1">@(_resolved?.Item.Name ?? "Item details")</h1>
+    <h1 class="@(_resolved?.SourceOccurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" tabindex="-1">@(_resolved?.Item.Name ?? "Item details")</h1>
+    <NotationLegend />
     <p><a href="/lists">All lists</a></p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_resolved is { } resolved)
     {
+        <p><JournalMarker State="resolved.SourceOccurrence.State" /> <span class="journal-meta">Viewed occurrence</span></p>
         <p>Latest: <a href="/lists/@resolved.CurrentList.Id">@resolved.CurrentList.Name</a> · @resolved.CurrentOccurrence.State</p>
         <p>Planned period: @JournalLabels.Period(resolved.Item.PlannedPeriod)</p>
         @if (PeriodConflictRules.Find(resolved.Item.PlannedPeriod, resolved.CurrentList) is not null)
@@ -25,11 +27,12 @@
             <p class="journal-meta">Tags: @string.Join(", ", resolved.Item.Tags.Select(tag => tag.Value))</p>
         }
         <h2>Occurrence history</h2>
-        <ol class="journal-rows">
+        <ol class="journal-rows" role="list">
             @foreach (var occurrence in _history)
             {
-                <li>
-                    <a href="/lists/@occurrence.ListId">@_listNames[occurrence.ListId]</a> · @occurrence.State
+                <li class="journal-entry">
+                    <JournalMarker State="occurrence.State" />
+                    <a class="journal-entry-text @(occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/lists/@occurrence.ListId">@_listNames[occurrence.ListId]</a>
                     @if (occurrence.Id == resolved.CurrentOccurrence.Id)
                     {
                         <span> (latest)</span>
@@ -37,6 +40,14 @@
                     @if (occurrence.Id == OccurrenceId)
                     {
                         <span> (viewed occurrence)</span>
+                    }
+                    @if (occurrence.State == OccurrenceState.Moved)
+                    {
+                        @if (_history.FirstOrDefault(next => next.Id == occurrence.NextOccurrenceId) is { } destination)
+                        {
+                            <div class="journal-meta">Moved to: <a href="/items/@destination.Id">@_listNames[destination.ListId]</a></div>
+                        }
+                        <div class="journal-meta">Latest: <a href="/items/@resolved.CurrentOccurrence.Id">@resolved.CurrentList.Name · @resolved.CurrentOccurrence.State</a></div>
                     }
                 </li>
             }

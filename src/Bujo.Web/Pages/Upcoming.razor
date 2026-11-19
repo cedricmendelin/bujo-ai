@@ -6,6 +6,7 @@
 <PageTitle>Upcoming · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">Upcoming</h1>
+    <NotationLegend />
     <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_plan is { } plan)
     {

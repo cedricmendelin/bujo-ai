@@ -1,7 +1,7 @@
 "use strict";
 
 // No document, navigation, API, authentication or journal responses belong here.
-const CACHE_NAME = "bujo-static-shell-v1";
+const CACHE_NAME = "bujo-static-shell-v2";
 const STATIC_ASSETS = new Map([
     ["/_content/Bujo.Web/pwa.css", "text/css"],
     ["/_content/Bujo.Web/pwa.js", "javascript"],
