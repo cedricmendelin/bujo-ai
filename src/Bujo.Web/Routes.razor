@@ -2,8 +2,12 @@
     <Found Context="routeData">
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
             <NotAuthorized>
-                <h1>Access unavailable</h1>
-                <p>Please <a href="/auth/sign-in" data-enhance-nav="false">sign in</a> with an approved account.</p>
+                <section class="auth-card" aria-labelledby="access-heading">
+                    <p class="eyebrow">Your journal, kept private</p>
+                    <h1 id="access-heading">Access unavailable</h1>
+                    <p>Please sign in with an approved account.</p>
+                    <p><a class="button-link" href="/auth/sign-in" data-enhance-nav="false">Sign in</a></p>
+                </section>
             </NotAuthorized>
         </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />

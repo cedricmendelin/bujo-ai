@@ -278,6 +278,8 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
             throw;
         }
         await Expect(page.Locator("#components-reconnect-modal")).ToContainTextAsync("Connection lost.");
+        await Expect(page.Locator("#components-reconnect-modal"))
+            .ToContainTextAsync("No journal data is stored offline. Unsaved changes are not queued.");
         Assert.True(await page.EvaluateAsync<bool>("navigator.onLine"));
         await Expect(action).ToBeDisabledAsync();
         await Expect(input).ToHaveValueAsync("Unsaved across transport loss");

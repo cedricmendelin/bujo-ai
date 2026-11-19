@@ -6,10 +6,11 @@
 <PageTitle>Lists · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">Lists</h1>
+    <NotationLegend />
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (Ready)
     {
-        <ul class="journal-rows">
+        <ul class="journal-rows" role="list">
             @foreach (var list in _lists)
             {
                 <li>

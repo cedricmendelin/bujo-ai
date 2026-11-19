@@ -6,6 +6,7 @@
 <PageTitle>Review list · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">Review · @(_review?.List.Name ?? "List")</h1>
+    <NotationLegend />
     <p><a href="/lists/@ListId">Back to list</a></p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_review is { } review)
@@ -17,12 +18,13 @@
         }
         else
         {
-            <ul class="journal-rows">
+            <ul class="journal-rows" role="list">
                 @foreach (var entry in review.Unfinished)
                 {
                     var draft = _drafts[entry.Occurrence.Id];
-                    <li>
-                        <a href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
+                    <li class="journal-entry">
+                        <JournalMarker State="entry.Occurrence.State" />
+                        <a class="journal-entry-text" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
                         <span> · item @entry.Item.Id · occurrence @entry.Occurrence.Id · version @entry.Item.Version</span>
                         <label for="disposition-@entry.Occurrence.Id">Disposition</label>
                         <select id="disposition-@entry.Occurrence.Id" @bind="draft.Action">
@@ -54,14 +56,15 @@
         }
         else
         {
-            <ul class="journal-rows">
+            <ul class="journal-rows" role="list">
                 @foreach (var entry in review.Moved)
                 {
-                    <li>
-                        @entry.Item.Name · @entry.Occurrence.Id · Moved
+                    <li class="journal-entry">
+                        <JournalMarker State="entry.Occurrence.State" />
+                        <a class="journal-entry-text" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a> · @entry.Occurrence.Id
                         @if (entry.Resolution is { } resolution)
                         {
-                            <span> · resolves to @resolution.CurrentList.Name · @resolution.CurrentOccurrence.State</span>
+                            <div class="journal-meta">Latest: <a href="/items/@resolution.CurrentOccurrence.Id">@resolution.CurrentList.Name · @resolution.CurrentOccurrence.State</a></div>
                         }
                     </li>
                 }
@@ -75,10 +78,13 @@
         }
         else
         {
-            <ul class="journal-rows">
+            <ul class="journal-rows" role="list">
                 @foreach (var entry in review.Resolved)
                 {
-                    <li>@entry.Item.Name · @entry.Occurrence.State</li>
+                    <li class="journal-entry">
+                        <JournalMarker State="entry.Occurrence.State" />
+                        <a class="journal-entry-text @(entry.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
+                    </li>
                 }
             </ul>
         }
@@ -102,7 +108,7 @@
             <p>Proposal ID: @proposal.Id</p>
             <p><a href="/lists/@proposal.ListId/review?proposalId=@proposal.Id">Open this proposal</a></p>
             <p>List version: @proposal.ExpectedListVersion · digest: <code>@proposal.Digest</code></p>
-            <ul class="journal-rows">
+            <ul class="journal-rows" role="list">
                 @foreach (var change in proposal.Changes)
                 {
                     <li>

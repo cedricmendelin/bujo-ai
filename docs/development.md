@@ -225,6 +225,120 @@ must fail rather than skip if its browser is unavailable. The SQL persistence
 integration suite was removed at the owner's request; this browser suite does
 not establish SQL-backed persistence across a host restart.
 
+### Journal visual system (issue #135, plan v2)
+
+The shared `src/Bujo.Web/wwwroot/pwa.css` stylesheet uses local system fonts:
+sans-serif controls/body copy and restrained serif page headings. No font,
+script, or style CDN is required. Warm paper surrounds solid content surfaces;
+the faint dot grid is decoration outside forms and text-heavy cards.
+
+Tokens in `:root` map to these roles:
+
+| Tokens | Role |
+| --- | --- |
+| `--paper`, `--surface`, `--surface-raised` | Warm page, content card, and form/row surfaces |
+| `--ink`, `--ink-muted` | Headings/body text and readable secondary metadata |
+| `--sage`, `--sage-strong`, `--sage-soft`, `--on-sage` | Primary actions, hover, subtle status surfaces, and action text |
+| `--border`, `--rule`, `--decoration` | Meaningful control boundaries, decorative dividers, and background dots |
+| `--focus`, `--error`, `--error-soft`, `--disabled-surface` | Keyboard outline, error/reconnect feedback, and disabled controls |
+| `--space-1`…`--space-7`, `--radius-*`, `--shadow-soft` | Shared spacing, control/card/page corners, and restrained elevation |
+| `--font-body`, `--font-display`, `--text-small`, `--text-title` | System font stacks and responsive type hierarchy |
+
+These token-pair contrast ratios were calculated using WCAG sRGB relative
+luminance, rounded to two decimals (not inferred from a palette name):
+
+| Foreground / background | Ratio |
+| --- | --- |
+| Ink `#24352f` / paper `#f6f3eb` | 11.65:1 |
+| Ink `#24352f` / content surface `#fffdf8` | 12.71:1 |
+| Muted ink `#536359` / paper `#f6f3eb` | 5.74:1 |
+| Sage `#355b46` / paper `#f6f3eb` | 6.92:1 |
+| White action text `#ffffff` / sage `#355b46` | 7.67:1 |
+| Sage `#355b46` / soft sage `#e6ede3` | 6.43:1 |
+| Control border `#788779` / white `#ffffff` | 3.79:1 |
+| Control border `#788779` / paper `#f6f3eb` | 3.42:1 |
+| Focus `#8a481c` / content surface `#fffdf8` | 6.83:1 |
+| Error `#843c32` / error surface `#fff0e9` | 7.07:1 |
+| Disabled text `#536359` / disabled surface `#ecebe3` | 5.33:1 |
+| Disabled border `#788779` / disabled surface `#ecebe3` | 3.17:1 |
+
+Normal text pairs exceed 4.5:1 and meaningful control boundaries exceed 3:1.
+Faint rules/dots are decorative, not control or state indicators. Content links
+retain underlines, active navigation also uses an underline/border, and occurrence
+states always have readable labels. Disabled controls use explicit contrasting
+surfaces/borders rather than fading the whole region. Busy/loading,
+confirmation, error, and reconnect messages remain distinct readable panels;
+styling does not create a save acknowledgement or offline write queue.
+
+Layouts wrap from 320 CSS pixels upward. Forms, grid children, long titles,
+tags, IDs, and digest strings can shrink/wrap without hiding content.
+Buttons, links, navigation, and legend summaries have at least 44×44 CSS pixel
+targets; checkboxes/radios use their enclosing 44px-high clickable labels.
+Keyboard focus uses an offset 3px outline. Reduced-motion mode suppresses
+animation/transitions, and forced-colors mode uses system control/border colors
+while retaining text labels, underlines, and abandoned strike-throughs.
+
+`JournalMarker` separates a decorative `aria-hidden` glyph from its readable
+occurrence-state label. Open stored items use the neutral circle `○`; done uses
+`x`, moved uses `>`, and abandoned uses a crossed glyph plus an explicit
+“abandoned” label. `.is-abandoned` crosses the title without
+reducing its contrast, including item headings. Each historical marker refers
+to its own occurrence, not the latest destination's state. Moved destination
+links and latest-state details remain available.
+
+The native `NotationLegend` disclosure also explains the notebook conventions
+task `•` and thought `−`. **The current domain has no stored task/thought type.**
+Existing rows therefore say “Item”; the presentation must not infer a type
+from tags, text, or state. The original task/thought-distinction acceptance
+criterion is not met by styling or by showing conventions in a legend.
+An owner decision is still required before an agreed partial milestone or a
+separately approved type-data change; this visual work does not claim full
+completion of issue #135.
+
+The signed-out Home and not-authorized prompt share `.auth-card` with every
+app-owned `/auth/*` page. The host's `Page(...)` wrapper adds only static brand,
+shell/card markup, and shared classes using the same public stylesheet.
+Sign-in/out form actions, methods, hidden antiforgery fields, policies,
+redirects, CSP, and authentication behavior are unchanged. Microsoft-hosted
+Entra screens are not styled. The service-worker shell cache version is bumped
+because this stylesheet is precached; its static allowlist and exclusion of
+navigation/auth/journal/API responses are unchanged. This is presentation-only:
+no API endpoint or MCP tool contract changes are needed.
+
+#### UI verification and screenshots
+
+The issue #135 verification used Chromium, synthetic authentication and fixture
+data only. The Release solution build completed with zero warnings/errors; all
+190 tests passed (15 application, 66 domain, 63 integration, 46 E2E), including
+the existing journal, connection, authentication and MCP contract scenarios.
+
+`JournalPresentationTests` checks journal pages, list review, diagnostics,
+signed-out Home and all app-owned account pages at 320, 390 and 1280 CSS pixels:
+no page overflow, at least 44×44 clickable targets (including checkbox labels),
+and zero axe violations. Keyboard checks cover opening/closing the legend with
+Enter, tabbing to the capture input and sign-in button, visible focus, and
+server-confirmed capture. Forced-colors/reduced-motion emulation checks readable
+state labels, abandoned strike-through, confirmation boundaries and disabled
+animation/transitions. The contrast measurements are recorded above. These
+checks do not establish live Entra authentication or target-device installation.
+
+The before images use original source
+`46ca82955eb6fc26838a057a6a81445da62996ec`; the after images show this refresh.
+Images contain fixture data only, never Microsoft-hosted sign-in pages.
+
+| Screen/state | Mobile before (390px) | Mobile after (390px) | Desktop before (1280px) | Desktop after (1280px) |
+| --- | --- | --- | --- | --- |
+| Today, planned item | [Before](images/ui-135/before/390-today.png) | [After](images/ui-135/after/390-today.png) | [Before](images/ui-135/before/1280-today.png) | [After](images/ui-135/after/1280-today.png) |
+| Today, empty groups | [Before](images/ui-135/before/390-today-empty.png) | [After](images/ui-135/after/390-today-empty.png) | [Before](images/ui-135/before/1280-today-empty.png) | [After](images/ui-135/after/1280-today-empty.png) |
+| Capture | [Before](images/ui-135/before/390-capture.png) | [After](images/ui-135/after/390-capture.png) | [Before](images/ui-135/before/1280-capture.png) | [After](images/ui-135/after/1280-capture.png) |
+| List | [Before](images/ui-135/before/390-list.png) | [After](images/ui-135/after/390-list.png) | [Before](images/ui-135/before/1280-list.png) | [After](images/ui-135/after/1280-list.png) |
+| Item/history | [Before](images/ui-135/before/390-item-history.png) | [After](images/ui-135/after/390-item-history.png) | [Before](images/ui-135/before/1280-item-history.png) | [After](images/ui-135/after/1280-item-history.png) |
+| Validation error | [Before](images/ui-135/before/390-error.png) | [After](images/ui-135/after/390-error.png) | [Before](images/ui-135/before/1280-error.png) | [After](images/ui-135/after/1280-error.png) |
+| Connection loss, unsaved draft | [Before](images/ui-135/before/390-offline.png) | [After](images/ui-135/after/390-offline.png) | [Before](images/ui-135/before/1280-offline.png) | [After](images/ui-135/after/1280-offline.png) |
+| App-owned sign-in | [Before](images/ui-135/before/390-sign-in.png) | [After](images/ui-135/after/390-sign-in.png) | [Before](images/ui-135/before/1280-sign-in.png) | [After](images/ui-135/after/1280-sign-in.png) |
+| Signed-out Home | [Before](images/ui-135/before/390-signed-out-home.png) | [After](images/ui-135/after/390-signed-out-home.png) | [Before](images/ui-135/before/1280-signed-out-home.png) | [After](images/ui-135/after/1280-signed-out-home.png) |
+| Signed-out confirmation | [Before](images/ui-135/before/390-signed-out.png) | [After](images/ui-135/after/390-signed-out.png) | [Before](images/ui-135/before/1280-signed-out.png) | [After](images/ui-135/after/1280-signed-out.png) |
+
 ### Owner-operated proof gate
 
 Interactive Server with static SSR where appropriate is Accepted in

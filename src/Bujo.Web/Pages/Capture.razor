@@ -6,6 +6,7 @@
 <PageTitle>Capture · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">Capture</h1>
+    <NotationLegend />
     <p>Capture a task or thought. Without a destination or planned period it goes to the Future Log, unplanned.</p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_saved is { } saved)

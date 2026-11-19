@@ -140,32 +140,44 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "View captured item").ClickAsync();
         await Expect(page.GetByText("Planned period: Unplanned", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("Tags: work, reading", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(page.GetByText("Latest: Future Log · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Future Log · Open" })).ToBeVisibleAsync();
         var earlierItemUrl = page.Url;
         var earlierListUrl = await page.Locator("p").Filter(new() { HasText = "Latest:" }).GetByRole(AriaRole.Link).GetAttributeAsync("href");
         await page.GetByLabel("Planned period").SelectOptionAsync("Day");
         await page.GetByLabel("Planned date").FillAsync("2026-11-18");
         await Button(page, "Save planned period").ClickAsync();
         await Expect(page.GetByText("Planned period saved.")).ToBeVisibleAsync();
-        await Expect(page.GetByText("Latest: Future Log · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Future Log · Open" })).ToBeVisibleAsync();
         await MoveAsync(page, "Journey weekly");
         await Expect(page.GetByText("Item moved. Its planned period conflicts with the destination week.")).ToBeVisibleAsync();
         await MoveAsync(page, "Journey custom");
-        await Expect(page.GetByText("Latest: Journey custom · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Journey custom · Open" })).ToBeVisibleAsync();
         await Button(page, "Complete item").ClickAsync();
         await Expect(page.GetByText("Item is now done.")).ToBeVisibleAsync();
 
         await page.GotoAsync(earlierListUrl!);
-        await Expect(page.Locator("li").Filter(new() { HasText = "Journal journey · Moved" })).ToBeVisibleAsync();
+        var movedRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Journal journey") });
+        await Expect(movedRow.Locator(".journal-marker-label")).ToHaveTextAsync("Item, moved");
         await Link(page, "Journey custom · Done").ClickAsync();
-        await Expect(page.GetByText("Latest: Journey custom · Done")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Journey custom · Done" })).ToBeVisibleAsync();
         await page.GotoAsync(earlierItemUrl);
         await Expect(Link(page, "Open latest occurrence")).ToBeVisibleAsync();
-        await Expect(page.Locator("ol li")).ToHaveTextAsync([
-            "Future Log · Moved (viewed occurrence)", "Journey weekly · Moved", "Journey custom · Done (latest)"]);
+        var history = page.Locator("ol li.journal-entry");
+        await Expect(history.Locator(".journal-marker-label")).ToHaveTextAsync(["Item, moved", "Item, moved", "Item, done"]);
+        await Expect(history.Locator("a.journal-entry-text")).ToHaveTextAsync(["Future Log", "Journey weekly", "Journey custom"]);
+        await Expect(history.Nth(0)).ToContainTextAsync("(viewed occurrence)");
+        await Expect(history.Nth(2)).ToContainTextAsync("(latest)");
+        await Expect(history.Nth(0).Locator(".journal-meta").Nth(0)).ToHaveTextAsync("Moved to: Journey weekly");
+        await Expect(history.Nth(1).Locator(".journal-meta").Nth(0)).ToHaveTextAsync("Moved to: Journey custom");
+        foreach (var row in new[] { history.Nth(0), history.Nth(1) })
+        {
+            await Expect(row.Locator(".journal-meta").Nth(1)).ToHaveTextAsync("Latest: Journey custom · Done");
+            await Expect(row.Locator(".journal-meta").Nth(1).GetByRole(AriaRole.Link))
+                .ToHaveAttributeAsync("href", await Link(page, "Open latest occurrence").GetAttributeAsync("href") ?? "");
+        }
         await page.ReloadAsync();
         await Expect(page.GetByText("Planned period: 2026-11-18")).ToBeVisibleAsync();
-        await Expect(page.GetByText("Latest: Journey custom · Done")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Journey custom · Done" })).ToBeVisibleAsync();
         Assert.Empty(selfHttp);
     }
 
@@ -220,6 +232,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "Lifecycle item").ClickAsync();
         await Button(page, "Abandon item").ClickAsync();
         await Expect(page.GetByText("Item is now abandoned.")).ToBeVisibleAsync();
+        await Expect(page.Locator("h1")).ToHaveClassAsync("is-abandoned");
+        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Item, abandoned"]);
         await Link(page, "Lifecycle list").First.ClickAsync();
         await Button(page, "Close list").ClickAsync();
         await Expect(page.GetByText("List closed.", new() { Exact = true })).ToBeVisibleAsync();
@@ -232,6 +246,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "Lifecycle item").ClickAsync();
         await Button(page, "Reopen item").ClickAsync();
         await Expect(page.GetByText("Latest: Lifecycle list · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Item, open"]);
     }
 
     [Fact]
@@ -321,6 +336,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await page.GetByLabel("ISO week number").FillAsync("53");
         await Button(page, "Create list").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToHaveTextAsync("ISO week must be between 1 and 52 for 2025.");
+        Assert.Equal("solid", await page.Locator(".journal-error")
+            .EvaluateAsync<string>("element => getComputedStyle(element).borderTopStyle"));
         await Expect(Link(page, "Invalid week test")).ToHaveCountAsync(0);
         await Expect(page.GetByLabel("List name")).ToHaveValueAsync("Invalid week test");
     }
@@ -365,18 +382,18 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await CreateList(page, "Conflict second");
         await CaptureAsync(page, "Conflict item");
         await Link(page, "View captured item").ClickAsync();
-        await Expect(page.GetByText("Latest: Future Log · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Future Log · Open" })).ToBeVisibleAsync();
         var other = await context.NewPageAsync();
         await other.GotoAsync(page.Url);
         await MoveAsync(other, "Conflict first");
-        await Expect(other.GetByText("Latest: Conflict first · Open")).ToBeVisibleAsync();
+        await Expect(other.Locator("p").Filter(new() { HasText = "Latest: Conflict first · Open" })).ToBeVisibleAsync();
 
         await page.GetByLabel("Item name").FillAsync("Draft after conflict");
         await MoveAsync(page, "Conflict second");
         await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Refresh the journal");
         await Expect(page.GetByText("Item moved.", new() { Exact = true })).ToHaveCountAsync(0);
         await Button(page, "Refresh journal").ClickAsync();
-        await Expect(page.GetByText("Latest: Conflict first · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Conflict first · Open" })).ToBeVisibleAsync();
         await Expect(page.GetByLabel("Item name")).ToHaveValueAsync("Draft after conflict");
         var destination = page.GetByLabel("Move destination");
         await Expect(destination.Locator("option:checked")).ToHaveTextAsync("Conflict second");
@@ -386,7 +403,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Save not confirmed");
         await Expect(page.GetByText("Item moved.", new() { Exact = true })).ToHaveCountAsync(0);
         await Button(page, "Refresh journal").ClickAsync();
-        await Expect(page.GetByText("Latest: Conflict second · Open")).ToBeVisibleAsync();
+        await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Conflict second · Open" })).ToBeVisibleAsync();
         await Button(page, "Retry same move").ClickAsync();
         await Expect(page.GetByText("Item moved.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.Locator("ol li")).ToHaveCountAsync(3);
@@ -459,6 +476,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         var modal = page.Locator("#components-reconnect-modal");
         await Expect(modal).ToBeVisibleAsync();
         await Expect(modal.GetByText("Connection lost. Reconnecting...", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(modal).ToContainTextAsync("No journal data is stored offline. Unsaved changes are not queued.");
         await Expect(modal.Locator("button")).ToBeHiddenAsync();
         var form = page.Locator("form[data-journal-write]");
         await Expect(form).ToHaveAttributeAsync("inert", "");
@@ -495,10 +513,10 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     private static async Task AssertNoConnectionStatusAsync(IPage page)
     {
         await Expect(page.Locator("[data-connectivity-status], [data-circuit-status]")).ToHaveCountAsync(0);
-        await Expect(page.Locator("body")).Not.ToContainTextAsync(new System.Text.RegularExpressions.Regex(
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(
             "Server connection lost or awaiting reconnection|Browser network available|Saves still require server confirmation|" +
             "No journal data is stored offline|retain unsaved input|saved or replayed|Reloading loses unsaved",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase), await page.Locator("main").InnerTextAsync());
     }
 
     private static ILocator Link(IPage page, string name) => page.GetByRole(AriaRole.Link, new() { Name = name, Exact = true });
