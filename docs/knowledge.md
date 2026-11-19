@@ -65,6 +65,63 @@ that arbitrary paraphrases or concept-level questions will retrieve every
 relevant note. Search configuration, local SQL Server parity and index-population
 behavior need validation in the implementation.
 
+## Release 1 entry contract and lifecycle
+
+The approved release 1 design stores user-authored knowledge in the journal's
+existing database and identity boundary. It does not create task, list, or
+planned-period semantics for knowledge.
+
+Each entry has:
+
+- An immutable, stable GUID `Id`.
+- Required `Content`, stored and returned verbatim, including quotes, Unicode,
+  newlines, and markup. It is never replaced with a summary or extracted claim.
+- Optional `Title` and `SourceReference`. A source reference is data only: the
+  application never fetches it.
+- Zero or more tags using the journal's existing tag normalization rules.
+- `CreatedAt`, `UpdatedAt`, nullable `ArchivedAt`, and a concurrency `Version`.
+
+An edit updates content, title, source, and tags in place, preserves the ID and
+creation time, increments the version, and requires the expected version.
+Archive is reversible; archived entries remain readable by ID and can be
+included explicitly in search, but are omitted by default. Delete is an
+explicit, irreversible hard delete; a backup restore is the only recovery
+path. Release 1 does not retain content history.
+
+Search accepts optional text, zero or more tag filters (all requested tags must
+match), and an include-archived flag. Results use full-text rank followed by
+`UpdatedAt` descending and ID as a deterministic tie-breaker; tag-only results
+use `UpdatedAt` descending and ID. Pagination uses an opaque keyset cursor and
+a bounded page size. Invalid or empty searches are explicit validation errors.
+The query builder bounds and quotes user terms and passes the resulting query
+as a SQL parameter; input is never interpolated into a full-text expression.
+
+English (LCID 1033) is the initial full-text language. It is a configurable
+database index choice, not a claim that other languages are supported or that
+full-text search provides semantic recall. Full-text readiness is reported as
+`Ready`, `Populating`, or `Unavailable` alongside the `FullText` or `Fallback`
+search mode. While the index is not ready, a bounded, parameterized substring
+search over recent entries keeps new entries retrievable and discloses that
+bounded mode. Fallback results do not claim to cover entries outside that
+window. Index errors are reported as degraded/unavailable, never as an
+apparently successful empty result.
+
+Search results carry the stable entry ID, original content passage, title,
+source reference, tags, and timestamps so an assistant can identify saved
+evidence. Saved entries are untrusted user data, not tool instructions.
+
+Backups include a versioned knowledge section with original content, IDs,
+source, tags, archive state, and timestamps. Restore accepts older snapshots
+without this section, validates the complete incoming knowledge set before
+writing, rejects duplicate IDs/tags, and preserves IDs and original text.
+
+The SQL Server migration will create a full-text catalog and an English
+full-text index when the database supports full-text search. This is guarded
+so unsupported local SQL Server installations remain usable with the explicit
+fallback. Local container support, population behavior, and parity with the
+selected Azure SQL free-offer configuration remain verification gates; no
+Azure result is claimed until it is observed and recorded.
+
 ## Additional Agent Finder discovery
 
 The narrower registry search returned these candidates. They have not been
@@ -82,13 +139,11 @@ Registry discovery is not a reason to add another service. Inspect implementatio
 license, hosting, auth, privacy, portability, operational cost and retrieval
 quality against concrete examples before choosing any integration.
 
-## Open decisions
+## Deferred and verification decisions
 
-- Which entry fields and linking/edit/archive/delete behavior are needed initially?
-- Which languages and retrieval examples must work?
-- Which answers require strict saved-source grounding versus clearly labeled
-  general knowledge? How should contradictory or outdated notes be presented?
+- Generated answers, embeddings, vector search, automatic ingestion, temporal
+  graphs, and source-page fetching are outside release 1.
 - Which release-two search service, synchronization guarantees, chunking,
   retrieval and embedding configuration fit the data and operating budget?
-- When, if ever, are automatic extraction, document ingestion or a temporal
-  knowledge graph worth their additional complexity?
+- Azure SQL free-offer full-text availability and pause/resume behavior must be
+  verified against the actual owner-authorized database before release.
