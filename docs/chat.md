@@ -32,10 +32,11 @@ mechanism to bind an explicit user request to each direct edit.
 Next-week capture is resolved by the shared runtime using the journal clock,
 the caller's validated IANA time zone, and the ISO week model. One matching
 open weekly list is used directly. Multiple matches require a numbered choice;
-no match requires confirmation before creating a weekly list. Pending choices
-are bounded, expire, and are scoped to the authenticated user and chat
-conversation. The destination is revalidated before capture, and chat confirms
-the task and destination only after the save succeeds.
+no match requires confirmation before creating a weekly list. If the time zone
+is missing or invalid, chat asks for a valid IANA zone before proceeding.
+Pending choices are bounded, expire, and are scoped to the authenticated user
+and chat conversation. The destination is revalidated before capture, and chat
+confirms the task and destination only after the save succeeds.
 
 `POST /api/chat/agui` is the app-owned HTTP/SSE run adapter. It requires the
 approved-principal policy and `Chat:Enabled=true`. Thread IDs are run labels,

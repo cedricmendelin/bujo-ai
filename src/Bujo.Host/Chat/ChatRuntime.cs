@@ -14,7 +14,6 @@ namespace Bujo.Host.Chat;
 
 public sealed class ChatRuntime : IChatRuntime
 {
-    private const int MaximumWeeklyListChoices = 50;
     private readonly ChatToolExecutor _tools;
     private readonly JournalApplicationService _journal;
     private readonly ChatConversationStateStore _conversationStates;
@@ -80,11 +79,34 @@ public sealed class ChatRuntime : IChatRuntime
         ClaimsPrincipal principal,
         string taskName)
     {
+        if (taskName.Length > DomainLimits.ItemName)
+        {
+            return Done(
+                $"The task name must be {DomainLimits.ItemName} characters or fewer. Nothing changed.",
+                [],
+                []);
+        }
+
         var weekResult = _journal.GetNextWeek(request.TimeZone);
         if (!weekResult.IsSuccess)
         {
+            if (!_conversationStates.Set(
+                    principal,
+                    request.ConversationId,
+                    taskName,
+                    null,
+                    [],
+                    NextWeekCaptureStatus.AwaitingTimeZone,
+                    out _))
+            {
+                return Done(
+                    $"I need a valid IANA time zone to resolve next week. {weekResult.Error!.Message} Nothing changed; resend the task with a time zone to continue.",
+                    [],
+                    []);
+            }
+
             return Done(
-                $"I need a valid IANA time zone before I can resolve next week. {weekResult.Error!.Message} Nothing changed.",
+                $"I need a valid IANA time zone before I can resolve next week. {weekResult.Error!.Message} What IANA time zone should I use? Nothing has been captured.",
                 [],
                 []);
         }
@@ -94,14 +116,6 @@ public sealed class ChatRuntime : IChatRuntime
         if (matchingLists.Length == 1)
         {
             return CaptureForNextWeek(taskName, week, matchingLists[0], principal, []);
-        }
-
-        if (matchingLists.Length > MaximumWeeklyListChoices)
-        {
-            return Done(
-                $"There are too many open weekly lists for {week} to choose safely in chat. Nothing changed; inspect the Lists view and try again.",
-                [],
-                []);
         }
 
         var status = matchingLists.Length == 0
@@ -168,21 +182,60 @@ public sealed class ChatRuntime : IChatRuntime
             return Done("Cancelled the pending weekly capture. Nothing changed.", [], []);
         }
 
+        if (pending.Status == NextWeekCaptureStatus.AwaitingTimeZone)
+        {
+            var zoneResult = _journal.GetNextWeek(request.Message.Trim());
+            var timeZone = request.Message.Trim();
+            if (!zoneResult.IsSuccess && !string.IsNullOrWhiteSpace(request.TimeZone))
+            {
+                timeZone = request.TimeZone;
+                zoneResult = _journal.GetNextWeek(timeZone);
+            }
+
+            if (!zoneResult.IsSuccess)
+            {
+                return Done(
+                    $"I still need a valid IANA time zone. {zoneResult.Error!.Message} Nothing has been captured.",
+                    [],
+                    []);
+            }
+
+            if (!_conversationStates.TryBegin(
+                    principal,
+                    request.ConversationId,
+                    pending.Id,
+                    out var zoneProcessing))
+            {
+                return zoneProcessing?.Status == NextWeekCaptureStatus.Completed
+                    ? Done($"That confirmation was already handled. {zoneProcessing.Outcome}", [], [])
+                    : zoneProcessing is null
+                        ? Done("The weekly capture confirmation expired or is no longer available. Nothing changed; start again.", [], [])
+                        : Done("That weekly capture is already being handled. Nothing was repeated.", [], []);
+            }
+
+            var resumed = StartNextWeekCapture(
+                request with { TimeZone = timeZone },
+                principal,
+                pending.TaskName);
+            _conversationStates.Complete(principal, request.ConversationId, pending.Id, resumed.Text);
+            return resumed;
+        }
+
         var choice = -1;
         if (pending.Status == NextWeekCaptureStatus.AwaitingListChoice)
         {
             if (!TryParseListChoice(confirmation, out choice))
             {
                 return Done(
-                    $"The weekly capture is still waiting for a list choice. Reply `use 1` through `use {pending.CandidateListIds.Count}`, or `cancel capture`. Nothing changed.",
+                    $"The weekly capture is still waiting for a list choice. Reply `use 1` through `use {pending.CandidateCount}`, or `cancel capture`. Nothing changed.",
                     [],
                     []);
             }
 
-            if (choice < 1 || choice > pending.CandidateListIds.Count)
+            if (choice < 1 || choice > pending.CandidateCount)
             {
                 return Done(
-                    $"Choose a listed weekly destination using `use 1` through `use {pending.CandidateListIds.Count}`. Nothing changed.",
+                    $"Choose a listed weekly destination using `use 1` through `use {pending.CandidateCount}`. Nothing changed.",
                     [],
                     []);
             }
@@ -211,18 +264,25 @@ public sealed class ChatRuntime : IChatRuntime
                 []);
         }
 
-        if (weekResult.Value != pending.Week)
+        if (pending.Week is not { } pendingWeek)
+        {
+            const string staleOutcome = "The pending weekly capture is incomplete. Start the capture again.";
+            _conversationStates.Complete(principal, request.ConversationId, pending.Id, staleOutcome);
+            return Done(staleOutcome, [], []);
+        }
+
+        if (weekResult.Value != pendingWeek)
         {
             const string staleOutcome = "The next local week changed while awaiting confirmation. Start the capture again for the current week.";
             _conversationStates.Complete(principal, request.ConversationId, pending.Id, staleOutcome);
             return Done(staleOutcome, [], []);
         }
 
-        var currentCandidates = FindOpenWeeklyLists(pending.Week);
+        var currentCandidates = FindOpenWeeklyLists(pendingWeek);
         JournalListSnapshot? destination = null;
         if (pending.Status == NextWeekCaptureStatus.AwaitingListChoice)
         {
-            if (!currentCandidates.Select(list => list.Id).SequenceEqual(pending.CandidateListIds))
+            if (!ChatConversationStateStore.HasSameCandidates(pending, currentCandidates))
             {
                 const string staleOutcome = "The matching weekly lists changed while awaiting confirmation. Nothing was captured; start again to review the current choices.";
                 _conversationStates.Complete(principal, request.ConversationId, pending.Id, staleOutcome);
@@ -253,9 +313,8 @@ public sealed class ChatRuntime : IChatRuntime
 
         if (pending.Status == NextWeekCaptureStatus.AwaitingListChoice)
         {
-            var refreshed = FindOpenWeeklyLists(pending.Week);
-            if (refreshed.Length != pending.CandidateListIds.Count ||
-                !refreshed.Select(list => list.Id).SequenceEqual(pending.CandidateListIds))
+            var refreshed = FindOpenWeeklyLists(pendingWeek);
+            if (!ChatConversationStateStore.HasSameCandidates(pending, refreshed))
             {
                 const string staleOutcome = "The matching weekly lists changed while confirming. Nothing was captured; start again to review the current choices.";
                 _conversationStates.Complete(principal, request.ConversationId, pending.Id, staleOutcome);
@@ -263,12 +322,12 @@ public sealed class ChatRuntime : IChatRuntime
             }
 
             destination = refreshed[choice - 1];
-            var capture = CaptureForNextWeek(pending.TaskName, pending.Week, destination, principal, []);
+            var capture = CaptureForNextWeek(pending.TaskName, pendingWeek, destination, principal, []);
             _conversationStates.Complete(principal, request.ConversationId, pending.Id, capture.Text);
             return capture;
         }
 
-        var beforeCreate = FindOpenWeeklyLists(pending.Week);
+        var beforeCreate = FindOpenWeeklyLists(pendingWeek);
         if (beforeCreate.Length != 0)
         {
             const string staleOutcome = "An open weekly list appeared while confirming. Nothing was created or captured; start again to review the current destination.";
@@ -276,30 +335,38 @@ public sealed class ChatRuntime : IChatRuntime
             return Done(staleOutcome, [], []);
         }
 
-        var listName = NextAvailableWeeklyListName(pending.Week);
+        var listName = NextAvailableWeeklyListName(pendingWeek);
         var toolCalls = new List<ChatToolCall>();
         var created = Execute("create_list",
-            new { name = listName, kind = JournalListKind.Weekly.ToString(), weekKey = new { year = pending.Week.Year, week = pending.Week.Week } },
+            new { name = listName, kind = JournalListKind.Weekly.ToString(), weekKey = new { year = pendingWeek.Year, week = pendingWeek.Week } },
             principal,
             toolCalls);
         if (!created.Succeeded || created.Value is not JournalListSnapshot createdList)
         {
-            var failure = $"I could not create the weekly list for {pending.Week}. The task was not captured. {created.Summary}";
+            var failure = $"I could not create the weekly list for {pendingWeek}. The task was not captured. {created.Summary}";
             _conversationStates.Complete(principal, request.ConversationId, pending.Id, failure);
             return Done(failure, toolCalls, []);
         }
 
-        var afterCreate = FindOpenWeeklyLists(pending.Week);
+        var afterCreate = FindOpenWeeklyLists(pendingWeek);
         if (afterCreate.Length != 1 || afterCreate[0].Id != createdList.Id)
         {
-            var failure = $"Created '{createdList.Name}', but another matching weekly destination appeared. I did not capture '{pending.TaskName}'; review the Lists view.";
+            var failure = $"Created '{createdList.Name}', but the weekly destination changed before capture. I did not capture '{pending.TaskName}'; review the Lists view.";
             _conversationStates.Complete(principal, request.ConversationId, pending.Id, failure);
             return Done(failure, toolCalls, []);
         }
 
-        var result = CaptureForNextWeek(pending.TaskName, pending.Week, createdList, principal, toolCalls);
-        _conversationStates.Complete(principal, request.ConversationId, pending.Id, result.Text);
-        return result;
+        var result = CaptureForNextWeek(pending.TaskName, pendingWeek, createdList, principal, toolCalls);
+        if (toolCalls[^1].Succeeded)
+        {
+            _conversationStates.Complete(principal, request.ConversationId, pending.Id, result.Text);
+            return result;
+        }
+
+        var captureFailure =
+            $"Created '{createdList.Name}', but task '{pending.TaskName}' was not captured. {result.Text}";
+        _conversationStates.Complete(principal, request.ConversationId, pending.Id, captureFailure);
+        return Done(captureFailure, toolCalls, []);
     }
 
     private JournalListSnapshot[] FindOpenWeeklyLists(IsoWeekKey week) =>
@@ -365,9 +432,29 @@ public sealed class ChatRuntime : IChatRuntime
     private static bool TryParseNextWeekIntent(string message, out string taskName)
     {
         taskName = "";
-        var text = message.Trim().TrimEnd('.', '!', '?').Trim();
+        var original = message.Trim();
+        var text = original.TrimEnd('.', '!', '?').Trim();
         const string suffix = " next week";
         if (!text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var lower = text.ToLowerInvariant();
+        var explicitCapture = StartsWith(
+            lower,
+            "capture ",
+            "add ",
+            "remember ",
+            "write down ",
+            "can you capture ",
+            "could you capture ",
+            "please capture ");
+        if (lower.StartsWith("add list ", StringComparison.Ordinal) ||
+            lower.StartsWith("create list ", StringComparison.Ordinal) ||
+            (!explicitCapture &&
+             (original.EndsWith("?", StringComparison.Ordinal) ||
+              StartsWith(lower, "move ", "complete ", "done ", "review ", "close ", "find ", "show ", "what ", "what's ", "upcoming ", "edit ", "rename "))))
         {
             return false;
         }

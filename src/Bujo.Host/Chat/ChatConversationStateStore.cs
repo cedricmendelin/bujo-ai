@@ -1,10 +1,13 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Bujo.Domain;
 
 namespace Bujo.Host.Chat;
 
 public enum NextWeekCaptureStatus
 {
+    AwaitingTimeZone,
     AwaitingListChoice,
     AwaitingCreateConfirmation,
     Processing,
@@ -14,8 +17,9 @@ public enum NextWeekCaptureStatus
 public sealed record NextWeekCaptureState(
     Guid Id,
     string TaskName,
-    IsoWeekKey Week,
-    IReadOnlyList<Guid> CandidateListIds,
+    IsoWeekKey? Week,
+    int CandidateCount,
+    string CandidateDigest,
     NextWeekCaptureStatus Status,
     DateTimeOffset ExpiresAt,
     string? Outcome = null);
@@ -50,7 +54,7 @@ public sealed class ChatConversationStateStore(TimeProvider? clock = null)
         ClaimsPrincipal principal,
         string? conversationId,
         string taskName,
-        IsoWeekKey week,
+        IsoWeekKey? week,
         IReadOnlyList<Guid> candidateListIds,
         NextWeekCaptureStatus status,
         out NextWeekCaptureState state)
@@ -74,13 +78,22 @@ public sealed class ChatConversationStateStore(TimeProvider? clock = null)
                 Guid.NewGuid(),
                 taskName,
                 week,
-                candidateListIds.ToArray(),
+                candidateListIds.Count,
+                CandidateDigestFor(candidateListIds),
                 status,
                 _clock.GetUtcNow() + Lifetime);
             _states[scope] = state;
             return true;
         }
     }
+
+    public static bool HasSameCandidates(
+        NextWeekCaptureState state,
+        IReadOnlyList<JournalListSnapshot> candidates) =>
+        state.CandidateCount == candidates.Count &&
+        StringComparer.Ordinal.Equals(
+            state.CandidateDigest,
+            CandidateDigestFor(candidates.Select(candidate => candidate.Id).ToArray()));
 
     public bool TryBegin(
         ClaimsPrincipal principal,
@@ -138,7 +151,9 @@ public sealed class ChatConversationStateStore(TimeProvider? clock = null)
         lock (_gate)
         {
             if (_states.TryGetValue(scope, out var state) && state.Id == stateId &&
-                state.Status is NextWeekCaptureStatus.AwaitingListChoice or NextWeekCaptureStatus.AwaitingCreateConfirmation)
+                state.Status is NextWeekCaptureStatus.AwaitingTimeZone or
+                    NextWeekCaptureStatus.AwaitingListChoice or
+                    NextWeekCaptureStatus.AwaitingCreateConfirmation)
             {
                 _states.Remove(scope);
             }
@@ -175,6 +190,12 @@ public sealed class ChatConversationStateStore(TimeProvider? clock = null)
         {
             _states.Remove(scope);
         }
+    }
+
+    private static string CandidateDigestFor(IReadOnlyList<Guid> candidateListIds)
+    {
+        var serialized = string.Join("", candidateListIds.Select(id => id.ToString("N")));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(serialized)));
     }
 
     private static bool TryGetScope(
