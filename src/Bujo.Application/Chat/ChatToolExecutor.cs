@@ -6,7 +6,7 @@ namespace Bujo.Application.Chat;
 
 public sealed class ChatToolExecutor(
     JournalApplicationService journal,
-    ReviewApplicationService reviews)
+    ReviewApplicationService reviews) : IChatToolExecutor
 {
     public ChatToolResult Execute(ChatToolRequest request)
     {

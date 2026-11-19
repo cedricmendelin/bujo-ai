@@ -49,3 +49,8 @@ public sealed record ChatToolResult(
     bool Succeeded,
     string Summary,
     object? Value);
+
+public interface IChatToolExecutor
+{
+    ChatToolResult Execute(ChatToolRequest request);
+}
