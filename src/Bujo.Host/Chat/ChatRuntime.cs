@@ -400,10 +400,22 @@ public sealed class ChatRuntime : IChatRuntime
                     foreach (var call in callElements.EnumerateArray())
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        if (toolCalls.Count >= _options.MaxToolCallsPerRun)
+                        {
+                            return Done("The response stopped after the tool-call limit. No further actions will be attempted.",
+                                toolCalls, proposals);
+                        }
+
                         var name = call.GetProperty("function").GetProperty("name").GetString() ?? "";
                         var argumentsText = call.GetProperty("function").GetProperty("arguments").GetString() ?? "{}";
                         using var arguments = JsonDocument.Parse(argumentsText);
-                        var result = _tools.Execute(new ChatToolRequest(name, arguments.RootElement.Clone(), principal));
+                        var descriptor = ChatToolRegistry.All.SingleOrDefault(tool =>
+                            StringComparer.Ordinal.Equals(tool.Name, name));
+                        var result = descriptor is { Category: "write" } &&
+                                     name != ChatToolNames.CreateReviewProposal
+                            ? new ChatToolResult(false,
+                                "Model-initiated changes are unavailable. Use the journal UI or a review proposal.", null)
+                            : _tools.Execute(new ChatToolRequest(name, arguments.RootElement.Clone(), principal));
                         toolCalls.Add(new ChatToolCall(name, result.Succeeded, result.Summary));
                         executedCalls.Add((call.Clone(), result));
 

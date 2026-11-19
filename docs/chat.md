@@ -26,6 +26,8 @@ The CI-safe default provider is `Mock`. It recognizes common journal reads,
 captures, list commands and explicit item operations while still routing every
 supported operation through the shared typed registry. Model and mock calls
 cannot execute approval-gated tools; use journal views for moves and abandonment.
+Foundry model calls cannot execute other writes either, pending a server-side
+mechanism to bind an explicit user request to each direct edit.
 
 `POST /api/chat/agui` is the app-owned HTTP/SSE run adapter. It requires the
 approved-principal policy and `Chat:Enabled=true`. Thread IDs are run labels,
@@ -34,7 +36,9 @@ completes, rather than streaming them during execution.
 
 An optional Foundry provider is disabled until endpoint, deployment and managed
 identity configuration are verified. It is server-side only; no provider token
-or journal credential is sent to the browser.
+or journal credential is sent to the browser. The `get_journal` tool can return
+the whole journal to Foundry when the model calls it, subject to the tool-result
+size limit; narrower tools should be preferred where possible.
 
 ## Tool parity
 
@@ -53,7 +57,9 @@ The journal API and MCP remain the source surfaces for all journal capabilities.
 
 ## Approvals
 
-Direct explicit captures and individual edits can execute after domain checks.
+The mock provider can execute its supported direct captures and individual
+edits after domain checks. Foundry writes fail closed except for pending review
+proposal creation until direct intent can be verified server-side.
 Review proposals render an approval card showing their exact changes and
 expiration. Approving applies only that digest and exact version set. Reject,
 cancel and stale or conflicted proposals perform no journal write. Direct

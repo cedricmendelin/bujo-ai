@@ -23,8 +23,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
 
         var card = page.Locator("section.chat-proposal");
         await Expect(card.GetByText("Approval required")).ToBeVisibleAsync();
-        await Expect(card).ToContainTextAsync($"List: {list.Id}");
-        await Expect(card).ToContainTextAsync($"item {captured.Item.Id}");
+        await Expect(card).ToContainTextAsync($"List: Approval card projects ({list.Id})");
+        await Expect(card).ToContainTextAsync($"item Approval card task ({captured.Item.Id})");
         await Expect(card).ToContainTextAsync($"occurrence {captured.Occurrence.Id}");
         await Expect(card).ToContainTextAsync("Abandon");
         await Expect(card).ToContainTextAsync("Close this list after applying the changes.");

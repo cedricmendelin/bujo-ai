@@ -35,17 +35,18 @@
         <section class="chat-proposal" aria-labelledby="proposal-@card.ProposalId">
             <h2 id="proposal-@card.ProposalId">Approval required</h2>
             <p>@card.Summary</p>
-            <p>List: <a href="/lists/@card.Proposal.ListId">@card.Proposal.ListId</a> · version @card.Proposal.ExpectedListVersion</p>
+            <p>List: <a href="/lists/@card.Proposal.ListId">@card.ListName (@card.Proposal.ListId)</a> · version @card.Proposal.ExpectedListVersion</p>
             <p>@(card.Proposal.RequestCloseList ? "Close this list after applying the changes." : "Keep this list open.")</p>
             <ul>
-                @foreach (var change in card.Proposal.Changes)
+                @foreach (var entry in card.Changes)
                 {
+                    var change = entry.Change;
                     <li>
-                        @change.Action · item @change.ItemId ·
+                        @change.Action · item @entry.ItemName (@change.ItemId) ·
                         <a href="/items/@change.OccurrenceId">occurrence @change.OccurrenceId</a> · item version @change.ExpectedItemVersion
                         @if (change.DestinationListId is { } destination)
                         {
-                            <span> · destination <a href="/lists/@destination">@destination</a> · version @change.ExpectedDestinationListVersion</span>
+                            <span> · destination <a href="/lists/@destination">@entry.DestinationName (@destination)</a> · version @change.ExpectedDestinationListVersion</span>
                         }
                     </li>
                 }
@@ -100,6 +101,7 @@
 
 @code {
     [Inject] private IChatRuntime Runtime { get; set; } = null!;
+    [Inject] private JournalApplicationService Journal { get; set; } = null!;
     [Inject] private ReviewApplicationService Reviews { get; set; } = null!;
     [Inject] private AuthenticationStateProvider Authentication { get; set; } = null!;
     [Inject] private IJSRuntime JS { get; set; } = null!;
@@ -210,9 +212,36 @@
                         continue;
                     }
 
+                    var snapshot = Journal.GetSnapshot();
+                    var list = snapshot.Lists.SingleOrDefault(item =>
+                        item.Id == fetched.Value.ListId && item.Version == fetched.Value.ExpectedListVersion);
+                    var changes = new List<ProposalChangeState>();
+                    foreach (var change in fetched.Value.Changes)
+                    {
+                        var item = snapshot.Items.SingleOrDefault(candidate =>
+                            candidate.Id == change.ItemId && candidate.Version == change.ExpectedItemVersion);
+                        var destination = change.DestinationListId is { } id
+                            ? snapshot.Lists.SingleOrDefault(candidate =>
+                                candidate.Id == id && candidate.Version == change.ExpectedDestinationListVersion)
+                            : null;
+                        if (item is null || (change.DestinationListId is not null && destination is null))
+                        {
+                            changes.Clear();
+                            break;
+                        }
+                        changes.Add(new ProposalChangeState(change, item.Name, destination?.Name));
+                    }
+                    if (list is null || changes.Count != fetched.Value.Changes.Count)
+                    {
+                        _status = "The proposal is stale. Review the current journal before trying again.";
+                        continue;
+                    }
+
                     _proposals.Add(new ProposalCardState(
                         fetched.Value,
                         proposal.Summary,
+                        list.Name,
+                        changes,
                         "pending"));
                 }
             }
@@ -413,7 +442,7 @@
         }
         catch (Exception)
         {
-            card.State = "No change: the proposal could not be resolved.";
+            card.State = "Result unknown. Check the journal before trying again.";
             _status = card.State;
         }
         finally
@@ -439,16 +468,21 @@
     }
 
     private sealed record ChatMessage(ChatRole Role, string Text);
+    private sealed record ProposalChangeState(ReviewChange Change, string ItemName, string? DestinationName);
 
     private sealed class ProposalCardState(
         ReviewProposalSnapshot proposal,
         string summary,
+        string listName,
+        IReadOnlyList<ProposalChangeState> changes,
         string state)
     {
         public ReviewProposalSnapshot Proposal { get; } = proposal;
         public Guid ProposalId => Proposal.Id;
         public string Digest => Proposal.Digest;
         public string Summary { get; } = summary;
+        public string ListName { get; } = listName;
+        public IReadOnlyList<ProposalChangeState> Changes { get; } = changes;
         public DateTimeOffset ExpiresAt => Proposal.ExpiresAt;
         public string State { get; set; } = state;
     }

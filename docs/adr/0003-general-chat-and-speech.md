@@ -45,13 +45,16 @@ The chat registry contains the 22 current MCP tools. It maps to existing
 `JournalApplicationService` and `ReviewApplicationService` operations; it has no
 SQL, unrestricted network or database access.
 
-Explicit individual reads and edits may execute directly after server-side
-authorization and domain validation. The chat executor refuses model or mock
+The deterministic mock can execute its supported explicit individual edits
+after domain validation. Foundry model-initiated writes are currently refused
+except for creating a pending review proposal: a prompt alone cannot establish
+that a write was explicitly requested. The chat executor also refuses mock
 calls to approval-gated actions, except for creating a pending review proposal.
 The card retrieves that proposal and displays its exact changes before a PWA
 user can approve and apply it using the existing digest, expiry and concurrency
 checks. Reject and cancel are PWA actions. Direct chat moves and abandonment
 are unavailable rather than bypassing approval; journal views remain available.
+Trusted user-intent binding for direct Foundry edits remains outstanding.
 
 ## Privacy and resilience
 
