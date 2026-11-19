@@ -65,6 +65,19 @@ perimeter restriction. This does not grant anonymous access or change workspace
 authentication and permissions. Change these settings in Terraform, not in the
 portal, to keep them across applies.
 
+## Journal readiness notes
+
+The journal database and backups remain external to the Container App; the
+container filesystem is not durable storage. External ingress terminates HTTPS
+at the Container Apps platform and forwards to port 8080. SQL enforces TLS 1.2
+and uses the runtime managed identity; the current app has no SQL password or
+Key Vault secret reference. Key Vault is provisioned but contains no
+Terraform-managed application secret. Keep the current single-replica,
+scale-to-zero assumption until circuit/session behavior, connection limits,
+restore recovery, and cost are approved and measured. Readiness and restore
+steps are in [operations.md](operations.md); this document does not authorize
+provisioning or deployment.
+
 ## Non-AVM justification
 
 | Resource or operation | Reason |

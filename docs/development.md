@@ -126,6 +126,44 @@ Verification and migration flags are mutually exclusive. `--verify-database`
 never applies migrations; `--migrate-only` remains the dedicated production
 migration entry point.
 
+## Container image and SQL durability validation
+
+Build the application image locally without deploying it:
+
+```sh
+docker build --tag bujo-ai:local .
+# Podman can be used instead:
+podman build --tag bujo-ai:local .
+```
+
+Run the normal solution checks with the pinned SDK:
+
+```sh
+dotnet build Bujo.slnx --configuration Release
+dotnet test Bujo.slnx --configuration Release
+```
+
+SQL-backed durability tests are opt-in and use a real SQL Server database.
+Start the local Aspire AppHost as described above, then provide
+`BUJO_SQL_DURABILITY_CONNECTION` with a SQL Server connection string whose
+credential is held outside the repository and whose login can create/drop a
+temporary test database. Obtain the local SQL connection details from the
+running Aspire resource and set the variable only in the test process
+environment. Do not print or commit the connection string. The test
+creates a uniquely named database, applies the checked-in migrations, exercises
+the production EF SQL Server provider, and drops the database afterward.
+
+```sh
+dotnet test tests/Bujo.Integration.Tests/Bujo.Integration.Tests.csproj \
+  --configuration Release --filter "Category=SqlDurability"
+```
+
+These tests are not part of required CI: the SQL Server bootstrap was removed
+at the owner's request. A successful local SQL Server test does not establish
+Azure SQL parity or prove production backup/restore behavior. Keep the Aspire
+AppHost compatibility caveat below; do not infer vendor certification from a
+local run.
+
 ## Compatibility evidence
 
 The repository pins SDK 11.0.100 and Aspire 13.6.5. Local validation used that
