@@ -128,7 +128,7 @@ PRs remain required.
 |---|---|
 | Approved issue scope | Human-approved versioned plan and the PR's ordinary plan reference |
 | Mechanical completion/linking errors | Trusted controller for recognized generated suffixes; explicit maintainer feedback otherwise |
-| CI failures and target-branch conflicts (cloud) | GitHub.com Copilot **Watch and fix**, when enabled |
+| CI failures and target-branch conflicts (cloud) | GitHub.com Copilot **Watch and fix**, when enabled; a maintainer can ask the cloud agent directly for conflict repair |
 | CI failures and conflicts (local) | Desktop-app Agent merge, if explicitly enabled |
 | Specialist reviews and aggregate decision | Architect, Security, Verifier, DevOps; one `Squad PR Lifecycle` controller |
 | Actual merge | GitHub auto-merge under branch protections; never a direct REST merge |
@@ -149,11 +149,15 @@ whose session succeeded without triggering the controller. An empty list
 starts no per-PR jobs; GitHub still runs the read-only lookup. The fallback
 skips forks, local drafts, `needs:human` pauses, and active or unverified cloud
 sessions. It uses the same per-PR lock and readiness gates as event runs.
-If GitHub reports a conflict or a current-head CI failure with no retry running,
-the fallback names the existing repair owner instead of starting another
-agent. It notifies once per conflict head/base or failing CI head; an unknown
-mergeability result is not treated as a conflict. An issue checklist correction
-is picked up on the next eligible pass or by manual re-evaluation.
+If GitHub reports a cloud PR conflict, the fallback supplies a copy-ready
+`@copilot` request for a maintainer to post as a new PR comment. Post it only
+while the conflict persists and no repair is running. If taking over from
+Watch and fix, turn off its conflict repair first. Cloud CI-only notices still
+point to Watch and fix; local notices still point to the local delivery owner.
+The fallback itself starts no repair agent. It notifies once per conflict
+head/base or failing CI head; an unknown mergeability result is not treated
+as a conflict. An issue checklist correction is picked up on the next eligible
+pass or by manual re-evaluation.
 
 When all inputs pass and the required rules are present, the controller keeps
 `Squad Merge Readiness` pending while enabling GitHub squash auto-merge, then
@@ -183,8 +187,8 @@ dispatching `Squad PR Lifecycle` with its PR number. Confirm the selected review
 runs complete and publish checks on the current head. Do not remove the label
 for an unrelated human decision or bypass reviews/protections to recover.
 
-The controller does not repair CI failures or merge conflicts; it leaves those
-to the native cloud/local repair owner. It does not enable desktop-app Agent
+The controller does not repair CI failures or merge conflicts; it only provides
+repair instructions in those blocker notices. It does not enable desktop-app Agent
 merge's **Merge** action. For local takeover of a cloud PR, the owner disables
 Watch and fix first to prevent competing repair agents. Adding `handoff:local`
 does not claim to stop or cancel native running work.

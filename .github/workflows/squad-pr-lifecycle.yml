@@ -538,12 +538,21 @@ jobs:
                 if (blockers.length) {
                   const unseen = blockers.filter(({ key }) => !comments.some(comment => isControllerComment(comment, owner)
                     && (comment.body || '').includes(`<!-- squad-scheduled-blocker:${key} -->`)));
-                  const route = cloudPr
-                    ? 'Check whether **Watch and fix** is enabled for this blocker and whether it is making progress.'
-                    : 'The designated local delivery owner should inspect and repair the branch.';
+                  const route = items => {
+                    if (!cloudPr) return 'The designated local delivery owner should inspect and repair the branch.';
+                    const instructions = [];
+                    if (items.some(({ key }) => key.startsWith('conflict:'))) instructions.push(
+                      'If the PR is still conflicting and you are taking over from **Watch and fix**, turn off its conflict repair first. If no repair is already running, post this as a new PR comment:',
+                      '```\n@copilot Resolve the merge conflicts with the target branch on this PR. Keep the approved scope, push to this PR branch, and do not merge the PR.\n```',
+                    );
+                    if (items.some(({ key }) => key.startsWith('ci:'))) instructions.push(
+                      'For CI, check whether **Watch and fix** is enabled for failed workflows and whether it is making progress.',
+                    );
+                    return instructions.join('\n\n');
+                  };
                   if (unseen.length) await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `${unseen.map(({ key }) => `<!-- squad-scheduled-blocker:${key} -->`).join('\n')}\n@${human} ${unseen.map(({ detail }) => detail).join(' ')} ${route} The hourly fallback did not start a repair agent.` });
-                  scheduledBlocker = `${blockers.map(({ detail }) => detail).join(' ')} ${route}`;
+                    body: `${unseen.map(({ key }) => `<!-- squad-scheduled-blocker:${key} -->`).join('\n')}\n@${human} ${unseen.map(({ detail }) => detail).join(' ')}\n\n${route(unseen)}\n\nThe hourly fallback did not start a repair agent.` });
+                  scheduledBlocker = `${blockers.map(({ detail }) => detail).join(' ')}\n\nSee the hourly blocker notice for repair instructions.`;
                 }
               }
               if (!scheduledBlocker && (!ci || ci.conclusion === 'action_required') && cloudPr

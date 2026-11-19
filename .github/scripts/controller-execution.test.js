@@ -771,15 +771,38 @@ test('hourly fallback leaves active sessions alone and deduplicates conflict and
   assert.deepEqual(active.calls.map(call => call.name), ['workflows', 'pr', 'runs']);
   state.runs.copilot[0].status = 'completed';
   const blocked = await execute(state);
-  assert.match(commentsFrom(blocked)[0], /merge conflict.*`ci` check failed.*Watch and fix/s);
+  const [notice] = commentsFrom(blocked);
+  assert.match(notice, /merge conflict.*`ci` check failed/s);
+  assert.match(notice, /If no repair is already running, post this as a new PR comment:/);
+  assert.match(notice, /\n```\n@copilot Resolve the merge conflicts with the target branch on this PR\. Keep the approved scope, push to this PR branch, and do not merge the PR\.\n```\n/);
+  assert.match(notice, /For CI, check whether \*\*Watch and fix\*\*/);
   assert.equal(blocked.calls.some(call => call.name === 'dispatch' || call.name === 'mutation'), false);
   assert.equal(commentsFrom(await execute(state)).length, 0);
 
   state.pr.base.sha = 'c'.repeat(40);
   const changedBase = commentsFrom(await execute(state));
   assert.equal(changedBase.length, 1);
-  assert.match(changedBase[0], /merge conflict/);
-  assert.doesNotMatch(changedBase[0], /`ci` check failed/);
+  assert.match(changedBase[0], /@copilot Resolve the merge conflicts/);
+  assert.doesNotMatch(changedBase[0], /`ci` check failed|For CI/);
+});
+
+test('hourly fallback does not suggest a cloud conflict repair for CI alone or local takeover', async () => {
+  const ciOnly = fixture();
+  cloud(ciOnly);
+  ciOnly.context.eventName = 'schedule';
+  ciOnly.checks.find(check => check.name === 'ci').conclusion = 'failure';
+  const [ciNotice] = commentsFrom(await execute(ciOnly));
+  assert.match(ciNotice, /`ci` check failed.*Watch and fix/s);
+  assert.doesNotMatch(ciNotice, /@copilot/);
+
+  const local = fixture();
+  cloud(local);
+  local.context.eventName = 'schedule';
+  local.pr.labels.push({ name: 'handoff:local' });
+  local.pr.mergeable = false;
+  const [localNotice] = commentsFrom(await execute(local));
+  assert.match(localNotice, /merge conflict.*local delivery owner/s);
+  assert.doesNotMatch(localNotice, /@copilot/);
 });
 
 test('first valid plan clears existing approval; malformed and gapped history clear approval and report failure', async () => {
