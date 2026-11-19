@@ -10,6 +10,19 @@ during discovery. Sections marked agreed define the current scope; other feature
 remain candidates, not commitments. The decision history lives in
 [Squad decisions](../.squad/decisions.md).
 
+## Why Bujo-AI?
+
+A flat task list makes you look at everything at once. A calendar makes you
+choose a date before you always know one. Bujo-AI lets you capture a thought now
+and decide later whether to keep it, plan it, move it, or let it go. The Future
+Log holds unplanned work, Today brings relevant intentions back into view, and
+list review gives you a place to decide what to carry forward.
+
+Use the [web app](user-guide.md) when you want to see and edit the journal
+directly, or an [MCP assistant](mcp.md) when asking in your own words is easier.
+Both work against the same journal. The goal is fewer things to remember, not
+more alerts to manage or an assistant deciding your priorities.
+
 ## Interaction and architecture direction
 
 **Agreed first-release audience:** personal, single-user use with authenticated

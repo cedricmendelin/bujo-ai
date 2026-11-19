@@ -53,6 +53,13 @@ recorded decisions; read history only when prior work is relevant.
 - Every journal capability ships on both the API and MCP. Plans and PRs name
   the API endpoint and MCP tool, or cite an explicit, justified, tested
   exception.
+- User documentation is part of every feature's delivery. Architect is its
+  single accountable owner; the feature implementer updates affected app usage,
+  MCP usage, and product concept/why docs in the same PR. Plans name doc paths
+  and verification; PRs link updates or explain N/A for each unaffected surface.
+  Describe shipped behavior and limitations accurately, not proposals as facts.
+  Verifier checks this under the existing acceptance review; see
+  `docs/workflow.md` → *User documentation with every feature*.
 - Never commit secrets, tenant/subscription IDs, connection strings, or personal
   data. GitHub Actions authenticate to Azure with OIDC only. Do not pull
   later-release scope (such as release 2 AI search/RAG) into a change.
