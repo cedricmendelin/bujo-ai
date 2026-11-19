@@ -6,29 +6,30 @@ The [deployment guide](../docs/deployment.md) describes automatic plan/apply for
 merged infrastructure changes, on-demand reconciliation, and the separate
 application migration and promotion gate. Deployment workflows use OIDC only.
 
-The optional Foundry account, project, and model deployments are disabled by
-default. Model/region/SKU choices and owner-only enablement requirements are
+The Foundry account, project, and model deployments are enabled in
+`prod.tfvars`; the Terraform variable default remains disabled. The approved
+model/region/SKU settings and owner-managed runtime identity grant are
 documented in [Optional Microsoft Foundry model provider](../docs/infrastructure.md#optional-microsoft-foundry-model-provider).
-No model inference or journal access is enabled by provisioning these resources.
-Issue #128 plan v1 milestone A keeps `foundry_enabled = false` and configures
-only a reference to the existing `bujo-ai-foundry-admins` Entra group through
-nullable `foundry_access_group` (`object_id` GUID and non-empty `display_name`).
-Terraform does not manage or look up the group or membership.
+Provisioning these resources does not enable model inference or journal access.
+The owner approved this configuration after issue #128 plan v1's disabled
+milestone A; the rollout issue remains open for live verification.
+
+`foundry_access_group` can reference an existing Entra group, but production
+sets it to `null` so Terraform does not attempt group role assignments. The
+group and its membership are never managed or looked up by Terraform.
 
 When enabled with a configured group, Terraform assigns **Cognitive Services
 OpenAI User** and **Foundry User** (the renamed **Azure AI User** role) at the
-Foundry account scope. It grants no
-management roles and no access to the deployment identity. Applying these
-assignments requires an owner-approved, out-of-band, constrained RBAC
-Administrator grant for the deployment identity; its current Contributor
-permission is insufficient. Alternatively, leave the group variable null and
-have an authorized administrator manage the roles manually. Runtime identity
-OpenAI User access is still a separate administrator action.
+Foundry account scope. The production configuration leaves these group roles
+external; an authorized administrator can assign them manually if needed. The
+runtime identity's OpenAI User role is a separate manual grant before inference.
+Do not grant role-assignment permissions to GitHub OIDC; Contributor cannot
+create role assignments, even at subscription scope.
 
-Before a separate authorized enablement PR, follow the linked
-[evidence checklist](../docs/infrastructure.md#remaining-work-and-acceptance-evidence)
-for model/region/SKU/privacy/cost approval, an enabled plan, workflow apply and
-sanitized account-scoped group/runtime role verification.
+Before the next apply, verify current model/region/SKU availability, quota and
+pricing. Follow the [remaining evidence checklist](../docs/infrastructure.md#remaining-work-and-acceptance-evidence)
+for an enabled plan, workflow apply, and sanitized account-scoped role
+verification.
 
 Local checks (from this directory):
 
@@ -39,9 +40,9 @@ terraform validate
 terraform test
 ```
 
-The repository infrastructure CI suite also runs the Foundry mock contracts:
-`python3 -m unittest discover -s tests/infrastructure -p 'test_*.py'` from the
-repository root. These tests are not evidence of live Azure provisioning.
+The Foundry mock contracts run through `terraform test`; no Python test suite
+is used for infrastructure or deployment behavior. Mock tests do not establish
+live Azure provisioning.
 
 ## PWA BFF client
 

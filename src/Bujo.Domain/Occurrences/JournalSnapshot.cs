@@ -139,4 +139,48 @@ public sealed class JournalSnapshot
         return DomainResult<ItemResolution>.Success(
             new ItemResolution(item, source, current, list, chain.AsReadOnly()));
     }
+
+    public DomainResult<ListReview> GetListReview(Guid listId)
+    {
+        var list = Lists.SingleOrDefault(candidate => candidate.Id == listId);
+        if (list is null)
+        {
+            return DomainResult<ListReview>.Failure(
+                new DomainError(DomainErrorCode.NotFound, "The list was not found."));
+        }
+
+        var items = Items.ToDictionary(item => item.Id);
+        var entries = new List<ListReviewEntry>();
+        foreach (var occurrence in Occurrences
+            .Where(occurrence => occurrence.ListId == listId)
+            .OrderBy(occurrence => occurrence.Sequence)
+            .ThenBy(occurrence => occurrence.Id))
+        {
+            ItemResolution? resolution = null;
+            if (occurrence.State == OccurrenceState.Moved)
+            {
+                var resolved = Resolve(occurrence.Id);
+                if (!resolved.IsSuccess)
+                {
+                    return DomainResult<ListReview>.Failure(resolved.Error!);
+                }
+
+                resolution = resolved.Value;
+            }
+
+            if (!items.TryGetValue(occurrence.ItemId, out var item))
+            {
+                return DomainResult<ListReview>.Failure(
+                    new DomainError(DomainErrorCode.InvariantViolation, "Occurrence has no canonical item."));
+            }
+
+            entries.Add(new ListReviewEntry(item, occurrence, resolution));
+        }
+
+        return DomainResult<ListReview>.Success(new ListReview(
+            list,
+            entries.Where(entry => entry.Occurrence.State == OccurrenceState.Open).ToArray(),
+            entries.Where(entry => entry.Occurrence.State == OccurrenceState.Moved).ToArray(),
+            entries.Where(entry => entry.Occurrence.State is OccurrenceState.Done or OccurrenceState.Abandoned).ToArray()));
+    }
 }

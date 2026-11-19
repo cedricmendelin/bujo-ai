@@ -23,8 +23,8 @@ or credentials belong in the repository.
 - Agreed boundary: one modular ASP.NET Core application hosts PWA, API, and remote
   MCP over shared domain/application services; external Azure SQL owns durable
   data. Foundry is a later optional adapter, not the journal's source of truth.
-- Agreed first-release connectivity: installable but online-first, explicit
-  offline state, and server-confirmed saves; no offline write/sync queue.
+- Agreed first-release connectivity: installable but online-only, minimal
+  circuit-loss recovery, and server-confirmed saves; no offline write/sync queue.
 - Azure SQL is the durable source for journal and knowledge data; hosting
   configuration, local development and operating cost still require validation.
 - **Agreed first in-app AI experience:** a weekly-planning coach launched from

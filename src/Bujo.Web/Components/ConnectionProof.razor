@@ -47,7 +47,7 @@
         }
         catch (JSDisconnectedException)
         {
-            // The connection banner supplies recovery guidance without replaying an action.
+            // Blazor handles reconnect independently of the probe.
         }
     }
 

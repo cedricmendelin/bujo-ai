@@ -16,6 +16,13 @@ internal static class JournalStateSerializer
         JsonSerializer.Deserialize<MoveResult>(result, Options)
         ?? throw new JsonException("Stored move result is empty.");
 
+    public static string SerializeReviewChanges(IReadOnlyList<ReviewChange> changes) =>
+        JsonSerializer.Serialize(changes, Options);
+
+    public static IReadOnlyList<ReviewChange> DeserializeReviewChanges(string changes) =>
+        JsonSerializer.Deserialize<ReviewChange[]>(changes, Options)
+        ?? throw new JsonException("Stored review proposal changes are empty.");
+
     private static JsonSerializerOptions CreateOptions()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);

@@ -25,7 +25,8 @@ recorded decisions; read history only when prior work is relevant.
   every criterion) or `Completion: partial` (only an agreed milestone, with an
   open issue and a single unambiguous non-closing reference). Under
   `## Remaining work`, list unmet criteria, owner, dependency/evidence, and
-  next action. Keep the issue's `## Acceptance tracking` checklist current:
+  next action. Before handing off a partial PR, update the linked issue's
+  `## Acceptance tracking` checklist:
   check off delivered criteria with evidence and leave open or blocked criteria
   unchecked with their owner and next action. Resume the approved plan for
   unchanged scope; revise it only when the agreed scope or design changes.
@@ -37,6 +38,9 @@ recorded decisions; read history only when prior work is relevant.
   `## Deviations from plan`; do not silently broaden scope.
 - Add focused tests for behavior changes. Run build/tests and `terraform
   fmt`/`validate` when infrastructure changes.
+- Do not add Python test suites for infrastructure or deployment behavior.
+  Keep verification in Terraform-native tests and `fmt`/`validate`, Node
+  workflow tests, and .NET tests as applicable.
 - Every journal capability ships on both the API and MCP. Plans and PRs name
   the API endpoint and MCP tool, or cite an explicit, justified, tested
   exception.

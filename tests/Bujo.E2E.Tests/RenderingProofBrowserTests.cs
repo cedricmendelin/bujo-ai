@@ -214,7 +214,6 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         await context.SetOfflineAsync(true);
         try
         {
-            await Expect(page.Locator("[data-connectivity-status]")).ToContainTextAsync("Offline");
             await Expect(action).ToBeDisabledAsync();
             await Expect(input).ToHaveValueAsync("Retained unsaved input");
             await Expect(result).ToHaveTextAsync(acknowledged);
@@ -270,7 +269,7 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
 
         try
         {
-            await Expect(page.Locator("[data-circuit-status]")).ToBeVisibleAsync(new() { Timeout = 10000 });
+            await Expect(page.Locator("#components-reconnect-modal")).ToBeVisibleAsync(new() { Timeout = 10000 });
         }
         catch
         {
@@ -278,7 +277,7 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
                 "() => [...document.querySelectorAll('[id*=reconnect], dialog')].map(element => element.outerHTML).join('\\n')"));
             throw;
         }
-        await Expect(page.Locator("[data-circuit-status]")).ToContainTextAsync("Server connection lost");
+        await Expect(page.Locator("#components-reconnect-modal")).ToContainTextAsync("Connection lost.");
         Assert.True(await page.EvaluateAsync<bool>("navigator.onLine"));
         await Expect(action).ToBeDisabledAsync();
         await Expect(input).ToHaveValueAsync("Unsaved across transport loss");

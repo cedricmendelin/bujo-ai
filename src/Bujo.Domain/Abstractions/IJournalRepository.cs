@@ -33,4 +33,12 @@ public interface IJournalRepository
     DomainResult<ItemSnapshot> ChangePlannedPeriod(ChangePeriodCommand command);
 
     DomainResult<JournalListSnapshot> SetListGoal(SetListGoalCommand command);
+
+    DomainResult<ReviewProposalSnapshot> CreateReviewProposal(CreateReviewProposalCommand command);
+
+    DomainResult<ReviewProposalSnapshot> GetReviewProposal(Guid id);
+
+    DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command);
+
+    DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command);
 }

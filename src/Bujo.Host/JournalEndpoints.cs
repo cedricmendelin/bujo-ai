@@ -1,5 +1,6 @@
 using Bujo.Application;
 using Bujo.Domain;
+using System.Security.Claims;
 
 namespace Bujo.Host;
 
@@ -112,6 +113,43 @@ public static class JournalEndpoints
             ToHttpResult(journal.SetListGoal(listId, request.GoalText)));
         api.MapGet("/occurrences/{occurrenceId:guid}/resolution", (Guid occurrenceId, JournalApplicationService journal) =>
             ToHttpResult(journal.Resolve(occurrenceId)));
+        api.MapGet("/lists/{listId:guid}/review", (Guid listId, ReviewApplicationService review) =>
+            ToHttpResult(review.GetListReview(listId)));
+        api.MapPost("/review-proposals", (
+            ReviewProposalRequest request,
+            ClaimsPrincipal principal,
+            ReviewApplicationService review) =>
+            ToHttpResult(review.CreateProposal(
+                request,
+                ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false))));
+        api.MapGet("/review-proposals/{proposalId:guid}", (
+            Guid proposalId,
+            ClaimsPrincipal principal,
+            ReviewApplicationService review) =>
+            ToHttpResult(review.GetProposal(
+                proposalId,
+                ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false))));
+        api.MapPost("/review-proposals/{proposalId:guid}/cancel", (
+            Guid proposalId,
+            ClaimsPrincipal principal,
+            ReviewApplicationService review) =>
+            ToHttpResult(review.CancelProposal(
+                proposalId,
+                ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false))));
+        api.MapPost("/review-proposals/{proposalId:guid}/reject", (
+            Guid proposalId,
+            ClaimsPrincipal principal,
+            ReviewApplicationService review) =>
+            ToHttpResult(review.RejectProposal(
+                proposalId,
+                ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false))));
+        api.MapPost("/review-proposals/{proposalId:guid}/apply", (
+            Guid proposalId,
+            ClaimsPrincipal principal,
+            ReviewApplicationService review) =>
+            ToHttpResult(review.ApplyProposal(
+                proposalId,
+                ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false))));
 
         return endpoints;
     }

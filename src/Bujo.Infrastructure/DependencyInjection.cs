@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddSingleton<IJournalExport, JournalExport>();
         services.AddScoped<JournalService>();
         services.AddScoped<JournalApplicationService>();
+        services.AddScoped<ReviewApplicationService>();
         return services;
     }
 }

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Claims;
+using Bujo.Application;
 using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Host.Mcp;
@@ -34,7 +36,13 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["PUT /api/items/{itemId:guid}"] = ["edit_item"],
             ["PUT /api/items/{itemId:guid}/planned-period"] = ["set_planned_period"],
             ["PUT /api/lists/{listId:guid}/goal"] = ["set_list_goal"],
-            ["GET /api/occurrences/{occurrenceId:guid}/resolution"] = ["resolve_occurrence"]
+            ["GET /api/occurrences/{occurrenceId:guid}/resolution"] = ["resolve_occurrence"],
+            ["GET /api/lists/{listId:guid}/review"] = ["get_list_review"],
+            ["POST /api/review-proposals"] = ["create_review_proposal"],
+            ["GET /api/review-proposals/{proposalId:guid}"] = ["get_review_proposal"],
+            ["POST /api/review-proposals/{proposalId:guid}/cancel"] = ["cancel_review_proposal"],
+            ["POST /api/review-proposals/{proposalId:guid}/reject"] = ["reject_review_proposal"],
+            ["POST /api/review-proposals/{proposalId:guid}/apply"] = ["apply_review_proposal"]
         };
 
     private static readonly string[] ExpectedTools =
@@ -55,7 +63,13 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         "move_item",
         "complete_occurrence",
         "abandon_occurrence",
-        "reopen_occurrence"
+        "reopen_occurrence",
+        "get_list_review",
+        "create_review_proposal",
+        "get_review_proposal",
+        "cancel_review_proposal",
+        "reject_review_proposal",
+        "apply_review_proposal"
     ];
 
     private readonly JournalApiFactory _factory;
@@ -149,6 +163,177 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     }
 
     [Fact]
+    public async Task ReviewToolsRequirePwaApprovalAndCannotClaimApproval()
+    {
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            },
+            httpClient,
+            NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+        var tools = await mcp.ListToolsAsync();
+        Assert.DoesNotContain("approve_review_proposal", tools.Select(tool => tool.Name));
+        Assert.DoesNotContain("approved", tools.SelectMany(tool =>
+            tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject()
+                .Select(property => property.Name)));
+        Assert.DoesNotContain(
+            "approved",
+            tools.Single(tool => tool.Name == "create_review_proposal").ProtocolTool.InputSchema.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+
+        var listResult = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP review approval",
+            ["kind"] = JournalListKind.Custom
+        });
+        Assert.False(listResult.IsError);
+        var listId = listResult.StructuredContent!.Value.GetProperty("id").GetGuid();
+        var first = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP review done",
+            ["listId"] = listId
+        });
+        var second = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP review abandon",
+            ["listId"] = listId
+        });
+        Assert.False(first.IsError);
+        Assert.False(second.IsError);
+        var firstItem = first.StructuredContent!.Value.GetProperty("item");
+        var secondItem = second.StructuredContent!.Value.GetProperty("item");
+        var review = await mcp.CallToolAsync("get_list_review", new Dictionary<string, object?>
+        {
+            ["listId"] = listId
+        });
+        Assert.False(review.IsError);
+        Assert.Equal(2, review.StructuredContent!.Value.GetProperty("unfinished").GetArrayLength());
+
+        var created = await mcp.CallToolAsync("create_review_proposal", new Dictionary<string, object?>
+        {
+            ["request"] = new
+            {
+                listId,
+                expectedListVersion = review.StructuredContent.Value.GetProperty("list").GetProperty("version").GetInt64(),
+                requestCloseList = true,
+                changes = new[]
+                {
+                    new
+                    {
+                        itemId = firstItem.GetProperty("id").GetGuid(),
+                        occurrenceId = firstItem.GetProperty("currentOccurrenceId").GetGuid(),
+                        expectedItemVersion = firstItem.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Done
+                    },
+                    new
+                    {
+                        itemId = secondItem.GetProperty("id").GetGuid(),
+                        occurrenceId = secondItem.GetProperty("currentOccurrenceId").GetGuid(),
+                        expectedItemVersion = secondItem.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Abandon
+                    }
+                }
+            }
+        });
+        Assert.False(created.IsError);
+        var proposalId = created.StructuredContent!.Value.GetProperty("id").GetGuid();
+        Assert.Contains(
+            created.Content,
+            block => block is TextContentBlock text &&
+                     text.Text.Contains($"/lists/{listId}/review?proposalId={proposalId}", StringComparison.Ordinal));
+        var digest = created.StructuredContent.Value.GetProperty("digest").GetString()!;
+        var unapprovedApply = await mcp.CallToolAsync("apply_review_proposal", new Dictionary<string, object?>
+        {
+            ["proposalId"] = proposalId
+        });
+        Assert.True(unapprovedApply.IsError);
+        Assert.Equal("ApprovalRequired", GetErrorCode(unapprovedApply));
+
+        var claims = new ClaimsPrincipal(new ClaimsIdentity(
+        [
+            new Claim("tid", "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7"),
+            new Claim("oid", "2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72"),
+            new Claim("scp", "journal.access")
+        ]));
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var reviewService = scope.ServiceProvider.GetRequiredService<ReviewApplicationService>();
+        var approved = reviewService.ApproveProposal(
+            proposalId,
+            digest,
+            ReviewActor.FromPrincipal(claims, ReviewProposalSource.Pwa, interactive: true));
+        Assert.True(approved.IsSuccess, approved.Error?.Message);
+
+        var applied = await mcp.CallToolAsync("apply_review_proposal", new Dictionary<string, object?>
+        {
+            ["proposalId"] = proposalId
+        });
+        Assert.False(applied.IsError);
+        Assert.Equal((int)ReviewProposalStatus.Applied, applied.StructuredContent!.Value.GetProperty("status").GetInt32());
+
+        var staleList = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP stale review",
+            ["kind"] = JournalListKind.Custom
+        });
+        var staleListId = staleList.StructuredContent!.Value.GetProperty("id").GetGuid();
+        var staleItem = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP stale item",
+            ["listId"] = staleListId
+        });
+        var staleItemValue = staleItem.StructuredContent!.Value.GetProperty("item");
+        var staleOccurrenceValue = staleItem.StructuredContent.Value.GetProperty("occurrence");
+        var staleReview = await mcp.CallToolAsync("get_list_review", new Dictionary<string, object?>
+        {
+            ["listId"] = staleListId
+        });
+        var staleProposal = await mcp.CallToolAsync("create_review_proposal", new Dictionary<string, object?>
+        {
+            ["request"] = new
+            {
+                listId = staleListId,
+                expectedListVersion = staleReview.StructuredContent!.Value.GetProperty("list").GetProperty("version").GetInt64(),
+                requestCloseList = true,
+                changes = new[]
+                {
+                    new
+                    {
+                        itemId = staleItemValue.GetProperty("id").GetGuid(),
+                        occurrenceId = staleOccurrenceValue.GetProperty("id").GetGuid(),
+                        expectedItemVersion = staleItemValue.GetProperty("version").GetInt64(),
+                        action = ReviewDisposition.Done
+                    }
+                }
+            }
+        });
+        var staleProposalId = staleProposal.StructuredContent!.Value.GetProperty("id").GetGuid();
+        Assert.True(reviewService.ApproveProposal(
+            staleProposalId,
+            staleProposal.StructuredContent.Value.GetProperty("digest").GetString()!,
+            ReviewActor.FromPrincipal(claims, ReviewProposalSource.Pwa, interactive: true)).IsSuccess);
+        var concurrentItem = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = "MCP concurrent item",
+            ["listId"] = staleListId
+        });
+        Assert.False(concurrentItem.IsError);
+
+        var conflict = await mcp.CallToolAsync("apply_review_proposal", new Dictionary<string, object?>
+        {
+            ["proposalId"] = staleProposalId
+        });
+        Assert.True(conflict.IsError);
+        Assert.Equal("ConcurrencyConflict", GetErrorCode(conflict));
+        Assert.Contains("expected version", conflict.StructuredContent!.Value.GetProperty("message").GetString());
+        Assert.Contains("Unresolved occurrence", conflict.StructuredContent.Value.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public async Task ToolsExposeSharedJournalOperationsAndDailyQueryParity()
     {
         using var httpClient = _factory.CreateClient();
@@ -165,6 +350,13 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
         var tools = await mcp.ListToolsAsync();
         Assert.Equal(ExpectedTools.Order(), tools.Select(tool => tool.Name).Order());
+        Assert.DoesNotContain("approve_review_proposal", tools.Select(tool => tool.Name));
+        Assert.DoesNotContain("approved", tools.SelectMany(tool =>
+            tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject()
+                .Select(property => property.Name)));
+        var proposalSchema = tools.Single(tool => tool.Name == "create_review_proposal")
+            .ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.DoesNotContain("approved", proposalSchema.ToString(), StringComparison.OrdinalIgnoreCase);
         var dailyStartSchema = tools.Single(tool => tool.Name == "get_daily_start").ProtocolTool.InputSchema;
         Assert.Equal("string", dailyStartSchema.GetProperty("properties").GetProperty("timeZone").GetProperty("type").GetString());
         Assert.Contains(

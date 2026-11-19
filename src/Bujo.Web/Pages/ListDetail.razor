@@ -46,6 +46,10 @@
         @if (list.Kind != JournalListKind.FutureLog)
         {
             <div class="journal-actions" data-journal-write data-journal-form>
+                @if (list.State == JournalListState.Open)
+                {
+                    <a href="/lists/@list.Id/review">Start review</a>
+                }
                 <button type="button" disabled="@(Busy || !Ready)" @onclick="ChangeStateAsync">@(list.State == JournalListState.Open ? "Close list" : "Reopen list")</button>
             </div>
         }

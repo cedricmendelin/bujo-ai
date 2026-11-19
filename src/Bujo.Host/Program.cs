@@ -87,6 +87,7 @@ builder.Services.Configure<AuthenticationOptions>(options =>
     options.DefaultChallengeScheme = BffAuthentication.CookieScheme;
 });
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<CircuitHandler, ApprovedCircuitHandler>();
 builder.Services.AddAntiforgery(options =>

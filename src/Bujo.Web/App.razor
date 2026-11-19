@@ -12,15 +12,11 @@
 </head>
 <body>
     <Routes />
-    <div id="components-reconnect-modal" class="components-reconnect-hide"
-         role="status" aria-live="polite" aria-atomic="true">
-        <p>Server connection interrupted. Keep this page open to retain your text.</p>
-        <p>No changes are saved or replayed while disconnected. If reconnection fails,
-            reload this page and sign in again if needed.
-            Reloading loses unsaved text.</p>
-        <button type="button" data-reload-page>Reload this page</button>
+    <div id="components-reconnect-modal" class="components-reconnect-hide" data-permanent>
+        <p role="status">Connection lost.<span class="reconnect-progress"> Reconnecting...</span></p>
+        <button type="button" data-reload-page>Reload</button>
     </div>
-    <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script src="/_content/Bujo.Web/pwa.js" defer></script>
+    <script src="@Assets["_framework/blazor.web.js"]" defer></script>
 </body>
 </html>

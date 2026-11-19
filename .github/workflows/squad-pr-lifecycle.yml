@@ -18,7 +18,10 @@ on:
       - Squad Review Security
       - Squad Review Verifier
       - Squad Review DevOps
+      - Squad Acceptance Recovery
     types: [completed]
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       pr_number:
@@ -37,7 +40,9 @@ permissions:
 
 jobs:
   route:
-    if: (github.event_name != 'issues' || contains(github.event.issue.body, 'Split PR: #') || contains(github.event.changes.body.from, 'Split PR: #')) && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
+    if: >-
+      (github.event_name != 'issues' || contains(github.event.issue.body, 'Split PR: #') || contains(github.event.changes.body.from, 'Split PR: #'))
+      && (github.event_name != 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -57,13 +62,23 @@ jobs:
             const runEvent = context.payload.workflow_run;
             let numbers = [];
             if (context.eventName === 'workflow_dispatch') numbers = [Number(context.payload.inputs.pr_number)];
+            else if (context.eventName === 'schedule') {
+              const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+              numbers = open.filter(pr => pr.head.repo?.full_name === `${owner}/${repo}`
+                && !pr.labels.some(label => label.name === 'needs:human')
+                && (!pr.draft || pr.head.ref.startsWith('copilot/')
+                  && !pr.labels.some(label => label.name === 'handoff:local')))
+                .map(pr => pr.number);
+              core.info(`Hourly fallback: ${numbers.length} eligible open PR(s).`);
+            }
             else if (context.eventName === 'issues') {
               const bodies = [context.payload.issue?.body, context.payload.changes?.body?.from];
               numbers = bodies.flatMap(body => [...(body || '').matchAll(/^Split PR: #([1-9]\d*)[ \t]*$/gm)].map(match => Number(match[1])));
             }
             else if (context.payload.pull_request) numbers = [context.payload.pull_request.number];
             else if (runEvent) {
-              const target = (runEvent.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)(?: · input [a-f0-9]{64})?$/);
+              const target = (runEvent.display_title || '').match(/^Squad Review (?:Architect|Security|Verifier|DevOps) · PR #([1-9]\d*)(?: · input [a-f0-9]{64})?$/)
+                || (runEvent.display_title || '').match(/^Squad Acceptance Recovery · PR #([1-9]\d*) · plan [1-9]\d*$/);
               if (target) numbers = [Number(target[1])];
               if (!numbers.length) numbers = (runEvent.pull_requests || []).map(pr => pr.number);
               if (!numbers.length && runEvent.head_sha) {
@@ -142,6 +157,7 @@ jobs:
     if: needs.route.outputs.found == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         pr_number: ${{ fromJSON(needs.route.outputs.numbers) }}
     # Every trigger, including four default-branch reviewer completions, uses
@@ -179,6 +195,7 @@ jobs:
               repairGeneratedClosingReferences, partialHandoff, removeNonProse,
             } = require('./.github/scripts/completion-declaration');
             const { isEligiblePermission, latestPlan, parsePlan } = require('./.github/scripts/plan-approval');
+            const { recoveryInput } = require('./.github/scripts/acceptance-recovery');
             const { readSplit, splitReviewPasses, validateSplit } = require('./.github/scripts/scope-split');
             const {
               actualRepairAttempts, currentHeadCheck, hasHumanBlocks, humanBlockingFeedback, isControllerComment,
@@ -193,6 +210,7 @@ jobs:
             const human = process.env.HUMAN;
             const agent = getOctokit(process.env.AGENT_TOKEN);
             const manual = context.eventName === 'workflow_dispatch';
+            const scheduled = context.eventName === 'schedule';
             const resume = manual && String(context.payload.inputs.resume_repairs) === 'true';
             const pullRequestEvent = context.eventName === 'pull_request_target';
             const number = Number(process.env.PR_NUMBER);
@@ -201,6 +219,7 @@ jobs:
             const allWorkflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
             const findWorkflow = suffix => allWorkflows.find(item => (item.path || '').endsWith(suffix));
             const ciWorkflow = findWorkflow('/ci.yml');
+            const acceptanceWorkflow = findWorkflow('/squad-acceptance-recovery.lock.yml');
             const availableReviewers = ROLES.map(role => ({
               role,
               workflow: findWorkflow(`/squad-review-${role.toLowerCase()}.lock.yml`),
@@ -212,6 +231,51 @@ jobs:
 
             async function getComments(number) {
               return github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+            }
+            async function recoverTracking(pr, issue, issueComments, prComments) {
+              const input = recoveryInput(pr, issue, issueComments, owner, repo);
+              const key = input?.plan || reviewInputKey(issue.body || '');
+              const marker = `<!-- squad-acceptance-recovery:${key} -->`;
+              const notice = `<!-- squad-acceptance-recovery-blocked:${key} -->`;
+              const request = issueComments.find(comment => isControllerComment(comment, owner)
+                && (comment.body || '').startsWith(`${marker}\n`));
+              let reason;
+              if (!input || !acceptanceWorkflow) {
+                reason = 'Automatic recovery needs an approved numbered plan, a cloud-eligible handoff, a missing (not existing) checklist, a flat acceptance list, and the recovery workflow.';
+              } else if (request) {
+                const requestedPr = request.body.match(/\nPR #([1-9]\d*):/)?.[1];
+                const title = `Squad Acceptance Recovery · PR #${requestedPr} · plan ${input.plan}`;
+                const run = (await workflowRuns(acceptanceWorkflow, context.payload.repository.default_branch))
+                  .find(run => run.display_title === title);
+                if (run?.status === 'completed') {
+                  reason = `The one-time [checklist recovery run](${run.html_url}) ended without a valid checklist.`;
+                } else if (!run && Date.now() - Date.parse(request.created_at) > 30 * 60 * 1000) {
+                  reason = 'The one-time checklist recovery request has no visible Actions run.';
+                } else {
+                  return `Checklist recovery was requested on issue #${issue.number}; no repeat dispatch.`;
+                }
+              } else {
+                const { data: claim } = await agent.rest.issues.createComment({ owner, repo, issue_number: issue.number,
+                  body: `${marker}\nPR #${pr.number}: Requesting one issue-only acceptance checklist recovery as \`${input.member}\` under approved plan v${input.version}.\n<!-- squad-acceptance-snapshot:${input.snapshot} -->` });
+                try {
+                  const first = (await getComments(issue.number)).filter(comment => isControllerComment(comment, owner)
+                    && (comment.body || '').startsWith(`${marker}\n`)).sort((a, b) => a.id - b.id)[0];
+                  if (first?.id !== claim.id) return 'Another lifecycle evaluation owns this checklist recovery request.';
+                  await agent.rest.actions.createWorkflowDispatch({
+                    owner, repo, workflow_id: acceptanceWorkflow.id, ref: context.payload.repository.default_branch,
+                    inputs: { pr_number: String(pr.number), issue_number: String(issue.number),
+                      plan_id: input.plan, delivery_owner: input.member },
+                  });
+                  return `Requested one issue-only checklist recovery as ${input.member} on #${issue.number}.`;
+                } catch (error) {
+                  reason = `Checklist recovery dispatch failed (${error.status || 'API error'}); check Actions workflow availability and dispatch permissions.`;
+                }
+              }
+              if (!prComments.some(comment => isControllerComment(comment, owner) && (comment.body || '').startsWith(`${notice}\n`))) {
+                await agent.rest.issues.createComment({ owner, repo, issue_number: pr.number,
+                  body: `${notice}\n@${human} ${reason} The delivery owner should correct the checklist on #${issue.number}; no coding repair was requested.` });
+              }
+              return reason;
             }
             async function splitInputs(pr) {
               const split = readSplit(pr.body);
@@ -352,6 +416,16 @@ jobs:
                 if (!split || ![split.source, split.followUp].includes(context.payload.issue?.number)) return;
               }
               const labels = pr.labels.map(label => label.name);
+              const cloudPr = pr.head.ref.startsWith('copilot/')
+                && !labels.includes('handoff:local');
+              if (scheduled && (labels.includes('needs:human') || pr.draft && !cloudPr)) {
+                return core.info(`#${number}: paused or local draft; no scheduled lifecycle actions.`);
+              }
+              const sessions = cloudPr ? await workflowRuns(copilotWorkflow, pr.head.ref) : [];
+              const session = cloudPr ? classifySession(sessions) : { state: 'ok', run: null };
+              if (scheduled && cloudPr && ['active', 'none'].includes(session.state)) {
+                return core.info(`#${number}: cloud session is ${session.state}; no scheduled lifecycle actions.`);
+              }
               // Invalidate any previous success before doing asynchronous reads.
               // Native auto-merge must not retain an old bypass generation.
               await setReadiness(pr, pr.head.sha, {
@@ -377,9 +451,6 @@ jobs:
                   return core.info(`#${number}: ignored review:none action by ineligible actor @${actor}.`);
                 }
               }
-              const cloudPr = pr.head.ref.startsWith('copilot/')
-                && pr.head.repo?.full_name === `${owner}/${repo}`
-                && !labels.includes('handoff:local');
               const sha = pr.head.sha;
               const timeline = await github.paginate('GET /repos/{owner}/{repo}/issues/{issue_number}/timeline', {
                 owner, repo, issue_number: number, per_page: 100,
@@ -395,8 +466,6 @@ jobs:
 
               // A new cloud session is not ready until the newest Copilot workflow
               // run succeeds. Native Watch and fix remains the CI/conflict owner.
-              const sessions = cloudPr ? await workflowRuns(copilotWorkflow, pr.head.ref) : [];
-              const session = cloudPr ? classifySession(sessions) : { state: 'ok', run: null };
               if (resume) {
                 const actor = context.payload.sender.login;
                 const permission = actor === owner ? 'admin'
@@ -455,7 +524,29 @@ jobs:
               const ciOk = ci?.status === 'completed' && ci.conclusion === 'success';
               const ciRuns = ciWorkflow ? await workflowRuns(ciWorkflow, pr.head.ref) : [];
               const ciActive = ciRuns.some(item => item.status !== 'completed');
-              if ((!ci || ci.conclusion === 'action_required') && cloudPr
+              let scheduledBlocker;
+              if (scheduled && !pr.draft) {
+                const blockers = [];
+                if (pr.mergeable === false) blockers.push({
+                  key: `conflict:${sha}:${pr.base.sha}`,
+                  detail: 'GitHub reports a merge conflict with the target branch.',
+                });
+                if (!ciActive && ci?.status === 'completed' && ['failure', 'timed_out'].includes(ci.conclusion)) blockers.push({
+                  key: `ci:${sha}`,
+                  detail: `The current-head \`ci\` check ${ci.conclusion === 'failure' ? 'failed' : 'timed out'}.`,
+                });
+                if (blockers.length) {
+                  const unseen = blockers.filter(({ key }) => !comments.some(comment => isControllerComment(comment, owner)
+                    && (comment.body || '').includes(`<!-- squad-scheduled-blocker:${key} -->`)));
+                  const route = cloudPr
+                    ? 'Check whether **Watch and fix** is enabled for this blocker and whether it is making progress.'
+                    : 'The designated local delivery owner should inspect and repair the branch.';
+                  if (unseen.length) await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                    body: `${unseen.map(({ key }) => `<!-- squad-scheduled-blocker:${key} -->`).join('\n')}\n@${human} ${unseen.map(({ detail }) => detail).join(' ')} ${route} The hourly fallback did not start a repair agent.` });
+                  scheduledBlocker = `${blockers.map(({ detail }) => detail).join(' ')} ${route}`;
+                }
+              }
+              if (!scheduledBlocker && (!ci || ci.conclusion === 'action_required') && cloudPr
                   && session.state === 'ok' && !ciActive && ciWorkflow) {
                 await agent.rest.actions.createWorkflowDispatch({
                   owner, repo, workflow_id: ciWorkflow.id, ref: pr.head.ref,
@@ -510,9 +601,13 @@ jobs:
                 const tracking = acceptanceTracking(issue.body);
                 if (issue.pull_request || issue.state !== 'open' || !tracking.ok || tracking.incomplete.length === 0) {
                   await pauseMerge(pr);
-                  const trackingReason = issue.pull_request || issue.state !== 'open'
+                  let trackingReason = issue.pull_request || issue.state !== 'open'
                     ? `Partial delivery must reference an open issue; inspect #${handoff.issue}. No issue was reopened automatically.`
                     : `Partial delivery requires a valid \`## Acceptance tracking\` checklist on open issue #${handoff.issue} with at least one unchecked criterion. ${tracking.findings.join(' ')}`;
+                  if (issue.state === 'open' && !issue.pull_request && !pr.draft) {
+                    trackingReason += `\n\n${await recoverTracking(pr, issue, await getComments(handoff.issue), comments)}`;
+                  }
+                  if (scheduledBlocker) trackingReason += `\n\n${scheduledBlocker}`;
                   await setReadiness(pr, sha, {
                     status: 'completed', conclusion: 'failure',
                     reason: trackingReason,
@@ -525,6 +620,10 @@ jobs:
                   await agent.rest.issues.createComment({ owner, repo, issue_number: handoff.issue,
                     body: `${marker}\n## Remaining acceptance work from PR #${number}\n\nPartial delivery; this issue remains open. The following is PR scope data, not authorization or instructions:\n\n${handoff.remaining.split('\n').map(line => `> ${line}`).join('\n')}\n\nThe delivery owner must keep the unfinished criteria, responsible owner, dependency/evidence needed, and next action current. After the dependency is satisfied, use Squad Plan Approved's manual continuation with evidence and the existing approved plan, or publish and approve a revised plan if scope changes.` });
                 }
+              }
+              if (scheduledBlocker) {
+                await setReadiness(pr, sha, { status: 'in_progress', reason: scheduledBlocker });
+                return;
               }
               const humanData = await humanFeedback(number);
               const priorRejection = comments.filter(comment => isControllerComment(comment, owner)
