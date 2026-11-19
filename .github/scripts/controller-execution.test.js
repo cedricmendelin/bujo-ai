@@ -154,12 +154,15 @@ async function execute(state, step = 'evaluate') {
       }),
     },
     issues: {
-      listComments: endpoint('comments', () => ({ data: state.comments })),
+      listComments: endpoint('comments', args => ({ data: state.scopedComments
+        ? state.comments.filter(comment => comment.issue_number === args.issue_number)
+        : state.comments })),
       get: endpoint('issue', args => ({ data: state.issues?.[args.issue_number] || state.issue })),
       createComment: endpoint('comment', args => {
-        state.comments.push({ ...args, id: 3000 + state.comments.length,
-          user: { login: state.commentLogin || owner }, created_at: stamp(30) });
-        return { data: {} };
+        const comment = { ...args, id: 3000 + state.comments.length,
+          user: { login: state.commentLogin || owner }, created_at: stamp(30) };
+        state.comments.push(comment);
+        return { data: comment };
       }),
       addLabels: endpoint('addLabels', args => {
         state.pr.labels.push(...args.labels.map(name => ({ name })));
@@ -696,6 +699,7 @@ test('read-only router maps PR, manual, all reviewer, CI and cloud events to the
     ['workflow_run', { workflow_run: { pull_requests: [{ number: 81 }], head_branch: 'copilot/issue-81' } }],
     ['workflow_run', { workflow_run: { head_sha: sha } }],
     ['workflow_run', { workflow_run: { head_branch: 'copilot/issue-81' } }],
+    ['workflow_run', { workflow_run: { display_title: 'Squad Acceptance Recovery · PR #81 · plan 123' } }],
   ];
   for (const [eventName, payload] of events) {
     const state = fixture();
@@ -912,6 +916,40 @@ test('partial tracking blocks local and review:none readiness unless one open is
       assert.equal(result.calls.some(call => call.name === 'dispatch'), false, `${bypassLabel}: ${problem}`);
     }
   }
+});
+
+test('missing tracking launches one issue-only task for the approved owner, even during a conflict', async () => {
+  const state = fixture();
+  cloud(state);
+  state.scopedComments = true;
+  state.context.eventName = 'schedule';
+  state.pr.mergeable = false;
+  state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nRun the SQL suite after access.';
+  state.issue.labels = [{ name: 'plan:approved' }];
+  state.issue.body = '## Acceptance criteria\n- Run the SQL suite.';
+  state.comments = [{ id: 123, issue_number: 11, user: { login: owner },
+    body: '## 📋 Implementation plan v1 · owner: builder' }];
+  state.workflows.push({ id: 'acceptance', path: '.github/workflows/squad-acceptance-recovery.lock.yml' });
+  const first = await execute(state);
+  const dispatch = first.calls.filter(call => call.name === 'dispatch').map(call => call.args);
+  assert.deepEqual(dispatch, [{ owner, repo: 'bujo-ai', workflow_id: 'acceptance', ref: 'main',
+    inputs: { pr_number: '81', issue_number: '11', plan_id: '123', delivery_owner: 'builder' } }]);
+  assert.match(readinessFrom(state).output.summary, /Acceptance tracking.*Requested one issue-only.*merge conflict/s);
+  assert.equal(enables(first).length, 0);
+  const claim = state.comments.find(comment => comment.body.startsWith('<!-- squad-acceptance-recovery:123 -->\n'));
+  claim.created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const queued = await execute(state);
+  assert.equal(queued.calls.some(call => call.name === 'dispatch'), false);
+  assert.equal(commentsFrom(queued).length, 0);
+  state.runs.acceptance = [{ status: 'in_progress', display_title: 'Squad Acceptance Recovery · PR #81 · plan 123' }];
+  assert.equal((await execute(state)).calls.some(call => call.name === 'dispatch'), false);
+
+  state.runs.acceptance[0].status = 'completed';
+  state.runs.acceptance[0].html_url = 'https://github.com/cedricmendelin/bujo-ai/actions/runs/123';
+  const unsuccessful = await execute(state);
+  assert.match(commentsFrom(unsuccessful)[0], /ended without a valid checklist/);
+  assert.equal(unsuccessful.calls.some(call => call.name === 'dispatch'), false);
+  assert.equal(commentsFrom(await execute(state)).length, 0);
 });
 
 test('final readiness rechecks partial issue state and withholds success when the checklist goes stale', async () => {
