@@ -12,8 +12,36 @@ public static class JournalEndpoints
     {
         var api = endpoints.MapGroup("/api");
 
-        api.MapGet("/journal", (JournalApplicationService journal) => Results.Ok(journal.GetSnapshot()));
+        api.MapGet("/journal", (
+            JournalApplicationService journal,
+            ILoggerFactory loggerFactory) =>
+        {
+            try
+            {
+                return Results.Ok(journal.GetSnapshot());
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                loggerFactory.CreateLogger("JournalEndpoints").LogError("Journal snapshot query failed.");
+                return QueryFailure();
+            }
+        });
         api.MapGet("/journal/export", (
+            JournalApplicationService journal,
+            IJournalExport export,
+            ILoggerFactory loggerFactory) =>
+        {
+            try
+            {
+                return Results.Ok(export.Create(journal.GetSnapshot()));
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                loggerFactory.CreateLogger("JournalEndpoints").LogError("Journal export query failed.");
+                return QueryFailure();
+            }
+        }).Produces<JournalExportDocument>();
+        api.MapGet("/journal/backup/export", (
             JournalBackupApplicationService backupService,
             JournalBackupSerializer serializer) =>
         {
@@ -61,9 +89,9 @@ public static class JournalEndpoints
             {
                 return ToHttpResult(journal.GetDailyStart(timeZone));
             }
-            catch (Exception exception)
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                loggerFactory.CreateLogger("JournalEndpoints").LogError(exception, "Daily-start query failed.");
+                loggerFactory.CreateLogger("JournalEndpoints").LogError("Daily-start query failed.");
                 return QueryFailure();
             }
         });
@@ -85,9 +113,9 @@ public static class JournalEndpoints
                     limit ?? 50,
                     futureLog ?? false));
             }
-            catch (Exception exception)
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                loggerFactory.CreateLogger("JournalEndpoints").LogError(exception, "Upcoming-planning query failed.");
+                loggerFactory.CreateLogger("JournalEndpoints").LogError("Upcoming-planning query failed.");
                 return QueryFailure();
             }
         });

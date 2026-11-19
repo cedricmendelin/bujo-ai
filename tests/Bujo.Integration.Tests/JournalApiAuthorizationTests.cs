@@ -63,6 +63,7 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         {
             new HttpRequestMessage(HttpMethod.Get, "/api/journal"),
             new HttpRequestMessage(HttpMethod.Get, "/api/journal/export"),
+            new HttpRequestMessage(HttpMethod.Get, "/api/journal/backup/export"),
             new HttpRequestMessage(HttpMethod.Post, "/api/journal/restore"),
             new HttpRequestMessage(HttpMethod.Post, "/api/knowledge")
             {
@@ -529,6 +530,73 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
         Assert.Equal("QueryFailed", body.RootElement.GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task JournalAndExportRepositoryFailuresReturnExplicitServerErrors()
+    {
+        using var factory = new JournalApiFactory { FailQueries = true };
+        var capturedLogs = new List<string>();
+        factory.CapturedLogs = capturedLogs;
+        using var client = factory.CreateClient();
+
+        foreach (var path in new[] { "/api/journal", "/api/journal/export" })
+        {
+            using var request = AuthenticatedGet(path);
+            using var response = await client.SendAsync(request);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.Equal("QueryFailed", body.RootElement.GetProperty("code").GetString());
+        }
+
+        Assert.DoesNotContain(capturedLogs, message =>
+            message.Contains("fake-access-token", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("private-entry", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ExportEndpointReturnsVersionedNoStoreJournalData()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        using var createList = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/lists",
+            new { name = "Export list", kind = JournalListKind.Custom, goalText = "Keep the goal" }));
+        using var listJson = JsonDocument.Parse(await createList.Content.ReadAsStringAsync());
+        var listId = listJson.RootElement.GetProperty("id").GetGuid();
+        using var capture = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post,
+            "/api/items",
+            new
+            {
+                name = "Export item",
+                description = "Synthetic export test",
+                tags = new[] { "personal" },
+                listId,
+                plannedPeriod = new { kind = "week", weekYear = 2026, week = 48 }
+            }));
+        using var captureJson = JsonDocument.Parse(await capture.Content.ReadAsStringAsync());
+        var itemId = captureJson.RootElement.GetProperty("item").GetProperty("id").GetGuid();
+
+        using var response = await client.SendAsync(AuthenticatedGet("/api/journal/export"));
+        using var export = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = export.RootElement;
+        var exportedItem = root.GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetGuid() == itemId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("Keep the goal", root.GetProperty("lists").EnumerateArray()
+            .Single(list => list.GetProperty("id").GetGuid() == listId)
+            .GetProperty("goalText").GetString());
+        Assert.Equal("Export item", exportedItem.GetProperty("name").GetString());
+        Assert.Equal("Week", exportedItem.GetProperty("plannedPeriodKind").GetString());
+        Assert.Equal("personal", exportedItem.GetProperty("tags")[0].GetString());
+        Assert.Empty(root.GetProperty("knowledgeEntries").EnumerateArray());
+        Assert.DoesNotContain("token", root.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private static HttpRequestMessage AuthenticatedJsonRequest(HttpMethod method, string uri, object body)
     {
         var request = new HttpRequestMessage(method, uri)
@@ -559,6 +627,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
 
     public DateTimeOffset? FixedUtcNow { get; set; }
 
+    public ICollection<string>? CapturedLogs { get; set; }
+
     private static readonly string TenantId = "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7";
     private static readonly string AllowedObjectId = "2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72";
 
@@ -579,6 +649,12 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
         builder.UseEnvironment("Testing");
         builder.ConfigureTestServices(services =>
         {
+            if (CapturedLogs is { } capturedLogs)
+            {
+                services.AddLogging(logging =>
+                    logging.AddProvider(new CapturingLoggerProvider(capturedLogs)));
+            }
+
             services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = TestAuthenticationHandler.SchemeName;
@@ -626,7 +702,8 @@ internal sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
 
 internal sealed class FailingReadJournalRepository : IJournalRepository
 {
-    public JournalSnapshot GetSnapshot() => throw new InvalidOperationException("Simulated repository failure.");
+    public JournalSnapshot GetSnapshot() =>
+        throw new InvalidOperationException("Authorization: fake-access-token; journal text: private-entry");
     public DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot) => throw new NotSupportedException();
 
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command) => throw new NotSupportedException();
@@ -654,6 +731,36 @@ internal sealed class FailingReadJournalRepository : IJournalRepository
     public DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command) => throw new NotSupportedException();
 
     public DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command) => throw new NotSupportedException();
+}
+
+internal sealed class CapturingLoggerProvider(ICollection<string> messages) : ILoggerProvider
+{
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(messages);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class CapturingLogger(ICollection<string> messages) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            messages.Add(formatter(state, exception));
+            if (exception is not null)
+            {
+                messages.Add(exception.ToString());
+            }
+        }
+    }
 }
 
 public sealed class TestAuthenticationHandler(

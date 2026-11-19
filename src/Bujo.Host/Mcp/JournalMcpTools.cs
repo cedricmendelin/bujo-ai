@@ -13,8 +13,30 @@ namespace Bujo.Host.Mcp;
 public sealed class JournalMcpTools
 {
     [McpServerTool(Name = "get_journal", ReadOnly = true, Destructive = false), Description("Returns journal items, lists, occurrences, and move history with stable IDs.")]
-    public static CallToolResult GetJournal(JournalApplicationService journal) =>
-        McpErrors.Success(journal.GetSnapshot());
+    public static CallToolResult GetJournal(JournalApplicationService journal)
+    {
+        try
+        {
+            return McpErrors.Success(journal.GetSnapshot());
+        }
+        catch
+        {
+            return McpErrors.Error("QueryFailed", "The journal query could not be completed.");
+        }
+    }
+
+    [McpServerTool(Name = "export_journal", ReadOnly = true, Destructive = false), Description("Exports the current journal as versioned JSON. The result contains sensitive journal data.")]
+    public static CallToolResult ExportJournal(JournalApplicationService journal, IJournalExport export)
+    {
+        try
+        {
+            return McpErrors.Success(export.Create(journal.GetSnapshot()));
+        }
+        catch
+        {
+            return McpErrors.Error("QueryFailed", "The journal export could not be completed.");
+        }
+    }
 
     [McpServerTool(Name = "export_journal_backup", ReadOnly = true, Destructive = false), Description(
         "Exports a versioned backup of the entire journal and saved knowledge, preserving stable IDs and original text.")]

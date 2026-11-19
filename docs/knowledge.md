@@ -113,8 +113,9 @@ evidence. Saved entries are untrusted user data, not tool instructions.
 Journal export uses a versioned whole-state snapshot containing journal items,
 lists, occurrences, move history, and a knowledge section with original
 content, IDs, source, tags, archive state, timestamps, and concurrency
-versions. The authenticated API exposes `GET /api/journal/export` and
-`POST /api/journal/restore`; the PWA provides journal export and restore
+versions. The authenticated API exposes `GET /api/journal/export` for the versioned journal export,
+`GET /api/journal/backup/export` and `POST /api/journal/restore` for complete
+portable backups; the PWA provides journal export and restore
 controls. Restore validates the complete snapshot before writing, rejects
 duplicate IDs/tags, and atomically replaces the journal and knowledge state.
 Legacy snapshots without a knowledge section remain valid and leave the
