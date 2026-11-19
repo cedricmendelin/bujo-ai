@@ -66,6 +66,27 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         }
     }
 
+    public DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot)
+    {
+        lock (_gate)
+        {
+            try
+            {
+                ValidateSnapshot(snapshot);
+                RestoreUnsafe(snapshot, []);
+                _reviewProposals.Clear();
+                return DomainResult<JournalSnapshot>.Success(SnapshotUnsafe());
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or DomainException or InvalidOperationException)
+            {
+                return DomainResult<JournalSnapshot>.Failure(new DomainError(
+                    DomainErrorCode.InvalidInput,
+                    "The journal backup is invalid."));
+            }
+        }
+    }
+
     public DomainResult<JournalListSnapshot> CreateList(CreateListCommand command)
     {
         lock (_gate)
@@ -656,6 +677,75 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         foreach (var moveResult in moveResults)
         {
             _moveResults.Add(moveResult.Key, moveResult.Value);
+        }
+    }
+
+    internal static void ValidateSnapshot(JournalSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.Items is null || snapshot.Lists is null ||
+            snapshot.Occurrences is null || snapshot.History is null ||
+            snapshot.Lists.Count == 0 ||
+            snapshot.Lists.Count(list => list.Kind == JournalListKind.FutureLog) != 1 ||
+            snapshot.Lists.Any(list =>
+                list.Id == Guid.Empty ||
+                string.IsNullOrWhiteSpace(list.Name) ||
+                list.Name.Length > DomainLimits.ListName ||
+                !Enum.IsDefined(list.Kind) ||
+                !Enum.IsDefined(list.State) ||
+                list.GoalText?.Length > DomainLimits.GoalText ||
+                list.Version < 0) ||
+            snapshot.Lists.Select(list => list.Id).Distinct().Count() != snapshot.Lists.Count ||
+            snapshot.Lists.Select(list => list.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Lists.Count ||
+            snapshot.Items.Any(item =>
+                item.Id == Guid.Empty ||
+                string.IsNullOrWhiteSpace(item.Name) ||
+                item.Name.Length > DomainLimits.ItemName ||
+                item.Description?.Length > DomainLimits.ItemDescription ||
+                item.Tags is null ||
+                item.Tags.Count > DomainLimits.TagsPerItem ||
+                item.CurrentOccurrenceId == Guid.Empty ||
+                item.Version < 0) ||
+            snapshot.Items.Select(item => item.Id).Distinct().Count() != snapshot.Items.Count ||
+            snapshot.Occurrences.Any(occurrence =>
+                occurrence.Id == Guid.Empty ||
+                occurrence.ItemId == Guid.Empty ||
+                occurrence.ListId == Guid.Empty ||
+                occurrence.Sequence < 1 ||
+                !Enum.IsDefined(occurrence.State) ||
+                occurrence.Version < 0 ||
+                !snapshot.Items.Any(item => item.Id == occurrence.ItemId) ||
+                !snapshot.Lists.Any(list => list.Id == occurrence.ListId)) ||
+            snapshot.Occurrences.Select(occurrence => occurrence.Id).Distinct().Count() != snapshot.Occurrences.Count ||
+            snapshot.Occurrences.GroupBy(occurrence => new
+            {
+                occurrence.ItemId,
+                occurrence.Sequence
+            }).Any(group => group.Count() != 1) ||
+            snapshot.History.Any(entry => entry.Sequence < 1 || !Enum.IsDefined(entry.Kind)) ||
+            snapshot.History.Select(entry => entry.Sequence).Distinct().Count() != snapshot.History.Count)
+        {
+            throw DomainLimits.Invalid("The journal backup is invalid.");
+        }
+
+        var openByItem = snapshot.Occurrences
+            .Where(occurrence => occurrence.State == OccurrenceState.Open)
+            .GroupBy(occurrence => occurrence.ItemId)
+            .Any(group => group.Count() != 1);
+        if (openByItem)
+        {
+            throw DomainLimits.Invalid("The journal backup must contain one open occurrence per active item.");
+        }
+
+        var repository = new InMemoryJournalRepository(snapshot);
+        foreach (var occurrence in snapshot.Occurrences)
+        {
+            var resolved = repository.GetSnapshot().Resolve(occurrence.Id);
+            if (!resolved.IsSuccess)
+            {
+                throw new DomainException(resolved.Error!.Code, resolved.Error.Message);
+            }
         }
     }
 

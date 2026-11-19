@@ -12,6 +12,8 @@ internal static class JournalContract
         {
             DomainErrorCode.NotFound => Microsoft.AspNetCore.Http.StatusCodes.Status404NotFound,
             DomainErrorCode.ApprovalDenied => Microsoft.AspNetCore.Http.StatusCodes.Status403Forbidden,
+            DomainErrorCode.KnowledgeSearchUnavailable =>
+                Microsoft.AspNetCore.Http.StatusCodes.Status503ServiceUnavailable,
             DomainErrorCode.InvalidInput or DomainErrorCode.InvalidTimeZone =>
                 Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest,
             _ => Microsoft.AspNetCore.Http.StatusCodes.Status409Conflict

@@ -79,6 +79,56 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         Assert.True(await page.EvaluateAsync<bool>("window.journalDocument === true"));
     }
 
+    [Fact]
+    public async Task KnowledgeCaptureSearchAndReadPreserveSavedWordingAcrossNavigationAndReload()
+    {
+        await using var context = await fixture.CreateContextAsync(width: 390, height: 844);
+        var page = await context.NewPageAsync();
+        const string content = "“Keep the original wording.”\r\nCafé <b>is saved text</b>.";
+
+        await page.GotoAsync("/knowledge/new");
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Capture knowledge" })).ToBeVisibleAsync();
+        var axe = await page.RunAxe();
+        Assert.True(axe.Violations.Length == 0, JsonSerializer.Serialize(axe.Violations));
+        await page.GetByLabel("Content").FillAsync(content);
+        await page.GetByLabel("Title (optional)").FillAsync("Verbatim capture");
+        await page.GetByLabel("Source reference (optional)").FillAsync("https://example.invalid/original");
+        await page.GetByLabel("Tags (comma-separated, optional)").FillAsync("Quotes, Research");
+        await Button(page, "Save entry").ClickAsync();
+        await Expect(page.GetByText("Knowledge entry saved.", new() { Exact = true })).ToBeVisibleAsync();
+        await Link(page, "View saved entry").ClickAsync();
+        await Expect(page.GetByText(content, new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText("Source reference (not fetched): https://example.invalid/original", new()
+        {
+            Exact = true
+        })).ToBeVisibleAsync();
+
+        await page.ReloadAsync();
+        await Expect(page.GetByText(content, new() { Exact = true })).ToBeVisibleAsync();
+        await Link(page, "Search knowledge").ClickAsync();
+        await page.GetByLabel("Words or a quoted phrase").FillAsync("\"original wording\"");
+        await Button(page, "Search").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Link, new() { Name = "Verbatim capture" })).ToBeVisibleAsync();
+        await page.GetByRole(AriaRole.Link, new() { Name = "Verbatim capture" }).ClickAsync();
+        await Expect(page.GetByText(content, new() { Exact = true })).ToBeVisibleAsync();
+
+        await page.GotoAsync("/knowledge");
+        var downloadTask = page.WaitForDownloadAsync();
+        await Button(page, "Export journal backup").ClickAsync();
+        var download = await downloadTask;
+        await using var backupStream = await download.CreateReadStreamAsync();
+        using var backupContent = new MemoryStream();
+        await backupStream.CopyToAsync(backupContent);
+        page.Dialog += async (_, dialog) => await dialog.AcceptAsync();
+        await page.Locator("#knowledge-backup-file").SetInputFilesAsync(new FilePayload
+        {
+            Name = "journal.json",
+            MimeType = "application/json",
+            Buffer = backupContent.ToArray()
+        });
+        await Expect(page.GetByText("Journal backup restored.", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
     [Theory]
     [InlineData(null, "/auth/sign-in")]
     [InlineData("deny", "/auth/denied")]

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Bujo.Host.Authentication;
 using Bujo.Domain;
+using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -34,6 +35,7 @@ public sealed class BrowserFixture : IAsyncLifetime
     public IBrowser Browser { get; private set; } = null!;
     public string BaseUrl => _client.BaseAddress!.ToString().TrimEnd('/');
     internal BrowserJournalRepository Journal => _factory.Journal;
+    internal InMemoryKnowledgeRepository Knowledge => _factory.Knowledge;
 
     public async Task InitializeAsync()
     {
@@ -88,6 +90,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
     private readonly string _approvedObject = Guid.NewGuid().ToString("D");
     private readonly string _clientId = Guid.NewGuid().ToString("D");
     internal BrowserJournalRepository Journal { get; } = new();
+    internal InMemoryKnowledgeRepository Knowledge { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -109,6 +112,12 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<IJournalRepository>();
             services.AddSingleton<IJournalRepository>(Journal);
+            services.RemoveAll<IKnowledgeRepository>();
+            services.AddSingleton<IKnowledgeRepository>(Knowledge);
+            services.RemoveAll<IJournalBackupRepository>();
+            services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
+                provider.GetRequiredService<IJournalRepository>(),
+                provider.GetRequiredService<IKnowledgeRepository>()));
             services.AddSingleton<TimeProvider>(new BrowserClock());
             services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
             {

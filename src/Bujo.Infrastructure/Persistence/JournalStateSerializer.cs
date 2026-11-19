@@ -23,6 +23,20 @@ internal static class JournalStateSerializer
         JsonSerializer.Deserialize<ReviewChange[]>(changes, Options)
         ?? throw new JsonException("Stored review proposal changes are empty.");
 
+    public static string SerializeKnowledgeBackup(KnowledgeBackupSnapshot backup) =>
+        JsonSerializer.Serialize(backup, Options);
+
+    public static KnowledgeBackupSnapshot DeserializeKnowledgeBackup(string backup) =>
+        JsonSerializer.Deserialize<KnowledgeBackupSnapshot>(backup, Options)
+        ?? throw new JsonException("Knowledge backup is empty.");
+
+    public static string SerializeJournalBackup(JournalBackupSnapshot backup) =>
+        JsonSerializer.Serialize(backup, Options);
+
+    public static JournalBackupSnapshot DeserializeJournalBackup(string backup) =>
+        JsonSerializer.Deserialize<JournalBackupSnapshot>(backup, Options)
+        ?? throw new JsonException("Journal backup is empty.");
+
     private static JsonSerializerOptions CreateOptions()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
@@ -34,8 +48,24 @@ internal static class JournalStateSerializer
 
     private sealed class TagConverter : JsonConverter<Tag>
     {
-        public override Tag Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            Tag.Create(reader.GetString() ?? throw new JsonException("Tag is empty."));
+        public override Tag Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return Tag.Create(reader.GetString() ?? throw new JsonException("Tag is empty."));
+            }
+
+            if (reader.TokenType == JsonTokenType.StartObject)
+            {
+                using var document = JsonDocument.ParseValue(ref reader);
+                if (document.RootElement.TryGetProperty("value", out var value))
+                {
+                    return Tag.Create(value.GetString() ?? throw new JsonException("Tag is empty."));
+                }
+            }
+
+            throw new JsonException("Tag is invalid.");
+        }
 
         public override void Write(Utf8JsonWriter writer, Tag value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value.Value);
@@ -47,7 +77,10 @@ internal static class JournalStateSerializer
         {
             using var document = JsonDocument.ParseValue(ref reader);
             var root = document.RootElement;
-            var kind = Enum.Parse<PlannedPeriodKind>(root.GetProperty("kind").GetString()!, ignoreCase: true);
+            var kindElement = root.GetProperty("kind");
+            var kind = kindElement.ValueKind == JsonValueKind.String
+                ? Enum.Parse<PlannedPeriodKind>(kindElement.GetString()!, ignoreCase: true)
+                : (PlannedPeriodKind)kindElement.GetInt32();
             return kind switch
             {
                 PlannedPeriodKind.Unplanned => PlannedPeriod.Unplanned,

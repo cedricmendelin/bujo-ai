@@ -248,6 +248,13 @@ and index creation, language behavior, search after updates and deletes, and
 pause/resume with full-text enabled on that tier. Failure is a configuration
 blocker to resolve within Azure SQL, not permission to change providers.
 
+Implementation verification: the SQL Server 2022 local container accepted the
+guarded migration and persisted knowledge entries across repository restart.
+Full-text was unavailable in that container, so search used the bounded fallback;
+this did not verify full-text population or language behavior. Azure SQL tier,
+region, LCID 1033 availability, and population latency remain unverified and
+require an owner-authorized check.
+
 ## Modules and tests
 
 Proposed logical boundaries can start as a few class libraries; do not create

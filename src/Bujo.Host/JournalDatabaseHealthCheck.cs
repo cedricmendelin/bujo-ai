@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Bujo.Domain;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -7,6 +8,7 @@ namespace Bujo.Host;
 
 public sealed class JournalDatabaseHealthCheck(
     IDbContextFactory<JournalDbContext> contextFactory,
+    IKnowledgeRepository knowledgeRepository,
     ILogger<JournalDatabaseHealthCheck> logger) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(
@@ -44,7 +46,10 @@ public sealed class JournalDatabaseHealthCheck(
                 }
             }
 
-            return HealthCheckResult.Healthy();
+            return HealthCheckResult.Healthy(data: new Dictionary<string, object>
+            {
+                ["KnowledgeFullTextIndex"] = knowledgeRepository.GetIndexState().ToString()
+            });
         }
         catch (Exception exception) when (exception is DbException or TimeoutException or InvalidOperationException)
         {

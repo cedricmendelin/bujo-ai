@@ -19,7 +19,8 @@ public enum DomainErrorCode
     ApprovalRequired,
     ProposalExpired,
     ProposalTerminal,
-    ProposalDigestMismatch
+    ProposalDigestMismatch,
+    KnowledgeSearchUnavailable
 }
 
 public sealed record DomainError(

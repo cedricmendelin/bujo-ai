@@ -19,6 +19,10 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
 
     public DbSet<ReviewProposalEntity> ReviewProposals => Set<ReviewProposalEntity>();
 
+    public DbSet<KnowledgeEntryEntity> KnowledgeEntries => Set<KnowledgeEntryEntity>();
+
+    public DbSet<KnowledgeEntryTagEntity> KnowledgeEntryTags => Set<KnowledgeEntryTagEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<JournalListEntity>(entity =>
@@ -121,6 +125,34 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.Property(item => item.ApprovedDigest).HasMaxLength(64);
             entity.Property(item => item.RowVersion).IsRowVersion();
             entity.HasIndex(item => new { item.ListId, item.CreatedAt });
+        });
+
+        modelBuilder.Entity<KnowledgeEntryEntity>(entity =>
+        {
+            entity.ToTable("KnowledgeEntries");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Content).HasColumnType("nvarchar(max)").IsRequired();
+            entity.Property(item => item.Title).HasMaxLength(DomainLimits.KnowledgeTitle);
+            entity.Property(item => item.SourceReference).HasMaxLength(DomainLimits.KnowledgeSourceReference);
+            entity.Property(item => item.CreatedAt).HasColumnType("datetimeoffset");
+            entity.Property(item => item.UpdatedAt).HasColumnType("datetimeoffset");
+            entity.Property(item => item.ArchivedAt).HasColumnType("datetimeoffset");
+            entity.Property(item => item.Version).IsConcurrencyToken().IsRequired();
+            entity.Property(item => item.RowVersion).IsRowVersion();
+            entity.HasMany(item => item.Tags)
+                .WithOne()
+                .HasForeignKey(tag => tag.KnowledgeEntryId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(item => new { item.ArchivedAt, item.UpdatedAt, item.Id });
+        });
+
+        modelBuilder.Entity<KnowledgeEntryTagEntity>(entity =>
+        {
+            entity.ToTable("KnowledgeEntryTags");
+            entity.HasKey(tag => new { tag.KnowledgeEntryId, tag.NormalizedValue });
+            entity.Property(tag => tag.Value).HasMaxLength(DomainLimits.TagName).IsRequired();
+            entity.Property(tag => tag.NormalizedValue).HasMaxLength(DomainLimits.TagName).IsRequired();
+            entity.HasIndex(tag => tag.NormalizedValue);
         });
     }
 }
@@ -282,4 +314,36 @@ public sealed class ReviewProposalEntity
     public DateTimeOffset? AppliedAt { get; set; }
 
     public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class KnowledgeEntryEntity
+{
+    public Guid Id { get; set; }
+
+    public required string Content { get; set; }
+
+    public string? Title { get; set; }
+
+    public string? SourceReference { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    public DateTimeOffset? ArchivedAt { get; set; }
+
+    public long Version { get; set; }
+
+    public byte[] RowVersion { get; set; } = [];
+
+    public ICollection<KnowledgeEntryTagEntity> Tags { get; } = new List<KnowledgeEntryTagEntity>();
+}
+
+public sealed class KnowledgeEntryTagEntity
+{
+    public Guid KnowledgeEntryId { get; set; }
+
+    public required string NormalizedValue { get; set; }
+
+    public required string Value { get; set; }
 }

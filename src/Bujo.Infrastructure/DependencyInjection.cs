@@ -13,6 +13,10 @@ public static class DependencyInjection
         services.AddDbContextFactory<JournalDbContext>(options =>
             options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure()));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
+        services.AddScoped<IKnowledgeRepository, EfKnowledgeRepository>();
+        services.AddScoped<IJournalBackupRepository, EfJournalBackupRepository>();
+        services.AddSingleton<KnowledgeBackupSerializer>();
+        services.AddSingleton<JournalBackupSerializer>();
         return services;
     }
 
@@ -22,6 +26,8 @@ public static class DependencyInjection
         services.AddSingleton<IJournalExport, JournalExport>();
         services.AddScoped<JournalService>();
         services.AddScoped<JournalApplicationService>();
+        services.AddScoped<JournalBackupApplicationService>();
+        services.AddScoped<KnowledgeApplicationService>();
         services.AddScoped<ReviewApplicationService>();
         return services;
     }

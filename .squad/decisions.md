@@ -152,6 +152,27 @@
 - Evaluate semantic retrieval later against actual missed examples. Any derived
   indexes/summaries must remain rebuildable from the original saved entries.
 
+### 2026-11-19: Release 1 knowledge contract and lifecycle
+
+- Knowledge entries have an immutable stable GUID and preserve required original
+  content verbatim. Title and source reference are optional data; source URLs are
+  never fetched. Tags reuse journal normalization.
+- Edit is versioned and updates the entry in place. Archive is reversible; hard
+  delete is explicit, permanent, and recoverable only from backup. Release 1 does
+  not retain content history.
+- Search uses English (LCID 1033) full text for text queries, AND tag filters, and
+  bounded keyset pagination ordered by rank, update time, and ID. Tag-only search
+  orders by update time and ID.
+- Readiness is `Ready`, `Populating`, or `Unavailable`. A disclosed, bounded
+  recent-entry fallback keeps new saves retrievable while full text is not ready;
+  fallback does not claim complete semantic or historical coverage.
+- A versioned journal backup must include knowledge entries, tags, source
+  references, archive state, timestamps, IDs, and exact text. Restore accepts
+  older snapshots without the knowledge section and replaces validated journal
+  and knowledge state atomically.
+- Knowledge remains in the journal identity and Azure SQL boundary and is
+  untrusted data, never privileged tool instructions.
+
 ### 2026-11-14: Release 2 AI search synchronization and RAG
 
 - User explicitly assigned knowledge synchronization into an AI search service

@@ -1,0 +1,64 @@
+@page "/knowledge/new"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits JournalPage
+@inject KnowledgeApplicationService Knowledge
+
+<PageTitle>Capture knowledge · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Capture knowledge</h1>
+    <p>Saved content is kept verbatim. A source reference is stored as data only and is never fetched.</p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_savedId is { } id)
+    {
+        <p><a href="/knowledge/@id">View saved entry</a></p>
+    }
+    @if (Ready)
+    {
+        <form method="post" data-journal-write data-journal-form @onsubmit="CaptureAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>New knowledge entry</legend>
+                <label for="knowledge-content">Content</label>
+                <textarea id="knowledge-content" @bind="_content" maxlength="@DomainLimits.KnowledgeContent" required></textarea>
+                <label for="knowledge-title">Title (optional)</label>
+                <input id="knowledge-title" @bind="_title" maxlength="@DomainLimits.KnowledgeTitle" />
+                <label for="knowledge-source">Source reference (optional)</label>
+                <input id="knowledge-source" @bind="_sourceReference" maxlength="@DomainLimits.KnowledgeSourceReference" />
+                <label for="knowledge-entry-tags">Tags (comma-separated, optional)</label>
+                <input id="knowledge-entry-tags" @bind="_tags" />
+                <button type="submit">Save entry</button>
+            </fieldset>
+        </form>
+    }
+</div>
+
+@code {
+    private string _content = string.Empty;
+    private string? _title;
+    private string? _sourceReference;
+    private string _tags = string.Empty;
+    private Guid? _savedId;
+
+    protected override void Read()
+    {
+    }
+
+    private Task CaptureAsync() => SaveAsync(
+        () =>
+        {
+            _savedId = null;
+            return Knowledge.Create(_content, _title, _sourceReference, ParseTags(_tags));
+        },
+        saved =>
+        {
+            _savedId = saved.Id;
+            _content = string.Empty;
+            _title = null;
+            _sourceReference = null;
+            _tags = string.Empty;
+            return "Knowledge entry saved.";
+        });
+
+    private static IReadOnlyList<string> ParseTags(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}

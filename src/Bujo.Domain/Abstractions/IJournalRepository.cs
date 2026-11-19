@@ -10,6 +10,8 @@ public interface IJournalRepository
 {
     JournalSnapshot GetSnapshot();
 
+    DomainResult<JournalSnapshot> RestoreSnapshot(JournalSnapshot snapshot);
+
     DomainResult<JournalListSnapshot> CreateList(CreateListCommand command);
 
     DomainResult<CaptureResult> Capture(CaptureCommand command);

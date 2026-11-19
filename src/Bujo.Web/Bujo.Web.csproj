@@ -14,6 +14,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\Bujo.Application\Bujo.Application.csproj" />
+    <ProjectReference Include="..\Bujo.Infrastructure\Bujo.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

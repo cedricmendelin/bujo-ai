@@ -25,6 +25,8 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         {
             ["GET /api/journal"] = ["get_journal"],
             ["GET /api/journal/export"] = ["export_journal"],
+            ["GET /api/journal/backup/export"] = ["export_journal_backup"],
+            ["POST /api/journal/restore"] = ["restore_journal_backup"],
             ["GET /api/daily-start"] = ["get_daily_start"],
             ["GET /api/planning/upcoming"] = ["get_upcoming"],
             ["POST /api/lists"] = ["create_list"],
@@ -43,13 +45,25 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["GET /api/review-proposals/{proposalId:guid}"] = ["get_review_proposal"],
             ["POST /api/review-proposals/{proposalId:guid}/cancel"] = ["cancel_review_proposal"],
             ["POST /api/review-proposals/{proposalId:guid}/reject"] = ["reject_review_proposal"],
-            ["POST /api/review-proposals/{proposalId:guid}/apply"] = ["apply_review_proposal"]
+            ["POST /api/review-proposals/{proposalId:guid}/apply"] = ["apply_review_proposal"],
+            ["POST /api/knowledge/"] = ["capture_knowledge"],
+            ["GET /api/knowledge/export"] = ["export_knowledge_backup"],
+            ["POST /api/knowledge/restore"] = ["restore_knowledge_backup"],
+            ["GET /api/knowledge/{id:guid}"] = ["get_knowledge_entry"],
+            ["PUT /api/knowledge/{id:guid}"] = ["update_knowledge_entry"],
+            ["POST /api/knowledge/{id:guid}/archive"] = ["set_knowledge_archived"],
+            ["DELETE /api/knowledge/{id:guid}"] = ["delete_knowledge_entry"],
+            ["GET /api/knowledge/search"] = ["search_knowledge"],
+            ["GET /api/knowledge/tags"] = ["list_knowledge_tags"],
+            ["GET /api/knowledge/search-status"] = ["get_knowledge_search_status"]
         };
 
     private static readonly string[] ExpectedTools =
     [
         "get_journal",
         "export_journal",
+        "export_journal_backup",
+        "restore_journal_backup",
         "get_daily_start",
         "get_upcoming",
         "find_lists",
@@ -70,7 +84,17 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         "get_review_proposal",
         "cancel_review_proposal",
         "reject_review_proposal",
-        "apply_review_proposal"
+        "apply_review_proposal",
+        "capture_knowledge",
+        "get_knowledge_entry",
+        "update_knowledge_entry",
+        "set_knowledge_archived",
+        "delete_knowledge_entry",
+        "search_knowledge",
+        "list_knowledge_tags",
+        "get_knowledge_search_status",
+        "export_knowledge_backup",
+        "restore_knowledge_backup"
     ];
 
     private readonly JournalApiFactory _factory;
@@ -109,6 +133,16 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_journal","arguments":{}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export_journal","arguments":{}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"close_list","arguments":{"listId":"00000000-0000-0000-0000-000000000101"}}}""",
+            """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"capture_knowledge","arguments":{"content":"note"}}}""",
+            """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_knowledge_entry","arguments":{"id":"00000000-0000-0000-0000-000000000001"}}}""",
+            """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update_knowledge_entry","arguments":{"id":"00000000-0000-0000-0000-000000000001","content":"note","expectedVersion":1}}}""",
+            """{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"set_knowledge_archived","arguments":{"id":"00000000-0000-0000-0000-000000000001","archived":true,"expectedVersion":1}}}""",
+            """{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"delete_knowledge_entry","arguments":{"id":"00000000-0000-0000-0000-000000000001","expectedVersion":1}}}""",
+            """{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search_knowledge","arguments":{"text":"note"}}}""",
+            """{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"list_knowledge_tags","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_knowledge_search_status","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"export_knowledge_backup","arguments":{}}}""",
+            """{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"restore_knowledge_backup","arguments":{"backup":{"schemaVersion":1,"entries":[]}}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}""",
             """{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}"""
         };
@@ -161,6 +195,76 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task KnowledgeMcpToolsShareTheApiStoreAndPreserveOriginalContent()
+    {
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            },
+            httpClient,
+            NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+        const string content = "“Saved exactly”\r\nand returned with its quote.";
+
+        var saved = await mcp.CallToolAsync("capture_knowledge", new Dictionary<string, object?>
+        {
+            ["content"] = content,
+            ["title"] = "Exact quote",
+            ["sourceReference"] = "https://example.invalid/quote",
+            ["tags"] = new[] { "Quotes", "Research" }
+        });
+        Assert.False(saved.IsError);
+        var id = saved.StructuredContent!.Value.GetProperty("id").GetGuid();
+
+        using var api = _factory.CreateClient();
+        using var read = await api.SendAsync(AuthorizedGet($"/api/knowledge/{id}"));
+        using var readBody = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+        var search = await mcp.CallToolAsync("search_knowledge", new Dictionary<string, object?>
+        {
+            ["text"] = "\"Saved exactly\"",
+            ["tags"] = new[] { "Quotes", "Research" }
+        });
+        var backup = await mcp.CallToolAsync("export_knowledge_backup");
+        var backupSnapshot = JsonSerializer.Deserialize<KnowledgeBackupSnapshot>(
+            backup.StructuredContent!.Value.GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var deleted = await mcp.CallToolAsync("delete_knowledge_entry", new Dictionary<string, object?>
+        {
+            ["id"] = id,
+            ["expectedVersion"] = 1
+        });
+        var restored = await mcp.CallToolAsync("restore_knowledge_backup", new Dictionary<string, object?>
+        {
+            ["backup"] = backupSnapshot
+        });
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        Assert.Equal(content, readBody.RootElement.GetProperty("content").GetString());
+        Assert.False(search.IsError);
+        var result = Assert.Single(search.StructuredContent!.Value.GetProperty("results").EnumerateArray());
+        Assert.Equal(id, result.GetProperty("id").GetGuid());
+        Assert.Equal(content, result.GetProperty("passage").GetString());
+        Assert.Equal("https://example.invalid/quote", result.GetProperty("sourceReference").GetString());
+        Assert.Equal((int)KnowledgeSearchMode.Fallback,
+            search.StructuredContent.Value.GetProperty("searchMode").GetInt32());
+        Assert.False(backup.IsError);
+        Assert.Single(backupSnapshot!.Entries);
+        Assert.False(deleted.IsError);
+        Assert.False(restored.IsError);
+    }
+
+    private static HttpRequestMessage AuthorizedGet(string uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Add("Authorization", "Test allow");
+        return request;
     }
 
     [Fact]
