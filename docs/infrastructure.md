@@ -142,7 +142,7 @@ replacement before that approval and migration plan.
 ## Optional Microsoft Foundry model provider
 
 `infra/foundry.tf` defines one Azure AI Services account (`AIServices`), one
-Foundry project, and the `chat`, `decision`, and `embedding` model deployments.
+Foundry project, and the `chat`, `sol`, `astra`, and `embedding` model deployments.
 The deployment map is flat and can only use pay-per-token SKUs:
 `DataZoneStandard`, `GlobalStandard`, or `Standard`. The production setting is
 `foundry_enabled = true` in `infra/prod.tfvars`; the variable default remains
@@ -161,9 +161,10 @@ substitute another model or deployment type.
 
 | Purpose | Approved model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
 | --- | --- | --- | ---: | --- | --- |
-| Chat | `gpt-6.1-terra` / `2026-10-26` | Microsoft GA announcement lists EU Data Zone Standard; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $1.10; output $5.50; Data Zone row not independently verified | No automatic fallback; owner must verify and approve an available alternative |
-| Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; exact Switzerland North version/SKU/quota not verified | 1 | Indexed pricing: input $0.28 (cached $0.03); output $2.20 | No automatic fallback; do not assume `Standard` is offered for GPT models in Switzerland North |
-| Embedding | `text-embedding-3-small` / `1` | Azure model; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $0.022; verify billing units and Data Zone price row | No automatic fallback; owner must verify and approve an available alternative |
+| Chat | `gpt-6.1-terra` / `2026-10-26` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Sol | `gpt-6.2-sol` / `2026-11-17` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Astra | `gpt-6.2-astra` / `2026-11-17` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Embedding | `text-embedding-3-large` / `1` | Owner-selected production deployment; Standard | 1 | Verify current pricing | No automatic fallback |
 
 The public Azure OpenAI pricing page is the source to recheck these assumptions;
 the figures above are not an approved quote. The owner approved a monthly
@@ -303,8 +304,9 @@ remains an enablement gate:
 
 - [Microsoft GPT-6.1 Terra GA announcement](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/gpt-6-1-terra-now-generally-available-in-microsoft-foundry-build-agents-that-see/4567769)
 - [GPT-6.1 Terra model catalog](https://ai.azure.com/catalog/models/gpt-6.1-terra)
-- [GPT-5 mini model catalog](https://ai.azure.com/catalog/models/gpt-5-mini)
-- [Text embedding 3 small model catalog](https://ai.azure.com/catalog/models/text-embedding-3-small)
+- [GPT-6.2 Sol model catalog](https://ai.azure.com/catalog/models/gpt-6.2-sol)
+- [GPT-6.2 Astra model catalog](https://ai.azure.com/catalog/models/gpt-6.2-astra)
+- [Text embedding 3 large model catalog](https://ai.azure.com/catalog/models/text-embedding-3-large)
 - [Foundry Models region availability](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability)
 - [Azure OpenAI public pricing](https://azure.microsoft.com/en-us/pricing/details/azure-openai/)
 - [Data Zone Standard deployment type](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/deployment-types)
