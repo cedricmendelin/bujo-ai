@@ -120,6 +120,12 @@ variable "foundry_enabled" {
   default     = false
 }
 
+variable "foundry_runtime_roles_enabled" {
+  type        = bool
+  description = "Assign Cognitive Services OpenAI User and Speech User to the runtime managed identity."
+  default     = false
+}
+
 variable "foundry_access_group" {
   type = object({
     object_id    = string

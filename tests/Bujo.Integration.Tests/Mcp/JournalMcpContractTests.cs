@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Claims;
 using Bujo.Application;
+using Bujo.Application.Chat;
 using Bujo.Domain;
 using Bujo.Host;
 using Bujo.Host.Mcp;
@@ -350,6 +351,12 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
         var tools = await mcp.ListToolsAsync();
         Assert.Equal(ExpectedTools.Order(), tools.Select(tool => tool.Name).Order());
+        var mcpNames = tools.Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.All(
+            ChatToolRegistry.All.Select(tool => tool.Name),
+            name => Assert.Contains(name, mcpNames));
+        Assert.DoesNotContain("run_chat", mcpNames);
+        Assert.DoesNotContain("get_chat_speech_status", mcpNames);
         Assert.DoesNotContain("approve_review_proposal", tools.Select(tool => tool.Name));
         Assert.DoesNotContain("approved", tools.SelectMany(tool =>
             tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject()
@@ -744,6 +751,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
                 return methods.Select(method => $"{method} {route}");
             })
             .Where(operation => operation.Contains(" /api/", StringComparison.Ordinal))
+            .Where(operation => !operation.Contains("/api/chat/", StringComparison.Ordinal))
             .ToHashSet(StringComparer.Ordinal);
 
         var missingParity = apiOperations

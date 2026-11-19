@@ -363,7 +363,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     {
         lock (_gate)
         {
-            if (command.Id == Guid.Empty || command.Changes.Count == 0 ||
+            if (command.Id == Guid.Empty ||
+                (command.Changes.Count == 0 && !command.RequestCloseList) ||
                 _reviewProposals.ContainsKey(command.Id))
             {
                 return DomainResult<ReviewProposalSnapshot>.Failure(
