@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Bujo.Domain;
 using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
 using static Microsoft.Playwright.Assertions;
@@ -131,6 +132,81 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "Lifecycle item").ClickAsync();
         await Button(page, "Reopen item").ClickAsync();
         await Expect(page.GetByText("Latest: Lifecycle list · Open")).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task ListReviewShowsExplicitDispositionsAndRequiresPwaApprovalBeforeClosure()
+    {
+        await using var context = await fixture.CreateContextAsync(width: 390, height: 844);
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/lists");
+        await CreateList(page, "Review workflow");
+        await Link(page, "Review workflow").ClickAsync();
+        await CaptureAsync(page, "Review disposition", "Review workflow");
+        await Link(page, "Lists").ClickAsync();
+        await Link(page, "Review workflow").ClickAsync();
+        await Link(page, "Start review").ClickAsync();
+
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Unfinished active occurrences" })).ToBeVisibleAsync();
+        await Expect(page.GetByRole(AriaRole.Link, new() { Name = "Review disposition" })).ToBeVisibleAsync();
+        var accessibility = await page.RunAxe();
+        Assert.Empty(accessibility.Violations);
+
+        await page.GetByLabel("Disposition", new() { Exact = true }).SelectOptionAsync("Done");
+        await page.GetByLabel("Close this list after applying all dispositions").CheckAsync();
+        await Button(page, "Review proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();
+        Assert.Matches("^[0-9a-f]{64}$", await page.Locator("code").InnerTextAsync());
+        await Link(page, "Open this proposal").ClickAsync();
+        await page.ReloadAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Pending" })).ToBeVisibleAsync();
+        await Button(page, "Approve this proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Approved" })).ToBeVisibleAsync();
+        await Button(page, "Apply approved proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Applied" })).ToBeVisibleAsync();
+        await Link(page, "Back to list").ClickAsync();
+        await Expect(page.GetByText("Closed", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task StaleReviewProposalShowsConflictWithoutClosingOrApplyingChanges()
+    {
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/lists");
+        await CreateList(page, "Stale review workflow");
+        await Link(page, "Stale review workflow").ClickAsync();
+        await CaptureAsync(page, "Stale review item", "Stale review workflow");
+        await Link(page, "Lists").ClickAsync();
+        await Link(page, "Stale review workflow").ClickAsync();
+        await Link(page, "Start review").ClickAsync();
+
+        await page.GetByLabel("Disposition", new() { Exact = true }).SelectOptionAsync("Done");
+        await page.GetByLabel("Close this list after applying all dispositions").CheckAsync();
+        await Button(page, "Review proposal").ClickAsync();
+        await Button(page, "Approve this proposal").ClickAsync();
+
+        var list = fixture.Journal.GetSnapshot().Lists.Single(candidate => candidate.Name == "Stale review workflow");
+        var concurrent = fixture.Journal.Capture(new CaptureCommand(
+            "Concurrent review item",
+            null,
+            null,
+            PlannedPeriod.Unplanned,
+            list.Id,
+            list.Version,
+            DateTimeOffset.UtcNow));
+        Assert.True(concurrent.IsSuccess, concurrent.Error?.Message);
+        await Button(page, "Apply approved proposal").ClickAsync();
+
+        await Expect(page.GetByRole(AriaRole.Alert))
+            .ToContainTextAsync("The journal changed since this proposal was reviewed.");
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Unresolved occurrence");
+        var snapshot = fixture.Journal.GetSnapshot();
+        Assert.Equal(JournalListState.Open, snapshot.Lists.Single(candidate => candidate.Id == list.Id).State);
+        Assert.Contains(
+            snapshot.Occurrences,
+            occurrence => occurrence.ItemId == snapshot.Items.Single(item => item.Name == "Stale review item").Id &&
+                          occurrence.State == OccurrenceState.Open);
     }
 
     [Fact]

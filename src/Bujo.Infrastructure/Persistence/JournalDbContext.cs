@@ -17,6 +17,8 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
 
     public DbSet<MoveOperationEntity> MoveOperations => Set<MoveOperationEntity>();
 
+    public DbSet<ReviewProposalEntity> ReviewProposals => Set<ReviewProposalEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<JournalListEntity>(entity =>
@@ -104,6 +106,21 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.HasKey(item => item.OperationId);
             entity.Property(item => item.Fingerprint).HasMaxLength(200).IsRequired();
             entity.Property(item => item.ResultJson).IsRequired();
+        });
+
+        modelBuilder.Entity<ReviewProposalEntity>(entity =>
+        {
+            entity.ToTable("ReviewProposals");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.CreatedBy).HasMaxLength(160).IsRequired();
+            entity.Property(item => item.Source).HasConversion<int>();
+            entity.Property(item => item.Status).HasConversion<int>();
+            entity.Property(item => item.ChangesJson).HasColumnType("nvarchar(max)").IsRequired();
+            entity.Property(item => item.Digest).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.ApprovedBy).HasMaxLength(160);
+            entity.Property(item => item.ApprovedDigest).HasMaxLength(64);
+            entity.Property(item => item.RowVersion).IsRowVersion();
+            entity.HasIndex(item => new { item.ListId, item.CreatedAt });
         });
     }
 }
@@ -230,4 +247,39 @@ public sealed class MoveOperationEntity
     public required string Fingerprint { get; set; }
 
     public required string ResultJson { get; set; }
+}
+
+public sealed class ReviewProposalEntity
+{
+    public Guid Id { get; set; }
+
+    public Guid ListId { get; set; }
+
+    public long ExpectedListVersion { get; set; }
+
+    public required string CreatedBy { get; set; }
+
+    public ReviewProposalSource Source { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    public ReviewProposalStatus Status { get; set; }
+
+    public bool RequestCloseList { get; set; }
+
+    public required string ChangesJson { get; set; }
+
+    public required string Digest { get; set; }
+
+    public string? ApprovedBy { get; set; }
+
+    public DateTimeOffset? ApprovedAt { get; set; }
+
+    public string? ApprovedDigest { get; set; }
+
+    public DateTimeOffset? AppliedAt { get; set; }
+
+    public byte[] RowVersion { get; set; } = [];
 }

@@ -27,4 +27,8 @@ internal sealed class BrowserJournalRepository : IJournalRepository
     public DomainResult<ItemSnapshot> EditItem(EditItemCommand command) => _inner.EditItem(command);
     public DomainResult<ItemSnapshot> ChangePlannedPeriod(ChangePeriodCommand command) => _inner.ChangePlannedPeriod(command);
     public DomainResult<JournalListSnapshot> SetListGoal(SetListGoalCommand command) => _inner.SetListGoal(command);
+    public DomainResult<ReviewProposalSnapshot> CreateReviewProposal(CreateReviewProposalCommand command) => _inner.CreateReviewProposal(command);
+    public DomainResult<ReviewProposalSnapshot> GetReviewProposal(Guid id) => _inner.GetReviewProposal(id);
+    public DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command) => _inner.SetReviewProposalStatus(command);
+    public DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command) => _inner.ApplyReviewProposal(command);
 }

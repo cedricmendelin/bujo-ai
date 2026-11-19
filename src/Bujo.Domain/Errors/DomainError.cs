@@ -14,7 +14,12 @@ public enum DomainErrorCode
     DuplicateFutureLog,
     DuplicateListName,
     InvalidTimeZone,
-    InvariantViolation
+    InvariantViolation,
+    ApprovalDenied,
+    ApprovalRequired,
+    ProposalExpired,
+    ProposalTerminal,
+    ProposalDigestMismatch
 }
 
 public sealed record DomainError(

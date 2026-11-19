@@ -18,6 +18,9 @@ is public and contains no credentials or journal data.
 | `resolve_occurrence` | Resolve an occurrence to its current destination and history. |
 | `edit_item`, `set_planned_period`, `set_list_goal` | Make explicit single-item or list-goal edits. |
 | `close_list`, `reopen_list` | Close an eligible list or reopen a closed list by ID. |
+| `get_list_review` | Separate unfinished active occurrences, historical moved links with resolved destination/state, and resolved history. |
+| `create_review_proposal`, `get_review_proposal` | Create or inspect exact, versioned list-review changes and their server-computed digest. |
+| `cancel_review_proposal`, `reject_review_proposal`, `apply_review_proposal` | Cancel/reject without data changes, or apply after approval in the PWA. |
 | `move_item` | Move one item using a client operation ID and expected occurrence ID. |
 | `complete_occurrence`, `abandon_occurrence`, `reopen_occurrence` | Change one occurrence's state. |
 
@@ -34,20 +37,27 @@ operation ID, so a client that loses the response and retries may create a
 duplicate. Other writes use the domain's existing concurrency checks.
 
 `close_list` accepts only a list ID, and the domain rejects closing the Future
-Log or a list with unresolved occurrences. `reopen_list` accepts only a closed
-list ID. Both return the shared domain result and errors; neither creates a
-proposal or performs a bulk operation. These tools are implemented in open PR
-#133 as a proposed resolution to the former API-only list-lifecycle exception;
-owner confirmation of the API-MCP parity contract remains pending.
+Log or a list with unresolved occurrences. Use `get_list_review` to see active
+occurrences separately from moved links. A proposal captures exact item and
+occurrence IDs, expected versions, destinations, requested closure, and a
+server-computed SHA-256 digest; proposals expire after 24 hours and cannot be
+edited. MCP can create, read, cancel, reject, or apply a proposal, but there is
+no MCP approval tool or `approved` argument. The proposal creator must approve
+the exact digest in the authenticated interactive PWA. Apply rechecks that
+single-use approval and applies every disposition and requested closure in one
+transaction; stale proposals conflict and need a new review. `reopen_list`
+remains an explicit direct action and does not change occurrence states.
+`create_review_proposal` returns a PWA review path with its proposal ID so the
+creator can load, inspect, and approve the persisted proposal after leaving MCP.
 
 List names are unique case-insensitively across list kinds, following the
 owner's direction. Multiple weekly lists may share the same ISO year/week key.
 The uniqueness rule applies to names, not week keys.
 
-There are no bulk or ceremony-generated tools. Do not interpret a prompt or
-tool description as authorization: only the listed single-operation tools are
-exposed. Prompts are guidance, not automatic (`capture_item`, `daily_start`,
-and `explicit_edit`); daily start is a query, not a background job. The
+Bulk and ceremony-generated changes use review proposals. Do not interpret a
+prompt or tool description as authorization: only the listed tools are exposed,
+and MCP cannot approve. Prompts are guidance, not automatic (`capture_item`,
+`daily_start`, and `explicit_edit`); daily start is a query, not a background job. The
 `bujo://journal/capabilities` resource describes available operations and
 errors.
 

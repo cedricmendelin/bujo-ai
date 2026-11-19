@@ -78,6 +78,25 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
     public DomainResult<JournalListSnapshot> SetListGoal(SetListGoalCommand command) =>
         Execute((_, repository) => repository.SetListGoal(command));
 
+    public DomainResult<ReviewProposalSnapshot> CreateReviewProposal(CreateReviewProposalCommand command) =>
+        Execute((_, repository) => repository.CreateReviewProposal(command));
+
+    public DomainResult<ReviewProposalSnapshot> GetReviewProposal(Guid id)
+    {
+        using var context = contextFactory.CreateDbContext();
+        var entity = context.ReviewProposals.AsNoTracking().SingleOrDefault(proposal => proposal.Id == id);
+        return entity is null
+            ? DomainResult<ReviewProposalSnapshot>.Failure(
+                new DomainError(DomainErrorCode.NotFound, "The review proposal was not found."))
+            : DomainResult<ReviewProposalSnapshot>.Success(ToSnapshot(entity));
+    }
+
+    public DomainResult<ReviewProposalSnapshot> SetReviewProposalStatus(ReviewProposalStatusCommand command) =>
+        Execute((_, repository) => repository.SetReviewProposalStatus(command));
+
+    public DomainResult<ReviewProposalSnapshot> ApplyReviewProposal(ApplyReviewProposalCommand command) =>
+        Execute((_, repository) => repository.ApplyReviewProposal(command));
+
     private DomainResult<T> Execute<T>(Func<JournalDbContext, InMemoryJournalRepository, DomainResult<T>> command)
     {
         try
@@ -97,6 +116,7 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
                 }
 
                 SaveRepository(context, repository.GetSnapshot());
+                SaveReviewProposals(context, repository.GetReviewProposals());
                 context.SaveChanges();
                 transaction.Commit();
                 return result;
@@ -141,7 +161,68 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
                 "The operation id was already used for a different move."));
 
     private static InMemoryJournalRepository LoadRepository(JournalDbContext context) =>
-        new(LoadSnapshot(context, tracked: true));
+        new(LoadSnapshot(context, tracked: true), LoadReviewProposals(context, tracked: true));
+
+    private static IReadOnlyList<ReviewProposalSnapshot> LoadReviewProposals(JournalDbContext context, bool tracked)
+    {
+        var proposals = tracked ? context.ReviewProposals : context.ReviewProposals.AsNoTracking();
+        return proposals.OrderBy(proposal => proposal.CreatedAt).ToArray().Select(ToSnapshot).ToArray();
+    }
+
+    private static void SaveReviewProposals(
+        JournalDbContext context,
+        IReadOnlyList<ReviewProposalSnapshot> proposals)
+    {
+        var entities = context.ReviewProposals.Local.ToDictionary(proposal => proposal.Id);
+        foreach (var proposal in proposals)
+        {
+            if (!entities.TryGetValue(proposal.Id, out var entity))
+            {
+                entity = new ReviewProposalEntity
+                {
+                    Id = proposal.Id,
+                    CreatedBy = proposal.CreatedBy,
+                    ChangesJson = JournalStateSerializer.SerializeReviewChanges(proposal.Changes),
+                    Digest = proposal.Digest
+                };
+                context.ReviewProposals.Add(entity);
+                entities.Add(entity.Id, entity);
+            }
+
+            entity.ListId = proposal.ListId;
+            entity.ExpectedListVersion = proposal.ExpectedListVersion;
+            entity.CreatedBy = proposal.CreatedBy;
+            entity.Source = proposal.Source;
+            entity.CreatedAt = proposal.CreatedAt;
+            entity.ExpiresAt = proposal.ExpiresAt;
+            entity.Status = proposal.Status;
+            entity.RequestCloseList = proposal.RequestCloseList;
+            entity.ChangesJson = JournalStateSerializer.SerializeReviewChanges(proposal.Changes);
+            entity.Digest = proposal.Digest;
+            entity.ApprovedBy = proposal.ApprovedBy;
+            entity.ApprovedAt = proposal.ApprovedAt;
+            entity.ApprovedDigest = proposal.ApprovedDigest;
+            entity.AppliedAt = proposal.AppliedAt;
+        }
+    }
+
+    private static ReviewProposalSnapshot ToSnapshot(ReviewProposalEntity proposal) =>
+        new(
+            proposal.Id,
+            proposal.ListId,
+            proposal.ExpectedListVersion,
+            proposal.CreatedBy,
+            proposal.Source,
+            proposal.CreatedAt,
+            proposal.ExpiresAt,
+            proposal.Status,
+            proposal.RequestCloseList,
+            JournalStateSerializer.DeserializeReviewChanges(proposal.ChangesJson),
+            proposal.Digest,
+            proposal.ApprovedBy,
+            proposal.ApprovedAt,
+            proposal.ApprovedDigest,
+            proposal.AppliedAt);
 
     private static JournalSnapshot LoadSnapshot(JournalDbContext context, bool tracked)
     {
