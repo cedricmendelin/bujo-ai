@@ -19,6 +19,15 @@ The chat runtime uses an app-owned SSE/AG-UI-style HTTP adapter:
 - Conversation history exists only in the Interactive Server circuit and is
   cleared by New chat or reload.
 
+## Deviations from plan
+
+The implementation uses a hand-written SSE adapter and raw Foundry
+`chat/completions` HTTP calls rather than the planned Microsoft Agent Framework
+AG-UI packages and `IChatClient` adapter. It also provides a deterministic
+keyword-based `Mock` provider. Tool and response events are emitted after the
+run completes, not streamed while it executes; cancellation and streaming
+remain to be verified against the plan.
+
 The browser speech control uses the browser-supported recognition API for the
 implementation slice. Recognition is configured as `en-US`. It starts only from
 an explicit button click, ignores partial hypotheses, submits one final
@@ -37,15 +46,17 @@ The chat registry contains the 22 current MCP tools. It maps to existing
 SQL, unrestricted network or database access.
 
 Explicit individual reads and edits may execute directly after server-side
-authorization and domain validation. Ceremony-generated review proposals,
-bulk moves and destructive actions create an immutable, version-checked
-proposal and render an approval card. Reject and cancel are terminal no-write
-actions. Approval and apply remain PWA-only and reuse the existing digest,
-expiry and concurrency checks.
+authorization and domain validation. The chat executor refuses model or mock
+calls to approval-gated actions, except for creating a pending review proposal.
+The card retrieves that proposal and displays its exact changes before a PWA
+user can approve and apply it using the existing digest, expiry and concurrency
+checks. Reject and cancel are PWA actions. Direct chat moves and abandonment
+are unavailable rather than bypassing approval; journal views remain available.
 
 ## Privacy and resilience
 
-No chat transcript, audio or review payload is persisted. The provider and
+No chat transcript or audio is persisted. Review proposals use the existing
+journal proposal store. The provider and
 speech services receive only the context and text needed for the active run.
 Prompts, transcripts, tool arguments and results are excluded from telemetry.
 Interrupted runs show cancellation or interruption and are never replayed.

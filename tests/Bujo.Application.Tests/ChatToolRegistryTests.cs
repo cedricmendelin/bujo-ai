@@ -39,6 +39,11 @@ public sealed class ChatToolRegistryTests
 
         Assert.Equal(22, ChatToolRegistry.All.Count);
         Assert.Equal(expected.Order(), ChatToolRegistry.All.Select(tool => tool.Name).Order());
+        Assert.All(new[]
+        {
+            "close_list", "move_item", "abandon_occurrence", "create_review_proposal",
+            "cancel_review_proposal", "reject_review_proposal", "apply_review_proposal"
+        }, name => Assert.True(ChatToolRegistry.Get(name).RequiresApproval, name));
     }
 
     [Fact]

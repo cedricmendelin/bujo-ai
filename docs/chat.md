@@ -24,11 +24,13 @@ and redacted error categories.
 
 The CI-safe default provider is `Mock`. It recognizes common journal reads,
 captures, list commands and explicit item operations while still routing every
-supported operation through the shared typed registry.
+supported operation through the shared typed registry. Model and mock calls
+cannot execute approval-gated tools; use journal views for moves and abandonment.
 
 `POST /api/chat/agui` is the app-owned HTTP/SSE run adapter. It requires the
 approved-principal policy and `Chat:Enabled=true`. Thread IDs are run labels,
-never identity.
+never identity. It currently emits tool and response events after the run
+completes, rather than streaming them during execution.
 
 An optional Foundry provider is disabled until endpoint, deployment and managed
 identity configuration are verified. It is server-side only; no provider token
@@ -52,10 +54,11 @@ The journal API and MCP remain the source surfaces for all journal capabilities.
 ## Approvals
 
 Direct explicit captures and individual edits can execute after domain checks.
-Ceremonies, bulk moves and destructive actions render an approval card. The card
-shows the exact proposal summary and expiration. Approving applies only that
-digest and exact version set. Reject, cancel and stale or conflicted proposals
-perform no journal write.
+Review proposals render an approval card showing their exact changes and
+expiration. Approving applies only that digest and exact version set. Reject,
+cancel and stale or conflicted proposals perform no journal write. Direct
+model and mock calls to gated actions are refused; arbitrary bulk moves and
+destructive actions do not yet have a general chat approval flow.
 
 No uncertain mutation is automatically retried. If a result is interrupted,
 the UI reconciles against current journal state or reports unknown rather than
