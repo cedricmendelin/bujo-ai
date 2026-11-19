@@ -13,6 +13,7 @@ public static class DependencyInjection
         services.AddDbContextFactory<JournalDbContext>(options =>
             options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure()));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
+        services.AddScoped<IKnowledgeRepository, EfKnowledgeRepository>();
         return services;
     }
 
@@ -21,6 +22,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<JournalService>();
         services.AddScoped<JournalApplicationService>();
+        services.AddScoped<KnowledgeApplicationService>();
         services.AddScoped<ReviewApplicationService>();
         return services;
     }

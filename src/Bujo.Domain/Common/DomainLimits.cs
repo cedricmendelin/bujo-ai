@@ -10,6 +10,31 @@ public static class DomainLimits
     public const int GoalText = 2_000;
     public const int TagName = 64;
     public const int TagsPerItem = 25;
+    public const int KnowledgeContent = 100_000;
+    public const int KnowledgeTitle = 200;
+    public const int KnowledgeSourceReference = 2_048;
+    public const int KnowledgeTagsPerEntry = 25;
+    public const int KnowledgeSearchText = 256;
+    public const int KnowledgeSearchTerms = 16;
+    public const int KnowledgePageSize = 50;
+    public const int KnowledgeFallbackEntries = 500;
+
+    internal static string RequiredVerbatimText(string? value, int maxLength, string field)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new DomainException(DomainErrorCode.InvalidInput, $"{field} is required.");
+        }
+
+        if (value.Length > maxLength)
+        {
+            throw new DomainException(
+                DomainErrorCode.InvalidInput,
+                $"{field} must not exceed {maxLength} characters.");
+        }
+
+        return value;
+    }
 
     internal static string RequiredText(string? value, int maxLength, string field)
     {
