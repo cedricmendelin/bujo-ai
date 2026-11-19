@@ -37,16 +37,6 @@ nav a.active { font-weight: 750; text-decoration-thickness: .16em; }
     transform: translateY(-200%);
 }
 .skip-link:focus { transform: none; }
-.connection-panel { margin-block: 1rem; }
-.connection-panel p { margin-block: .5rem; }
-[data-circuit-status], [data-connectivity-status][data-offline="true"] {
-    max-width: none;
-    border: 2px solid #8a4000;
-    border-radius: .35rem;
-    padding: .75rem;
-    background: #fff3da;
-    color: #542700;
-}
 main { padding: clamp(1rem, 3vw, 2rem); background: white; border-radius: .5rem; }
 .journal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
 .journal-form {
@@ -83,9 +73,11 @@ main { padding: clamp(1rem, 3vw, 2rem); background: white; border-radius: .5rem;
 .journal-error p:first-child { margin-top: 0; }
 .journal-confirmation { color: #1c5034; font-weight: 650; }
 .journal-confirmation:empty { margin: 0; }
-footer { padding-block: 1rem; font-size: .9rem; }
-
 #components-reconnect-modal { display: none; }
+#components-reconnect-modal :is(.reconnect-progress, [data-reload-page]) { display: none; }
+#components-reconnect-modal:is(.components-reconnect-show, .components-reconnect-retrying) .reconnect-progress,
+#components-reconnect-modal:is(.components-reconnect-failed, .components-reconnect-rejected,
+    .components-reconnect-paused, .components-reconnect-resume-failed) [data-reload-page] { display: inline; }
 #components-reconnect-modal:is(
     .components-reconnect-show,
     .components-reconnect-retrying,

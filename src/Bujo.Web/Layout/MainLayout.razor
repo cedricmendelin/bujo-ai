@@ -7,10 +7,10 @@
         <nav aria-label="Primary navigation">
             <AuthorizeView Policy="ApprovedUi">
                 <Authorized>
-                    <NavLink href="/" Match="NavLinkMatch.All" data-enhance-nav="false">Today</NavLink>
-                    <NavLink href="/upcoming" data-enhance-nav="false">Upcoming</NavLink>
-                    <NavLink href="/capture" data-enhance-nav="false">Capture</NavLink>
-                    <NavLink href="/lists" data-enhance-nav="false">Lists</NavLink>
+                    <NavLink href="/" Match="NavLinkMatch.All">Today</NavLink>
+                    <NavLink href="/upcoming">Upcoming</NavLink>
+                    <NavLink href="/capture">Capture</NavLink>
+                    <NavLink href="/lists">Lists</NavLink>
                     <a href="/rendering-proof" data-enhance-nav="false">Diagnostics</a>
                     <span class="account-state">Signed in</span>
                     <a href="/auth/sign-out" data-enhance-nav="false">Sign out</a>
@@ -22,18 +22,7 @@
         </nav>
     </header>
 
-    <aside class="connection-panel" aria-label="Connection status">
-        <p data-connectivity-status role="status" aria-live="polite" aria-atomic="true">
-            Checking browser connection…
-        </p>
-        <p data-circuit-status role="status" aria-live="polite" aria-atomic="true" hidden></p>
-        <noscript>
-            <p>JavaScript is required for the interactive app and connection warnings.</p>
-        </noscript>
-    </aside>
-
-    <main id="main-content" tabindex="-1" data-enhance-nav="false">
+    <main id="main-content" tabindex="-1">
         @Body
     </main>
-    <footer>No journal data is stored offline. An internet connection is required to open the app.</footer>
 </div>

@@ -94,8 +94,8 @@ show their existing reasons/conflicts/destinations; they never reschedule.
 
 Every success message follows a successful application-service result.
 Validation and stale-state errors remain visible with a refresh/retry path and
-preserved form input where possible. After circuit loss, state plainly that
-unsaved input may be lost; there is no offline queue or automatic replay.
+preserved form input where possible. After circuit loss, show a short reconnect
+message and offer Reload if recovery fails. There is no offline queue or automatic replay.
 The existing service worker remains static-asset-only. No journal or
 authenticated response caching and no offline writes are introduced.
 

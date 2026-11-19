@@ -18,6 +18,7 @@ public abstract class JournalPage : ComponentBase, IDisposable
     [Inject] private NavigationManager Navigation { get; set; } = null!;
 
     private DotNetObjectReference<JournalPage>? _probe;
+    private Task<AuthenticationState> _initialAuthentication = null!;
     private bool _initialized;
     protected bool Busy { get; private set; }
     protected bool Ready { get; private set; }
@@ -26,14 +27,30 @@ public abstract class JournalPage : ComponentBase, IDisposable
 
     protected abstract void Read();
 
-    protected override void OnInitialized() => Authentication.AuthenticationStateChanged += AuthenticationChanged;
+    protected override void OnInitialized()
+    {
+        _initialAuthentication = Authentication.GetAuthenticationStateAsync();
+        Authentication.AuthenticationStateChanged += AuthenticationChanged;
+    }
 
     private void AuthenticationChanged(Task<AuthenticationState> state) =>
-        _ = InvokeAsync(() => Navigation.NavigateTo("/", forceLoad: true));
+        _ = InvokeAsync(async () =>
+        {
+            var initial = (await _initialAuthentication).User;
+            var current = (await state).User;
+            // Blazor republishes the principal when the same circuit reconnects.
+            if (initial.FindFirst("tid")?.Value != current.FindFirst("tid")?.Value ||
+                initial.FindFirst("oid")?.Value != current.FindFirst("oid")?.Value ||
+                !(await Authorization.AuthorizeAsync(current, "ApprovedUi")).Succeeded)
+                Navigation.NavigateTo("/", forceLoad: true);
+        });
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+        _probe = DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("bujoPwa.registerCircuitProbe", _probe); }
+        catch (JSDisconnectedException) { /* Blazor handles reconnect independently of the probe. */ }
         await RefreshAsync();
         StateHasChanged();
     }
@@ -58,8 +75,6 @@ public abstract class JournalPage : ComponentBase, IDisposable
             {
                 if (!_initialized)
                 {
-                    _probe ??= DotNetObjectReference.Create(this);
-                    await JS.InvokeVoidAsync("bujoPwa.registerCircuitProbe", _probe);
                     await InitializeAsync();
                     _initialized = true;
                 }
