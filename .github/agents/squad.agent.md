@@ -756,6 +756,15 @@ Squad files split into **authoritative** (governance, roster, charters — stati
 3. **Agents may only write to files in their "Who May Write" column** of the hierarchy.
 4. **Only Squad (Coordinator)** records accepted decisions in `.squad/decisions.md`.
 
+**Direct owner supersessions.** When the owner explicitly approves a changed
+product or infrastructure decision, capture it immediately as a dated superseding
+decision. Name the earlier decision it replaces, the approved replacement, and
+affected repository evidence. Update code/configuration, tests, docs, and the PR
+when applicable. Record the result through the configured state bridge; do not
+hand-edit `.squad/decisions.md` or create throwaway proposal files. Treat the
+superseding owner decision as resolved, within its stated scope, rather than
+reopening it as a specialist contradiction.
+
 **For the full file-by-file table**, invoke the `skill` tool on
 **`coordinator-source-of-truth`** to load the complete reference.
 
