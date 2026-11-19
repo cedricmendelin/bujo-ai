@@ -113,6 +113,7 @@ public sealed class ChatApprovalBoundaryTests
             "I learnt about XY and call Bob",
             "I learnt X and will call Bob",
             "I learnt about X and I will call Alice tomorrow",
+            "I learnt about X and I should call Alice",
             "remember to call X and I learnt Y",
             "I noticed I need to call X",
             "remember to call X and I realised Y",
@@ -126,6 +127,70 @@ public sealed class ChatApprovalBoundaryTests
         }
 
         Assert.Null(handler.Initial);
+    }
+
+    [Fact]
+    public async Task ExplicitCurrentMessageCanSaveThoughtWithoutCallingFoundry()
+    {
+        var (journal, reviews) = Services();
+        var handler = new CaptureModelHandler();
+        var runtime = new ChatRuntime(journal, reviews, Options.Create(new ChatOptions
+        {
+            Provider = "Foundry", Endpoint = "https://example.invalid", Deployment = "test"
+        }), new TestHttpClientFactory(handler), new TestCredential());
+        var result = await runtime.RunAsync(new ChatRunRequest(
+            "Please save the thought that I learned about XY", "UTC", []), Principal());
+
+        Assert.True(Assert.Single(result.ToolCalls).Succeeded);
+        var saved = Assert.Single(journal.GetSnapshot().Items);
+        Assert.Equal("I learned about XY", saved.Name);
+        Assert.Equal(ItemType.Thought, saved.Type);
+        Assert.Contains("Captured thought 'I learned about XY'", result.Text);
+
+        var mixed = await runtime.RunAsync(new ChatRunRequest(
+            "Please save the thought that I learned X and I should call Alice", "UTC", []), Principal());
+        Assert.Empty(mixed.ToolCalls);
+        Assert.Contains("Task", mixed.Text);
+        Assert.Single(journal.GetSnapshot().Items);
+        Assert.Null(handler.Initial);
+    }
+
+    [Theory]
+    [InlineData(false, "I saved your reflection")]
+    [InlineData(true, "I captured your thought")]
+    [InlineData(false, "Your item was recorded in the journal.")]
+    public async Task FoundryCannotConfirmAnUnexecutedCapture(bool readFirst, string modelText)
+    {
+        var (journal, reviews) = Services();
+        var runtime = new ChatRuntime(journal, reviews, Options.Create(new ChatOptions
+        {
+            Provider = "Foundry", Endpoint = "https://example.invalid", Deployment = "test"
+        }), new TestHttpClientFactory(new ProseModelHandler(readFirst, modelText)), new TestCredential());
+
+        var result = await runtime.RunAsync(new ChatRunRequest("Can you help me?", "UTC", []), Principal());
+
+        Assert.DoesNotContain(modelText, result.Text);
+        Assert.Contains("haven't saved", result.Text);
+        Assert.Empty(journal.GetSnapshot().Items);
+        Assert.DoesNotContain(result.ToolCalls, call => call.Name == "capture_item");
+    }
+
+    [Theory]
+    [InlineData("Here are your saved tasks.")]
+    [InlineData("Your list was created last week.")]
+    public async Task FoundryReadProseAboutExistingDataIsNotMistakenForCapture(string modelText)
+    {
+        var (journal, reviews) = Services();
+        var runtime = new ChatRuntime(journal, reviews, Options.Create(new ChatOptions
+        {
+            Provider = "Foundry", Endpoint = "https://example.invalid", Deployment = "test"
+        }), new TestHttpClientFactory(new ProseModelHandler(true, modelText)), new TestCredential());
+
+        var result = await runtime.RunAsync(new ChatRunRequest("Show my journal", "UTC", []), Principal());
+
+        Assert.Equal(modelText, result.Text);
+        Assert.True(Assert.Single(result.ToolCalls).Succeeded);
+        Assert.Empty(journal.GetSnapshot().Items);
     }
 
     [Theory]
@@ -457,6 +522,22 @@ public sealed class ChatApprovalBoundaryTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class ProseModelHandler(bool readFirst, string text) : HttpMessageHandler
+    {
+        private int _calls;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = readFirst && _calls++ == 0
+                ? """{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"one","type":"function","function":{"name":"get_journal","arguments":"{}"}}]}}]}"""
+                : JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content = text } } } });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
         }
     }
 

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Azure.Core;
 using Azure.Identity;
 using Bujo.Application;
@@ -118,7 +119,8 @@ public sealed class ChatRuntime : IChatRuntime
         var learning = IsReflection(lower);
         if (IsDirectCapture(lower))
         {
-            var name = learning ? text : StripPrefix(text, "capture ", "add ", "remember ");
+            var thoughtRequest = lower.StartsWith("please save the thought that ", StringComparison.Ordinal);
+            var name = learning ? text : StripPrefix(text, "please save the thought that ", "capture ", "add ", "remember ");
             if (string.IsNullOrWhiteSpace(name))
             {
                 return Done("What should I capture?", toolCalls, proposals);
@@ -158,12 +160,12 @@ public sealed class ChatRuntime : IChatRuntime
 
             // The mock has no language model. Only unambiguous command forms are classified
             // as tasks; an unrecognized phrase needs a choice rather than a guessed type.
-            if (explicitType is null && !learning && !IsTaskIntent(nameLower))
+            if (explicitType is null && !thoughtRequest && !learning && !IsTaskIntent(nameLower))
             {
                 return Done("Should I capture this as a Task or a Thought? Reply with 'capture task <text>' or 'capture thought <text>'.", toolCalls, proposals);
             }
 
-            var type = explicitType ?? (learning ? "Thought" : "Task");
+            var type = explicitType ?? (learning || thoughtRequest ? "Thought" : "Task");
             var result = Execute("capture_item", new { name, type, plannedPeriod = new { kind = "unplanned" } },
                 principal, toolCalls);
             if (result.Succeeded && result.Value is CaptureResult captured)
@@ -517,6 +519,14 @@ public sealed class ChatRuntime : IChatRuntime
                     return Done($"I couldn't save the requested item. {failedCapture.Summary}", toolCalls, proposals);
                 }
 
+                // The Foundry path cannot execute capture. Never pass through a model's
+                // apparent save confirmation as though it came from a persisted result.
+                if (!string.IsNullOrWhiteSpace(content) && ContainsSaveClaim(content))
+                {
+                    return Done("I haven't saved an item in this response. To capture one, send 'capture thought <text>' or 'capture task <text>'.",
+                        toolCalls, proposals);
+                }
+
                 return Done(
                     string.IsNullOrWhiteSpace(content) ? "I could not produce a response." : content.Trim(),
                     toolCalls,
@@ -590,7 +600,7 @@ public sealed class ChatRuntime : IChatRuntime
             while (index >= 0)
             {
                 var clause = text[(index + separator.Length)..];
-                if (IsTaskIntent(clause) || StartsWith(clause, "will ", "i will ", "i'll ", "should ", "need to "))
+                if (IsTaskIntent(clause) || StartsWith(clause, "will ", "i will ", "i'll ", "should ", "i should ", "need to "))
                 {
                     return true;
                 }
@@ -604,7 +614,13 @@ public sealed class ChatRuntime : IChatRuntime
 
     private static bool IsDirectCapture(string text) =>
         !text.StartsWith("add list ", StringComparison.Ordinal) &&
-        (IsReflection(text) || StartsWith(text, "capture ", "add ", "remember "));
+        (IsReflection(text) || StartsWith(text, "please save the thought that ", "capture ", "add ", "remember "));
+
+    private static bool ContainsSaveClaim(string text) =>
+        Regex.IsMatch(text,
+            @"\b(?:i|we)(?:['’]ve| have)?\s+(?:successfully\s+)?(?:saved|captured|stored|recorded|added|created|logged|persisted|written|filed)\b" +
+            @"|\b(?:your|the)\s+(?:item|reflection|thought|task)\s+(?:was|has been|is now|is)\s+(?:successfully\s+)?(?:saved|captured|stored|recorded|added|created|logged|persisted|written|filed)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
     private static bool StartsWith(string text, params string[] prefixes) =>
         prefixes.Any(prefix => text.StartsWith(prefix, StringComparison.Ordinal));
