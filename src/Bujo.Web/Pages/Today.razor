@@ -1,6 +1,11 @@
 @inherits PlanningPage
+@page "/today"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
 
+<PageTitle>Today · Bujo-AI</PageTitle>
 <div data-requires-circuit>
+    <h1 tabindex="-1">Today</h1>
     <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_review is { } review)
     {

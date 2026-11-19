@@ -4,3 +4,4 @@
 | --- | --- |
 | [0001: Technology baseline](0001-technology-baseline.md) | Accepted; operational verification gates remain before provisioning |
 | [0002: Optional Foundry-backed chat with AG-UI](0002-foundry-agui-chat.md) | Accepted; production validation remains |
+| [0003: General chat and speech](0003-general-chat-and-speech.md) | Accepted; live provider and microphone gates remain |

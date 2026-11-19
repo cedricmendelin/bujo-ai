@@ -77,6 +77,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
                 selfHttp.Add(request.Url);
         };
         await page.GotoAsync("/");
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Chat", Level = 1 })).ToBeVisibleAsync();
+        await Link(page, "Today").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Today", Level = 1 })).ToBeVisibleAsync();
         await Expect(Link(page, "Diagnostics")).ToHaveAttributeAsync("href", "/rendering-proof");
         await Link(page, "Lists").ClickAsync();
@@ -358,7 +360,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Theory]
-    [InlineData("/", "Invalid/Browser", "Unknown or invalid IANA time zone: Invalid/Browser.")]
+    [InlineData("/today", "Invalid/Browser", "Unknown or invalid IANA time zone: Invalid/Browser.")]
     [InlineData("/upcoming", "", "An IANA time zone is required.")]
     public async Task InvalidBrowserZoneIsVisibleWithoutUtcFallback(string path, string zone, string error)
     {

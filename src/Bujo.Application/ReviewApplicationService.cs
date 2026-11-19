@@ -55,7 +55,8 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
         }
 
         if (!Enum.IsDefined(actor.Source) || request.ListId == Guid.Empty ||
-            request.Changes is null || request.Changes.Count == 0)
+            request.Changes is null ||
+            (!request.RequestCloseList && request.Changes.Count == 0))
         {
             return InvalidProposal();
         }

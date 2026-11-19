@@ -509,3 +509,17 @@
   `foundry_access_group = null`, so group roles also remain external and the
   GitHub OIDC permissions are unchanged. Provisioning does not enable the
   application adapter or authorize sending journal data.
+
+### 2026-11-19: General chat start page
+
+- Chat is the authenticated `/` start page; Today is a separate `/today` view.
+- The app-owned runtime uses a CI-safe mock provider by default and an optional
+  server-configured Foundry provider. Feature state defaults to off.
+- The 22-tool chat registry shares names and metadata with the MCP journal tools.
+- Direct explicit edits execute through application services; ceremony, bulk
+  and destructive mutations use existing immutable, digest/version-checked
+  PWA approval and apply behavior.
+- Speech recognition is single-shot and configured for `en-US`. Live G2
+  microphone verification remains an owner gate; no live result is claimed.
+- No transcript or audio store is added and no live Foundry role assignment is
+  performed by application code.

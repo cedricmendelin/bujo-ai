@@ -27,11 +27,11 @@ or credentials belong in the repository.
   circuit-loss recovery, and server-confirmed saves; no offline write/sync queue.
 - Azure SQL is the durable source for journal and knowledge data; hosting
   configuration, local development and operating cost still require validation.
-- **Agreed first in-app AI experience:** a weekly-planning coach launched from
-  the weekly view. It receives relevant unfinished items and the user's stated
-  constraints, then returns a structured plan for review; no journal changes
-  happen before the user approves the exact proposal. General journal Q&A and
-  proactive actions are outside this first AI slice.
+- **Agreed in-app AI experience:** authenticated general journal chat is the
+  `/` start page, with Today available at `/today`. It can read journal state,
+  perform explicit edits, and create version-checked review proposals for
+  approval. Bulk moves and destructive actions require an approval card.
+  Weekly-planning coaching remains a planned use of the same runtime.
 - **Accepted chat architecture:** app-owned orchestration and authorization in
   the existing ASP.NET Core host, with AG-UI for the Blazor Interactive Server
   experience and an optional server-side Foundry model provider. Foundry is not
