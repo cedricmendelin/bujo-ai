@@ -605,6 +605,8 @@ jobs:
                 return;
               }
               const inputKey = split?.key || reviewInputKey(pr.body || '');
+              // DevOps run metadata otherwise names the default-branch SHA, not the reviewed PR head.
+              const reviewerInputKey = role => role === 'DevOps' ? reviewInputKey(`${inputKey}\n${sha}`) : inputKey;
               if (handoff) {
                 const issue = (await github.rest.issues.get({ owner, repo, issue_number: handoff.issue })).data;
                 const tracking = acceptanceTracking(issue.body);
@@ -667,26 +669,32 @@ jobs:
                 for (const item of reviewers) {
                   const check = currentHeadCheck(allChecks, item.check, sha);
                   const runs = await workflowRuns(item.workflow, context.payload.repository.default_branch);
-                  const prRuns = reviewRunsForPr(runs, item.role, number, inputKey);
+                  const prRuns = reviewRunsForPr(runs, item.role, number, reviewerInputKey(item.role));
                   const result = prRuns[0] || null;
                   reviewRuns.set(item.role, result);
                   latestReviewChecks.set(item.role, check);
                   const fresh = reviewResultIsFresh({ check, run: result, sha, removedAt });
+                  const missingCheck = item.role === 'DevOps' && !fresh
+                    && result?.status === 'completed' && result.conclusion === 'success'
+                    && (!removedAt || Date.parse(result.created_at) >= Date.parse(removedAt));
+                  const reviewProblem = missingCheck
+                    ? `finished without a matching ${item.check} check on ${sha.slice(0, 7)}`
+                    : `could not complete (${result?.conclusion})`;
                   const failureMarker = `<!-- squad-review-run-failed:${result?.id}:${result?.run_attempt || 1} -->`;
                   const retryPrefix = `<!-- squad-review-retry:${item.role}:${sha}:${inputKey}:`;
                   const retry = comments.find(comment => isControllerComment(comment, owner)
                     && (comment.body || '').startsWith(retryPrefix));
                   if (!fresh && prRuns.length && result.status === 'completed'
-                      && ['timed_out', 'startup_failure'].includes(result.conclusion) && !forceFreshReviews
+                      && (missingCheck || ['timed_out', 'startup_failure'].includes(result.conclusion)) && !forceFreshReviews
                       && !manual && item.workflow && !retry) {
                     await pauseMerge(pr);
-                    await setReadiness(pr, sha, { status: 'in_progress', reason: `Retrying ${item.role} review once after ${result.conclusion}.` });
+                    await setReadiness(pr, sha, { status: 'in_progress', reason: `Retrying ${item.role} review once: it ${reviewProblem}.` });
                     await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                      body: `${retryPrefix}${result.id} -->\nRetrying ${item.role} review once after ${result.conclusion}. No code repair was attempted.` });
+                      body: `${retryPrefix}${result.id} -->\nRetrying ${item.role} review once: it ${reviewProblem}. No code repair was attempted.` });
                     evidence ??= reviewEvidence({ pr, files, ci, scope: await linkedScope(pr) });
                     await agent.rest.actions.createWorkflowDispatch({
                       owner, repo, workflow_id: item.workflow.id, ref: context.payload.repository.default_branch,
-                      inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
+                      inputs: { pr_number: String(number), review_input: reviewerInputKey(item.role), review_evidence: evidence },
                     });
                     return;
                   }
@@ -694,15 +702,16 @@ jobs:
                     return core.info(`#${number}: waiting for the admitted ${item.role} review retry.`);
                   }
                   if (!fresh && result?.status === 'completed'
-                      && ['failure', 'timed_out', 'startup_failure', 'action_required'].includes(result.conclusion)
+                      && (missingCheck || ['failure', 'timed_out', 'startup_failure', 'action_required'].includes(result.conclusion))
                       && !forceFreshReviews && !manual
                       && !comments.some(comment => isControllerComment(comment, owner)
                         && (comment.body || '').includes(failureMarker))) {
                     await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                     await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                      body: `${failureMarker}\n🙋 @${human} ${item.role} review could not complete (${result.conclusion}). Inspect ${result.html_url || 'its Actions run'}, fix the workflow or approval problem, then remove needs:human and re-evaluate. No automatic reviewer retry loop was started.` });
+                      body: `${failureMarker}\n🙋 @${human} ${item.role} review ${reviewProblem}. Inspect ${result.html_url || 'its Actions run'}, fix the review workflow or approval problem, then remove needs:human and manually re-evaluate. No automatic reviewer retry loop was started.` });
                     await setReadiness(pr, sha, {
-                      status: 'completed', conclusion: 'failure', reason: `${item.role} review workflow requires attention.`,
+                      status: 'completed', conclusion: 'failure', reason: missingCheck
+                        ? `${item.role} review ${reviewProblem}.` : `${item.role} review workflow requires attention.`,
                     });
                     await pauseMerge(pr);
                     return;
@@ -717,7 +726,7 @@ jobs:
                     await agent.rest.actions.createWorkflowDispatch({
                       owner, repo, workflow_id: item.workflow.id,
                       ref: context.payload.repository.default_branch,
-                      inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
+                      inputs: { pr_number: String(number), review_input: reviewerInputKey(item.role), review_evidence: evidence },
                     });
                     core.info(`#${number}: dispatched ${item.role} review for ${sha.slice(0, 7)}.`);
                   }
@@ -821,7 +830,7 @@ jobs:
                       await agent.rest.actions.createWorkflowDispatch({
                         owner, repo, workflow_id: reviewers.find(item => item.role === role).workflow.id,
                         ref: context.payload.repository.default_branch,
-                        inputs: { pr_number: String(number), review_input: inputKey, review_evidence: evidence },
+                        inputs: { pr_number: String(number), review_input: reviewerInputKey(role), review_evidence: evidence },
                       });
                     }
                     return;
@@ -885,7 +894,7 @@ jobs:
                   freshReviewsOk = true;
                   for (const item of reviewers) {
                     const runs = await workflowRuns(item.workflow, context.payload.repository.default_branch);
-                    const result = reviewRunsForPr(runs, item.role, number, inputKey)[0];
+                    const result = reviewRunsForPr(runs, item.role, number, reviewerInputKey(item.role))[0];
                     const check = currentHeadCheck(freshChecks, item.check, sha);
                     if (!reviewResultIsFresh({
                       check, run: result, sha, removedAt: reviewNoneRemovedAt(freshTimeline),

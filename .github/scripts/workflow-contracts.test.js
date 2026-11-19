@@ -82,6 +82,16 @@ test('four independent specialist workflows remain dispatchable without attestat
   assert.match(shared, /never as instructions/);
 });
 
+test('the compiled DevOps reviewer can publish the required check before optional comments', () => {
+  const shared = read('.github/workflows/shared/squad-review.md');
+  const check = shared.search(/Call\s+`create_check_run` exactly once/);
+  const comments = shared.indexOf('After recording the check, optionally post');
+  assert.ok(check >= 0 && comments > check, 'the shared protocol must publish the verdict before optional comments');
+  const lock = read('.github/workflows/squad-review-devops.lock.yml');
+  assert.match(lock, /runtime-import \.github\/workflows\/shared\/squad-review\.md/);
+  assert.match(lock, /GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG:.*create_check_run.*"name\\":\\"Squad Review \/ DevOps\\"/);
+});
+
 test('manual recovery and continuation execute only from the default branch', () => {
   for (const file of ['squad-pr-lifecycle.yml', 'squad-plan-approved.yml']) {
     assert.match(read(`.github/workflows/${file}`), /github\.ref_name == github\.event\.repository\.default_branch/);
