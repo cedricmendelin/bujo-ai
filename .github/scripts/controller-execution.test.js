@@ -15,6 +15,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const owner = 'cedricmendelin';
 const sha = 'a'.repeat(40);
 const stamp = minute => `2026-11-16T12:${String(minute).padStart(2, '0')}:00Z`;
+const reviewRunInput = (role, key, head = sha) => role === 'DevOps' ? reviewInputKey(`${key}\n${head}`) : key;
 
 function source(workflow, step) {
   const lines = fs.readFileSync(path.join(root, '.github/workflows', workflow), 'utf8').split(/\r?\n/);
@@ -60,7 +61,7 @@ function fixture() {
     ],
     runs: {
       ...Object.fromEntries(ROLES.map(role => [role, [{
-        id: role, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81 · input ${reviewInputKey('')}`,
+        id: role, name: `Squad Review ${role} · PR #81`, display_title: `Squad Review ${role} · PR #81 · input ${reviewRunInput(role, reviewInputKey(''))}`,
         created_at: stamp(1), updated_at: stamp(5), status: 'completed', conclusion: 'success',
       }]])),
       ci: [],
@@ -854,7 +855,7 @@ test('completion preflight repairs the observed suffix once, records remaining s
   assert.equal(first.calls.filter(call => call.name === 'updatePr').length, 1);
   assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 4);
   for (const call of first.calls.filter(call => call.name === 'dispatch')) {
-    assert.equal(call.args.inputs.review_input, reviewInputKey(state.pr.body));
+    assert.equal(call.args.inputs.review_input, reviewRunInput(call.args.workflow_id, reviewInputKey(state.pr.body)));
   }
   assert.equal(commentsFrom(first).some(body => body.includes('@copilot Fix')), false);
   const handoff = commentsFrom(first).find(body => body.includes('Remaining acceptance work from PR #81'));
@@ -917,7 +918,7 @@ test('partial tracking blocks local and review:none readiness unless one open is
     state.pr.labels.push(...labels.map(name => ({ name })));
     state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
     for (const role of ROLES) {
-      state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${reviewInputKey(state.pr.body)}`;
+      state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${reviewRunInput(role, reviewInputKey(state.pr.body))}`;
     }
     const result = await execute(state);
     assert.equal(enables(result).length, 1, `${labels.join(',')}: ${readinessFrom(state).output.summary}`);
@@ -1271,7 +1272,7 @@ function scopeSplitFixture() {
  state.issues = { 11: source, 22: followUp };
  const key = reviewInputKey(JSON.stringify([reviewInputKey(state.pr.body), state.pr.base.sha,
    source.body, followUp.body, plan.id, plan.body]));
- for (const role of ROLES) state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${key}`;
+ for (const role of ROLES) state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${reviewRunInput(role, key)}`;
  for (const check of state.checks.filter(item => /Architect|Verifier/.test(item.name))) {
    check.output.summary += '\nScope split: verified';
  }
@@ -1318,6 +1319,55 @@ test('transient reviewer failures get one retry then escalate if still failing',
  const last = await execute(state);
  assert.equal(last.calls.some(call => call.name === 'dispatch'), false);
  assert.ok(last.calls.some(call => call.name === 'addLabels'));
+});
+
+test('a green DevOps run without its current-head check retries once, then pauses', async () => {
+  const state = fixture();
+  state.checks = state.checks.filter(check => check.name !== 'Squad Review / DevOps');
+  const dispatches = result => result.calls.filter(call => call.name === 'dispatch');
+  const first = await execute(state);
+  assert.deepEqual(dispatches(first).map(call => call.args.workflow_id), ['DevOps']);
+  assert.match(readinessFrom(state).output.summary, /Retrying DevOps.*Squad Review \/ DevOps check on aaaaaaa/);
+  assert.equal(dispatches(await execute(state)).length, 0);
+
+  Object.assign(state.runs.DevOps[0], { status: 'completed', conclusion: 'success' });
+  const last = await execute(state);
+  assert.equal(dispatches(last).length, 0);
+  assert.equal(enables(last).length, 0);
+  assert.deepEqual(state.pr.labels.map(label => label.name), ['needs:human']);
+  assert.equal(readinessFrom(state).conclusion, 'failure');
+  assert.match(commentsFrom(last).join('\n'), /without a matching Squad Review \/ DevOps check on aaaaaaa/);
+  assert.equal(dispatches(await execute(state)).length, 0);
+
+  const bypass = fixture();
+  bypass.checks = bypass.checks.filter(check => check.name !== 'Squad Review / DevOps');
+  bypass.mutateSource = code => code.replace("const missingCheck = item.role === 'DevOps'", 'const missingCheck = false');
+  await execute(bypass);
+  Object.assign(bypass.runs.DevOps[0], { status: 'completed', conclusion: 'success' });
+  assert.equal(dispatches(await execute(bypass)).length, 1, 'removing missing-check detection causes another dispatch');
+  assert.equal(bypass.pr.labels.length, 0);
+});
+
+test('a DevOps retry with an actual current-head check restores readiness', async () => {
+  const state = fixture();
+  const check = state.checks.find(item => item.name === 'Squad Review / DevOps');
+  state.checks = state.checks.filter(item => item !== check);
+  await execute(state);
+  Object.assign(state.runs.DevOps[0], { status: 'completed', conclusion: 'success', updated_at: stamp(24) });
+  state.checks.push({ ...check, started_at: stamp(21), completed_at: stamp(22) });
+  assert.equal(enables(await execute(state)).length, 1);
+  assert.equal(readinessFrom(state).conclusion, 'success');
+});
+
+test('an old-head DevOps run does not consume the current head retry', async () => {
+  const state = fixture();
+  state.checks = state.checks.filter(check => check.name !== 'Squad Review / DevOps');
+  state.runs.DevOps[0].display_title =
+    `Squad Review DevOps · PR #81 · input ${reviewRunInput('DevOps', reviewInputKey(''), 'c'.repeat(40))}`;
+  const result = await execute(state);
+  assert.deepEqual(result.calls.filter(call => call.name === 'dispatch').map(call => call.args.inputs.review_input),
+    [reviewRunInput('DevOps', reviewInputKey(''))]);
+  assert.doesNotMatch(commentsFrom(result).join('\n'), /Retrying DevOps/);
 });
 
 test('formal rejection and routine metadata findings never re-dispatch the original coding agent', async () => {
