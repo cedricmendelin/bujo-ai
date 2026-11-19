@@ -54,6 +54,53 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
             return DomainResult<ReviewProposalSnapshot>.Failure(actorValidation);
         }
 
+        if (request.RequestCloseList &&
+            request.Changes is not null &&
+            request.Changes.Count == 0)
+        {
+            var closeSnapshot = repository.GetSnapshot();
+            var closeReview = closeSnapshot.GetListReview(request.ListId);
+            if (!closeReview.IsSuccess)
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(closeReview.Error!);
+            }
+
+            if (closeReview.Value!.List.State != JournalListState.Open ||
+                closeReview.Value.List.Version != request.ExpectedListVersion)
+            {
+                return Conflict<ReviewProposalSnapshot>("The list changed since the review was opened.");
+            }
+
+            if (closeReview.Value.Unfinished.Count != 0)
+            {
+                return DomainResult<ReviewProposalSnapshot>.Failure(new DomainError(
+                    DomainErrorCode.UnresolvedOccurrences,
+                    "A closing proposal must explicitly resolve every unfinished occurrence.",
+                    closeReview.Value.Unfinished.Select(entry => entry.Occurrence.Id).ToArray()));
+            }
+
+            var closeProposalId = Guid.NewGuid();
+            var closeCreatedAt = _clock.GetUtcNow().ToUniversalTime();
+            var closeChanges = Array.Empty<ReviewChange>();
+            var closeProposal = new CreateReviewProposalCommand(
+                closeProposalId,
+                request.ListId,
+                request.ExpectedListVersion,
+                actor.UserId,
+                actor.Source,
+                closeCreatedAt,
+                closeCreatedAt + ProposalLifetime,
+                true,
+                closeChanges,
+                ComputeDigest(
+                    closeProposalId,
+                    request.ListId,
+                    request.ExpectedListVersion,
+                    true,
+                    closeChanges));
+            return repository.CreateReviewProposal(closeProposal);
+        }
+
         if (!Enum.IsDefined(actor.Source) || request.ListId == Guid.Empty ||
             request.Changes is null ||
             (!request.RequestCloseList && request.Changes.Count == 0))

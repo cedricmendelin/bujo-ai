@@ -633,19 +633,19 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
             services.PostConfigure<AuthenticationOptions>(options =>
                 options.Schemes.Single(scheme => scheme.Name == "Bearer").HandlerType = typeof(TestAuthenticationHandler));
             services.RemoveAll<IJournalRepository>();
-                if (FailQueries)
-                {
-                    services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
-                }
-                else if (ShareInMemoryRepository)
-                {
-                    services.AddSingleton<IJournalRepository>(_sharedRepository);
-                }
-                else
-                {
-                    services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
-                        Guid.Parse("00000000-0000-0000-0000-000000000101")));
-                }
+            if (FailQueries)
+            {
+                services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
+            }
+            else if (ShareInMemoryRepository)
+            {
+                services.AddSingleton<IJournalRepository>(_sharedRepository);
+            }
+            else
+            {
+                services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
+                    Guid.Parse("00000000-0000-0000-0000-000000000101")));
+            }
 
             if (FixedUtcNow is { } fixedUtcNow)
             {

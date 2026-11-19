@@ -148,7 +148,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         {
             await using var context = await fixture.CreateContextAsync();
             var page = await context.NewPageAsync();
-            await page.GotoAsync("/");
+            await page.GotoAsync("/today");
 
             await Expect(page.GetByRole(AriaRole.Alert))
                 .ToContainTextAsync("Could not load the journal. Refresh to try again.");

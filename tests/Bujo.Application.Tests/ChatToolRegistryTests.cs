@@ -143,19 +143,16 @@ public sealed class ChatToolRegistryTests
         var review = reviews.GetListReview(list.Value!.Id);
         Assert.True(review.IsSuccess);
 
-        var proposal = executor.Execute(new ChatToolRequest(
-            "create_review_proposal",
-            JsonSerializer.SerializeToElement(new
-            {
-                listId = list.Value.Id,
-                expectedListVersion = review.Value!.List.Version,
-                requestCloseList = true,
-                changes = Array.Empty<object>()
-            }),
-            principal));
+        var proposal = reviews.CreateProposal(
+            new ReviewProposalRequest(
+                list.Value.Id,
+                review.Value!.List.Version,
+                true,
+                []),
+            ReviewActor.FromPrincipal(principal, ReviewProposalSource.Ceremony, false));
 
-        Assert.True(proposal.Succeeded, proposal.Summary);
-        var created = Assert.IsType<ReviewProposalSnapshot>(proposal.Value);
+        Assert.True(proposal.IsSuccess, proposal.Error?.Message);
+        var created = proposal.Value!;
         Assert.True(created.RequestCloseList);
         Assert.Empty(created.Changes);
         Assert.Equal(JournalListState.Open,

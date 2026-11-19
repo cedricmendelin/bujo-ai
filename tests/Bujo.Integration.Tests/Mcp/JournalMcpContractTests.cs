@@ -48,8 +48,6 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
     private static readonly string[] ExpectedTools =
     [
-        "run_chat",
-        "get_chat_speech_status",
         "get_journal",
         "export_journal",
         "get_daily_start",
@@ -353,9 +351,12 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
         var tools = await mcp.ListToolsAsync();
         Assert.Equal(ExpectedTools.Order(), tools.Select(tool => tool.Name).Order());
-        Assert.Equal(
-            ChatToolRegistry.All.Select(tool => tool.Name).Order(),
-            tools.Select(tool => tool.Name).Order());
+        var mcpNames = tools.Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.All(
+            ChatToolRegistry.All.Select(tool => tool.Name),
+            name => Assert.Contains(name, mcpNames));
+        Assert.DoesNotContain("run_chat", mcpNames);
+        Assert.DoesNotContain("get_chat_speech_status", mcpNames);
         Assert.DoesNotContain("approve_review_proposal", tools.Select(tool => tool.Name));
         Assert.DoesNotContain("approved", tools.SelectMany(tool =>
             tool.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject()

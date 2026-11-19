@@ -4,8 +4,6 @@ namespace Bujo.Application.Chat;
 
 public static class ChatToolNames
 {
-    public const string RunChat = "run_chat";
-    public const string GetChatSpeechStatus = "get_chat_speech_status";
     public const string GetJournal = "get_journal";
     public const string GetDailyStart = "get_daily_start";
     public const string GetUpcoming = "get_upcoming";

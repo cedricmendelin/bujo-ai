@@ -11,7 +11,8 @@ public sealed class ItemDraft
 
     public static ItemDraft From(ItemSnapshot item) => new()
     {
-        Name = item.Name, Description = item.Description,
+        Name = item.Name,
+        Description = item.Description,
         Tags = string.Join(", ", item.Tags.Select(tag => tag.Value))
     };
 }
@@ -36,7 +37,9 @@ public sealed class PeriodDraft
 
     public static PeriodDraft From(PlannedPeriod period) => new()
     {
-        Kind = period.Kind, Day = period.Day, Year = period.Week?.Year ?? period.Year,
+        Kind = period.Kind,
+        Day = period.Day,
+        Year = period.Week?.Year ?? period.Year,
         Number = period.Week?.Week ?? period.Month ?? period.Quarter
     };
 }
