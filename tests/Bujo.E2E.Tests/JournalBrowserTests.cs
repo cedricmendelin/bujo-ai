@@ -141,6 +141,32 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Fact]
+    public async Task UnavailableJournalShowsAnErrorInsteadOfEmptySuccessData()
+    {
+        fixture.Journal.FailReads = true;
+        try
+        {
+            await using var context = await fixture.CreateContextAsync();
+            var page = await context.NewPageAsync();
+            await page.GotoAsync("/");
+
+            await Expect(page.GetByRole(AriaRole.Alert))
+                .ToContainTextAsync("Could not load the journal. Refresh to try again.");
+            await Expect(page.GetByText("No planned items in this window.")).ToHaveCountAsync(0);
+            await Expect(page.GetByText("Future Log: 0")).ToHaveCountAsync(0);
+
+            fixture.Journal.FailReads = false;
+            await Button(page, "Refresh journal").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
+            await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Today", Level = 1 })).ToBeVisibleAsync();
+        }
+        finally
+        {
+            fixture.Journal.FailReads = false;
+        }
+    }
+
+    [Fact]
     public async Task ListGoalAndLifecycleRespectUnresolvedOccurrencesAndRetainTheDraft()
     {
         await using var context = await fixture.CreateContextAsync();

@@ -523,3 +523,16 @@
   microphone verification remains an owner gate; no live result is claimed.
 - No transcript or audio store is added and no live Foundry role assignment is
   performed by application code.
+### 2026-11-19: Foundry matrix supersedes unsupported deployment selections
+
+- The owner supersedes the earlier Foundry model matrix after the production
+  apply rejected its GPT decision and small-embedding deployments.
+- Production will deploy `gpt-6.1-terra` / `2026-10-26`, `gpt-6.2-sol` /
+  `2026-11-17`, and `gpt-6.2-astra` / `2026-11-17` with `DataZoneStandard`
+  SKU at capacity 1.
+- The embedding deployment will use `text-embedding-3-large` / `1` with the
+  `Standard` SKU at capacity 1.
+- This decision does not assert that all catalog combinations remain available,
+  quota-approved, or cost-estimated in the subscription. The Azure apply is the
+  live availability check. The existing $50 budget remains an alert-only limit,
+  not a Foundry usage cap.

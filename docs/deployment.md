@@ -9,6 +9,10 @@ Bujo-AI is a demo for testing agent capabilities and SDLC practices:
 trusted `main` changes are the authorization for infrastructure automation,
 with no separate Terraform approval step.
 
+The journal export and recovery procedures are documented in
+[operations.md](operations.md). They do not authorize deployment or live
+database changes.
+
 ## Release pipeline
 
 1. **Build once (CI).** CI builds and smoke-tests the root `Dockerfile` image

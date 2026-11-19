@@ -4,6 +4,7 @@ using Bujo.Application;
 using Bujo.Application.Chat;
 using Bujo.Domain;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -12,9 +13,69 @@ namespace Bujo.Host.Mcp;
 [McpServerToolType]
 public sealed class JournalMcpTools
 {
+    [McpServerTool(Name = ChatToolNames.RunChat, ReadOnly = true, Destructive = false),
+     Description("Runs an authenticated chat turn against the journal using the shared typed chat runtime.")]
+    public static async Task<CallToolResult> RunChat(
+        IChatRuntime runtime,
+        IHttpContextAccessor httpContextAccessor,
+        string message,
+        string? timeZone = null,
+        IReadOnlyList<ChatTurn>? history = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return McpErrors.Error(DomainErrorCode.InvalidInput, "A non-empty chat message is required.");
+        }
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest(message, timeZone, history ?? []),
+            httpContextAccessor.HttpContext?.User ?? new ClaimsPrincipal(),
+            cancellationToken);
+        return McpErrors.Success(result);
+    }
+
+    [McpServerTool(Name = ChatToolNames.GetChatSpeechStatus, ReadOnly = true, Destructive = false),
+     Description("Reports whether PWA speech recognition is configured. Speech recognition stays browser-local and does not expose a speech token through MCP.")]
+    public static CallToolResult GetChatSpeechStatus(IConfiguration configuration)
+    {
+        var enabled = configuration.GetValue<bool>("Chat:Enabled");
+        var configured = enabled &&
+            (!string.IsNullOrWhiteSpace(configuration["Chat:SpeechRegion"]) ||
+             !string.IsNullOrWhiteSpace(configuration["Chat:SpeechEndpoint"]));
+        return McpErrors.Success(new
+        {
+            enabled,
+            recognitionLanguage = configuration["Chat:RecognitionLanguage"] ?? "en-US",
+            configured
+        });
+    }
+
     [McpServerTool(Name = ChatToolNames.GetJournal, ReadOnly = true, Destructive = false), Description("Returns journal items, lists, occurrences, and move history with stable IDs.")]
-    public static CallToolResult GetJournal(JournalApplicationService journal) =>
-        McpErrors.Success(journal.GetSnapshot());
+    public static CallToolResult GetJournal(JournalApplicationService journal)
+    {
+        try
+        {
+            return McpErrors.Success(journal.GetSnapshot());
+        }
+        catch
+        {
+            return McpErrors.Error("QueryFailed", "The journal query could not be completed.");
+        }
+    }
+
+    [McpServerTool(Name = "export_journal", ReadOnly = true, Destructive = false), Description("Exports the current journal as versioned JSON. The result contains sensitive journal data.")]
+    public static CallToolResult ExportJournal(JournalApplicationService journal, IJournalExport export)
+    {
+        try
+        {
+            return McpErrors.Success(export.Create(journal.GetSnapshot()));
+        }
+        catch
+        {
+            return McpErrors.Error("QueryFailed", "The journal export could not be completed.");
+        }
+    }
 
     [McpServerTool(Name = ChatToolNames.GetDailyStart, ReadOnly = true, Destructive = false), Description("Returns the journal daily-start groups in the supplied IANA time zone.")]
     public static CallToolResult GetDailyStart(
