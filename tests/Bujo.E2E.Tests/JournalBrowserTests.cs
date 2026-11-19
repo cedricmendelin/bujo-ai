@@ -456,10 +456,10 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     private static async Task AssertNoConnectionStatusAsync(IPage page)
     {
         await Expect(page.Locator("[data-connectivity-status], [data-circuit-status]")).ToHaveCountAsync(0);
-        await Expect(page.Locator("body")).Not.ToContainTextAsync(new System.Text.RegularExpressions.Regex(
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(
             "Server connection lost or awaiting reconnection|Browser network available|Saves still require server confirmation|" +
             "No journal data is stored offline|retain unsaved input|saved or replayed|Reloading loses unsaved",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase), await page.Locator("main").InnerTextAsync());
     }
 
     private static ILocator Link(IPage page, string name) => page.GetByRole(AriaRole.Link, new() { Name = name, Exact = true });

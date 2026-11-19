@@ -39,6 +39,8 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
         var page = await context.NewPageAsync();
         await page.EmulateMediaAsync(new() { ForcedColors = ForcedColors.Active, ReducedMotion = ReducedMotion.Reduce });
         await page.GotoAsync("/capture");
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Capture item", Exact = true })).ToBeEnabledAsync();
+        await Expect(page.GetByLabel("Item name", new() { Exact = true })).ToBeEditableAsync();
         var summary = page.Locator(".notation-legend summary");
         await summary.FocusAsync();
         await Expect(summary).ToBeFocusedAsync();
