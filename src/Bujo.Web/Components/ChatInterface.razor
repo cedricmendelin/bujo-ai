@@ -35,6 +35,21 @@
         <section class="chat-proposal" aria-labelledby="proposal-@card.ProposalId">
             <h2 id="proposal-@card.ProposalId">Approval required</h2>
             <p>@card.Summary</p>
+            <p>List: <a href="/lists/@card.Proposal.ListId">@card.Proposal.ListId</a> · version @card.Proposal.ExpectedListVersion</p>
+            <p>@(card.Proposal.RequestCloseList ? "Close this list after applying the changes." : "Keep this list open.")</p>
+            <ul>
+                @foreach (var change in card.Proposal.Changes)
+                {
+                    <li>
+                        @change.Action · item @change.ItemId ·
+                        <a href="/items/@change.OccurrenceId">occurrence @change.OccurrenceId</a> · item version @change.ExpectedItemVersion
+                        @if (change.DestinationListId is { } destination)
+                        {
+                            <span> · destination <a href="/lists/@destination">@destination</a> · version @change.ExpectedDestinationListVersion</span>
+                        }
+                    </li>
+                }
+            </ul>
             <p class="journal-meta">Proposal expires @card.ExpiresAt.ToLocalTime().ToString("g")</p>
             @if (card.State == "pending")
             {
@@ -186,11 +201,18 @@
             {
                 if (_proposals.All(card => card.ProposalId != proposal.ProposalId))
                 {
+                    var actor = ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false);
+                    var fetched = Reviews.GetProposal(proposal.ProposalId, actor);
+                    if (!fetched.IsSuccess || fetched.Value!.Status != ReviewProposalStatus.Pending ||
+                        !StringComparer.Ordinal.Equals(fetched.Value.Digest, proposal.Digest))
+                    {
+                        _status = "The proposal could not be verified. No approval is available.";
+                        continue;
+                    }
+
                     _proposals.Add(new ProposalCardState(
-                        proposal.ProposalId,
-                        proposal.Digest,
+                        fetched.Value,
                         proposal.Summary,
-                        proposal.ExpiresAt,
                         "pending"));
                 }
             }
@@ -419,16 +441,15 @@
     private sealed record ChatMessage(ChatRole Role, string Text);
 
     private sealed class ProposalCardState(
-        Guid proposalId,
-        string digest,
+        ReviewProposalSnapshot proposal,
         string summary,
-        DateTimeOffset expiresAt,
         string state)
     {
-        public Guid ProposalId { get; } = proposalId;
-        public string Digest { get; } = digest;
+        public ReviewProposalSnapshot Proposal { get; } = proposal;
+        public Guid ProposalId => Proposal.Id;
+        public string Digest => Proposal.Digest;
         public string Summary { get; } = summary;
-        public DateTimeOffset ExpiresAt { get; } = expiresAt;
+        public DateTimeOffset ExpiresAt => Proposal.ExpiresAt;
         public string State { get; set; } = state;
     }
 }

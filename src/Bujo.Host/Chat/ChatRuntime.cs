@@ -18,16 +18,19 @@ public sealed class ChatRuntime : IChatRuntime
     private readonly ChatOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ChatServiceOptions _provider;
+    private readonly TokenCredential _credential;
 
     public ChatRuntime(
         JournalApplicationService journal,
         ReviewApplicationService reviews,
         IOptions<ChatOptions> options,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        TokenCredential? credential = null)
     {
         _tools = new ChatToolExecutor(journal, reviews);
         _options = options.Value;
         _httpClientFactory = httpClientFactory;
+        _credential = credential ?? new DefaultAzureCredential();
         _provider = new ChatServiceOptions(
             _options.Endpoint,
             _options.Deployment,
@@ -318,7 +321,7 @@ public sealed class ChatRuntime : IChatRuntime
         }
 
         return await Task.FromResult(Done(
-            "I can read Today or the journal, capture or edit an item, find or create lists, move or complete items, and review or close lists. Be specific about names and destinations.",
+            "I can read Today or the journal, capture or edit an item, find or create lists, complete items, and prepare a list review. Use the journal views to move items.",
             toolCalls,
             proposals));
     }
@@ -339,8 +342,7 @@ public sealed class ChatRuntime : IChatRuntime
 
         try
         {
-            var credential = new DefaultAzureCredential();
-            var access = await credential.GetTokenAsync(
+            var access = await _credential.GetTokenAsync(
                 new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]),
                 cancellationToken);
 
@@ -385,7 +387,7 @@ public sealed class ChatRuntime : IChatRuntime
                 }, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
-                    return Done("The model provider is temporarily unavailable. Your journal is unchanged.", toolCalls, proposals);
+                    return Done("The model provider is temporarily unavailable. Check your journal before repeating any requested changes.", toolCalls, proposals);
                 }
 
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -397,6 +399,7 @@ public sealed class ChatRuntime : IChatRuntime
                     var executedCalls = new List<(JsonElement Call, ChatToolResult Result)>();
                     foreach (var call in callElements.EnumerateArray())
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var name = call.GetProperty("function").GetProperty("name").GetString() ?? "";
                         var argumentsText = call.GetProperty("function").GetProperty("arguments").GetString() ?? "{}";
                         using var arguments = JsonDocument.Parse(argumentsText);
@@ -449,7 +452,7 @@ public sealed class ChatRuntime : IChatRuntime
         }
         catch (Exception)
         {
-            return Done("The model provider is temporarily unavailable. Your journal is unchanged.", [], []);
+            return Done("The model provider is temporarily unavailable. Check your journal before repeating any requested changes.", [], []);
         }
     }
 

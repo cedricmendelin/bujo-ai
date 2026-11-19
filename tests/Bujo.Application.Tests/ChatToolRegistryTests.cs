@@ -75,7 +75,7 @@ public sealed class ChatToolRegistryTests
     }
 
     [Fact]
-    public void ReviewProposalRejectAndCancelCauseNoJournalWrites()
+    public void ApprovalGatedToolsCannotBeExecutedByChat()
     {
         var repository = InMemoryJournalRepository.CreateWithFutureLog(
             Guid.Parse("00000000-0000-0000-0000-000000000101"));
@@ -117,15 +117,34 @@ public sealed class ChatToolRegistryTests
         Assert.Equal(OccurrenceState.Open,
             journal.GetSnapshot().Occurrences.Single(item => item.Id == captured.Value.Occurrence.Id).State);
 
-        var rejected = executor.Execute(new ChatToolRequest(
-            "reject_review_proposal",
-            JsonSerializer.SerializeToElement(new { proposalId = created.Id }),
-            principal));
-        Assert.True(rejected.Succeeded);
-        Assert.Equal(ReviewProposalStatus.Rejected,
-            Assert.IsType<ReviewProposalSnapshot>(rejected.Value).Status);
+        foreach (var descriptor in ChatToolRegistry.All.Where(tool =>
+                     tool.RequiresApproval && tool.Name != ChatToolNames.CreateReviewProposal))
+        {
+            var result = executor.Execute(new ChatToolRequest(
+                descriptor.Name,
+                JsonSerializer.SerializeToElement(new
+                {
+                    proposalId = created.Id,
+                    listId = list.Value.Id,
+                    itemId = captured.Value.Item.Id,
+                    expectedOccurrenceId = captured.Value.Occurrence.Id,
+                    destinationListId = list.Value.Id,
+                    operationId = Guid.NewGuid()
+                }),
+                principal));
+
+            Assert.False(result.Succeeded, descriptor.Name);
+            Assert.Contains("requires an explicit", result.Summary);
+        }
+
+        var stored = reviews.GetProposal(created.Id,
+            ReviewActor.FromPrincipal(principal, ReviewProposalSource.Ceremony, false));
+        Assert.True(stored.IsSuccess);
+        Assert.Equal(ReviewProposalStatus.Pending, stored.Value!.Status);
         Assert.Equal(OccurrenceState.Open,
             journal.GetSnapshot().Occurrences.Single(item => item.Id == captured.Value.Occurrence.Id).State);
+        Assert.Equal(JournalListState.Open,
+            journal.GetSnapshot().Lists.Single(item => item.Id == list.Value.Id).State);
     }
 
     [Fact]

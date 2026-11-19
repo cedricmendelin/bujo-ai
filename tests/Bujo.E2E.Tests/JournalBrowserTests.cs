@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Bujo.Application;
 using Bujo.Domain;
 using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
@@ -8,6 +9,34 @@ namespace Bujo.E2E.Tests;
 
 public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<BrowserFixture>
 {
+    [Fact]
+    public async Task ChatApprovalCardShowsExactChangesBeforeApplyingThem()
+    {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var list = journal.CreateList("Approval card projects", JournalListKind.Custom).Value!;
+        var captured = journal.Capture("Approval card task", null, null, null, list.Id).Value!;
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/");
+        await page.GetByLabel("Message", new() { Exact = true }).FillAsync("close list Approval card projects");
+        await Button(page, "Send").ClickAsync();
+
+        var card = page.Locator("section.chat-proposal");
+        await Expect(card.GetByText("Approval required")).ToBeVisibleAsync();
+        await Expect(card).ToContainTextAsync($"List: {list.Id}");
+        await Expect(card).ToContainTextAsync($"item {captured.Item.Id}");
+        await Expect(card).ToContainTextAsync($"occurrence {captured.Occurrence.Id}");
+        await Expect(card).ToContainTextAsync("Abandon");
+        await Expect(card).ToContainTextAsync("Close this list after applying the changes.");
+        Assert.Equal(OccurrenceState.Open, journal.GetSnapshot().Occurrences.Single(x => x.Id == captured.Occurrence.Id).State);
+        Assert.Equal(JournalListState.Open, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
+
+        await card.GetByRole(AriaRole.Button, new() { Name = "Approve exact changes" }).ClickAsync();
+        await Expect(card.GetByText("Approved and applied.")).ToBeVisibleAsync();
+        Assert.Equal(OccurrenceState.Abandoned, journal.GetSnapshot().Occurrences.Single(x => x.Id == captured.Occurrence.Id).State);
+        Assert.Equal(JournalListState.Closed, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
+    }
+
     [Fact]
     public async Task OnlineStartupAndEnhancedJournalNavigationDoNotBlockWrites()
     {

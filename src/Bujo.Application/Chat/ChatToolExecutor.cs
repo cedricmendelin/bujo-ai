@@ -12,6 +12,19 @@ public sealed class ChatToolExecutor(
     {
         try
         {
+            var descriptor = ChatToolRegistry.All.SingleOrDefault(tool =>
+                StringComparer.Ordinal.Equals(tool.Name, request.Name));
+            if (descriptor is null)
+            {
+                return new ChatToolResult(false, $"Unknown chat tool: {request.Name}", null);
+            }
+
+            if (descriptor.RequiresApproval && request.Name != ChatToolNames.CreateReviewProposal)
+            {
+                return new ChatToolResult(false,
+                    "This action requires an explicit approval or action in the journal UI.", null);
+            }
+
             return request.Name switch
             {
                 "get_journal" => Success("Journal snapshot loaded.", journal.GetSnapshot()),
@@ -39,13 +52,7 @@ public sealed class ChatToolExecutor(
                 "set_list_goal" => Success(journal.SetListGoal(
                     GetGuid(request.Arguments, "listId"),
                     GetString(request.Arguments, "goalText"))),
-                "close_list" => Success(journal.CloseList(GetGuid(request.Arguments, "listId"))),
                 "reopen_list" => Success(journal.ReopenList(GetGuid(request.Arguments, "listId"))),
-                "move_item" => Success(journal.Move(
-                    GetGuid(request.Arguments, "operationId"),
-                    GetGuid(request.Arguments, "itemId"),
-                    GetGuid(request.Arguments, "expectedOccurrenceId"),
-                    GetGuid(request.Arguments, "destinationListId"))),
                 "complete_occurrence" => Success(journal.Transition(
                     GetGuid(request.Arguments, "occurrenceId"),
                     OccurrenceAction.Done)),
@@ -56,15 +63,6 @@ public sealed class ChatToolExecutor(
                     GetGuid(request.Arguments, "occurrenceId"),
                     OccurrenceAction.Reopen)),
                 "create_review_proposal" => CreateReviewProposal(request),
-                "cancel_review_proposal" => Success(reviews.CancelProposal(
-                    GetGuid(request.Arguments, "proposalId"),
-                    PwaActor(request.Principal, false))),
-                "reject_review_proposal" => Success(reviews.RejectProposal(
-                    GetGuid(request.Arguments, "proposalId"),
-                    PwaActor(request.Principal, false))),
-                "apply_review_proposal" => Success(reviews.ApplyProposal(
-                    GetGuid(request.Arguments, "proposalId"),
-                    PwaActor(request.Principal, true))),
                 _ => new ChatToolResult(false, $"Unknown chat tool: {request.Name}", null)
             };
         }

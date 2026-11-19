@@ -70,7 +70,7 @@ public static class ChatToolRegistry
             ["operationId", "itemId", "expectedOccurrenceId", "destinationListId"]),
         Write("complete_occurrence", "POST /api/occurrences/{id}/transition", "Marks an occurrence done.", false,
             ["occurrenceId"]),
-        Write("abandon_occurrence", "POST /api/occurrences/{id}/transition", "Marks an occurrence abandoned.", false,
+        Write("abandon_occurrence", "POST /api/occurrences/{id}/transition", "Marks an occurrence abandoned.", true,
             ["occurrenceId"]),
         Write("reopen_occurrence", "POST /api/occurrences/{id}/transition", "Reopens an occurrence.", false,
             ["occurrenceId"]),
