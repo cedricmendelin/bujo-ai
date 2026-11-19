@@ -1,11 +1,25 @@
 @page "/"
 @attribute [AllowAnonymous]
+@inject IConfiguration Configuration
 
 <AuthorizeView Policy="ApprovedUi">
     <Authorized>
-        <PageTitle>Today · Bujo-AI</PageTitle>
-        <h1 tabindex="-1">Today</h1>
-        <Bujo.Web.Pages.Today @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
+        @if (Configuration.GetValue<bool>("Chat:Enabled"))
+        {
+            <ChatInterface @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
+        }
+        else
+        {
+            <PageTitle>Chat unavailable · Bujo-AI</PageTitle>
+            <h1 tabindex="-1">Chat unavailable</h1>
+            <p>Journal chat is off or unavailable. Your journal remains available.</p>
+            <div class="journal-actions">
+                <a href="/today">Today</a>
+                <a href="/capture">Capture</a>
+                <a href="/lists">Lists</a>
+                <a href="/upcoming">Upcoming</a>
+            </div>
+        }
     </Authorized>
     <NotAuthorized>
         <PageTitle>Bujo-AI</PageTitle>

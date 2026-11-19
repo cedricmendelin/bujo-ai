@@ -34,6 +34,97 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task ChatEndpointsRequireAuthenticationAndFeatureFlag()
+    {
+        using var aguiAnonymous = await _client.PostAsJsonAsync("/api/chat/agui", new
+        {
+            message = "show today"
+        });
+        using var speechAnonymous = await _client.PostAsync("/api/chat/speech-token", null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, aguiAnonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, speechAnonymous.StatusCode);
+
+        using var aguiDenied = new HttpRequestMessage(HttpMethod.Post, "/api/chat/agui")
+        {
+            Content = JsonContent.Create(new { message = "show today" })
+        };
+        aguiDenied.Headers.Add("Authorization", "Test deny");
+        using var aguiDeniedResponse = await _client.SendAsync(aguiDenied);
+
+        using var speechDenied = new HttpRequestMessage(HttpMethod.Post, "/api/chat/speech-token");
+        speechDenied.Headers.Add("Authorization", "Test deny");
+        using var speechDeniedResponse = await _client.SendAsync(speechDenied);
+
+        Assert.Equal(HttpStatusCode.Forbidden, aguiDeniedResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, speechDeniedResponse.StatusCode);
+
+        using var aguiOff = new HttpRequestMessage(HttpMethod.Post, "/api/chat/agui")
+        {
+            Content = JsonContent.Create(new { message = "show today" })
+        };
+        aguiOff.Headers.Add("Authorization", "Test allow");
+        using var aguiOffResponse = await _client.SendAsync(aguiOff);
+
+        using var speechOff = new HttpRequestMessage(HttpMethod.Post, "/api/chat/speech-token");
+        speechOff.Headers.Add("Authorization", "Test allow");
+        using var speechOffResponse = await _client.SendAsync(speechOff);
+
+        Assert.Equal(HttpStatusCode.NotFound, aguiOffResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, speechOffResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task EnabledChatUsesMockProviderAndSpeechTokenFailsClosedWhenUnconfigured()
+    {
+        using var factory = new JournalApiFactory();
+        using var enabled = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Chat:Enabled", "true");
+            builder.UseSetting("Chat:Provider", "Mock");
+        });
+        using var client = enabled.CreateClient();
+
+        using var chatRequest = new HttpRequestMessage(HttpMethod.Post, "/api/chat/agui")
+        {
+            Content = JsonContent.Create(new
+            {
+                message = "show journal",
+                timeZone = "Europe/Zurich",
+                history = Array.Empty<object>(),
+                threadId = "test-thread"
+            })
+        };
+        chatRequest.Headers.Add("Authorization", "Test allow");
+        using var chatResponse = await client.SendAsync(chatRequest);
+
+        Assert.Equal(HttpStatusCode.OK, chatResponse.StatusCode);
+        Assert.Equal("text/event-stream", chatResponse.Content.Headers.ContentType!.MediaType);
+        var chatBody = await chatResponse.Content.ReadAsStringAsync();
+        Assert.Contains("event: run_started", chatBody);
+        Assert.Contains("event: text_message_content", chatBody);
+        Assert.Contains("event: run_finished", chatBody);
+
+        using var speechRequest = new HttpRequestMessage(HttpMethod.Post, "/api/chat/speech-token");
+        speechRequest.Headers.Add("Authorization", "Test allow");
+        using var speechResponse = await client.SendAsync(speechRequest);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, speechResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task SpeechAssetUsesEnUsAndHasSingleFinalSubmissionGuard()
+    {
+        using var response = await _client.GetAsync("/_content/Bujo.Web/js/speech.js");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var source = await response.Content.ReadAsStringAsync();
+        Assert.Contains("recognizer.lang", source);
+        Assert.Contains("\"en-US\"", source);
+        Assert.Contains("finalSubmitted", source);
+        Assert.Contains("finalSubmitted = true", source);
+    }
+
+    [Fact]
     public async Task AuthenticatedPrincipalOutsideAllowlistIsForbidden()
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/journal");
@@ -639,6 +730,8 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
         Environment.SetEnvironmentVariable("Auth__AllowedPrincipals", AllowedObjectId);
         Environment.SetEnvironmentVariable("Mcp__PublicBaseUrl", "http://localhost");
         Environment.SetEnvironmentVariable("Mcp__AllowedOrigins__0", "https://approved.example");
+        Environment.SetEnvironmentVariable("Chat__Enabled", "false");
+        Environment.SetEnvironmentVariable("Chat__Provider", "Mock");
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__journal",
             "Server=localhost;Database=journal;Integrated Security=true;TrustServerCertificate=true");
@@ -669,19 +762,19 @@ public sealed class JournalApiFactory : WebApplicationFactory<JournalDatabaseHea
             services.RemoveAll<IKnowledgeRepository>();
             services.RemoveAll<IJournalBackupRepository>();
             services.AddSingleton<IKnowledgeRepository>(_sharedKnowledgeRepository);
-                if (FailQueries)
-                {
-                    services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
-                }
-                else if (ShareInMemoryRepository)
-                {
-                    services.AddSingleton<IJournalRepository>(_sharedRepository);
-                }
-                else
-                {
-                    services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
-                        Guid.Parse("00000000-0000-0000-0000-000000000101")));
-                }
+            if (FailQueries)
+            {
+                services.AddScoped<IJournalRepository, FailingReadJournalRepository>();
+            }
+            else if (ShareInMemoryRepository)
+            {
+                services.AddSingleton<IJournalRepository>(_sharedRepository);
+            }
+            else
+            {
+                services.AddScoped<IJournalRepository>(_ => InMemoryJournalRepository.CreateWithFutureLog(
+                    Guid.Parse("00000000-0000-0000-0000-000000000101")));
+            }
             services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
                 provider.GetRequiredService<IJournalRepository>(),
                 provider.GetRequiredService<IKnowledgeRepository>()));

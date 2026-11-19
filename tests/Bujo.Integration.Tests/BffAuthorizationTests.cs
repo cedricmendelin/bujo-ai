@@ -69,12 +69,16 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
     [Fact]
     public async Task ProtectedUiRedirectsToSafeSignInAndApiDoesNotRedirect()
     {
-        using var ui = await _client.GetAsync("/rendering-proof");
         using var api = await _client.GetAsync("/api/journal");
-        Assert.Equal(HttpStatusCode.Redirect, ui.StatusCode);
-        Assert.StartsWith("https://localhost/auth/sign-in", ui.Headers.Location!.ToString());
         Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
         Assert.Null(api.Headers.Location);
+
+        foreach (var path in new[] { "/rendering-proof", "/today", "/capture", "/lists", "/upcoming" })
+        {
+            using var ui = await _client.GetAsync(path);
+            Assert.Equal(HttpStatusCode.Redirect, ui.StatusCode);
+            Assert.StartsWith("https://localhost/auth/sign-in", ui.Headers.Location!.ToString());
+        }
     }
 
     [Theory]

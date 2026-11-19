@@ -44,6 +44,19 @@ resource "azurerm_role_assignment" "foundry_group" {
   principal_type       = "Group"
 }
 
+resource "azurerm_role_assignment" "foundry_runtime" {
+  for_each = var.foundry_enabled && var.foundry_runtime_roles_enabled ? toset([
+    "Cognitive Services OpenAI User",
+    "Cognitive Services Speech User",
+  ]) : toset([])
+
+  name                 = uuidv5("url", "${lower(azurerm_cognitive_account.foundry[0].id)}/${lower(module.identity.principal_id)}/${lower(each.key)}")
+  scope                = azurerm_cognitive_account.foundry[0].id
+  role_definition_name = each.key
+  principal_id         = module.identity.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 resource "azurerm_cognitive_deployment" "model" {
   for_each = var.foundry_enabled ? var.foundry_deployments : {}
 

@@ -15,6 +15,9 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using ModelContextProtocol.AspNetCore;
 using Bujo.Host.Mcp;
+using Bujo.Host.Chat;
+using Bujo.Application.Chat;
+using System.Threading.RateLimiting;
 
 var shouldMigrate = args.Contains("--migrate", StringComparer.Ordinal);
 var shouldMigrateOnly = args.Contains("--migrate-only", StringComparer.Ordinal);
@@ -124,6 +127,27 @@ var connectionString = builder.Configuration.GetConnectionString("journal")
     ?? throw new InvalidOperationException("ConnectionStrings:journal must be configured.");
 builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
+builder.Services.Configure<ChatOptions>(builder.Configuration.GetSection(ChatOptions.SectionName));
+builder.Services.AddHttpClient("ChatProvider");
+builder.Services.AddHttpClient("ChatSpeech");
+builder.Services.AddScoped<IChatRuntime, ChatRuntime>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("chat", httpContext =>
+    {
+        var objectId = httpContext.User.FindFirst("oid")?.Value;
+        var partition = string.IsNullOrWhiteSpace(objectId)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : objectId;
+        return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+        });
+    });
+});
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
     .WithTools<JournalMcpTools>()
@@ -168,7 +192,7 @@ app.Use(async (context, next) =>
     context.Response.Headers.XContentTypeOptions = "nosniff";
     context.Response.Headers.XFrameOptions = "DENY";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()";
     if (!context.Request.Path.StartsWithSegments("/_content") &&
         !context.Request.Path.StartsWithSegments("/_framework"))
         context.Response.Headers.CacheControl = "no-store, private";
@@ -178,6 +202,7 @@ app.UseMcpRequestSecurity();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
+app.UseRateLimiter();
 app.MapStaticAssets().AllowAnonymous();
 app.MapGet("/service-worker.js", (HttpContext context, IWebHostEnvironment environment) =>
 {
@@ -226,6 +251,7 @@ app.MapJournalEndpoints();
 app.MapKnowledgeEndpoints();
 app.MapProtectedResourceMetadata();
 app.MapMcp("/mcp").RequireAuthorization("ApprovedPrincipal");
+app.MapChatEndpoints();
 
 app.Run();
 return 0;
