@@ -182,14 +182,15 @@ the approved application runtime or declare it resolved from a local run.
 
 ## PWA journal UI and rendering proof (issue #124)
 
-The current #124 implementation renders Today at `/` for approved sessions and
-provides Today, Upcoming, Capture, Lists, and item detail/history workflows
-over the shared application service. Successful sign-in returns to `/`.
-`/rendering-proof` remains under Diagnostics and exercises Interactive Server
-without reading or writing journal data. `/auth/sign-in`, `/auth/signed-out`,
-`/auth/denied`, and `/auth/error` are safe anonymous account pages. API
-endpoints still require bearer tokens; signing into the browser does not
-authorize an API request.
+The current UI renders Chat at `/` for approved sessions, with Today,
+Upcoming, Capture, Lists, and item detail/history workflows over the shared
+application service. The anonymous Home page starts the existing OIDC flow
+through an antiforgery-protected POST; successful sign-in returns to `/`.
+`/rendering-proof` remains a directly addressable, authenticated developer
+route, but is absent from the main navigation. Legacy GETs to
+`/auth/sign-in` redirect to Home. `/auth/signed-out`, `/auth/denied`, and
+`/auth/error` are safe anonymous account pages. API endpoints still require
+bearer tokens; signing into the browser does not authorize an API request.
 
 The local Podman/HTTPS/user-secrets and PWA-setting-forwarding fixes are merged
 in [PR #125](https://github.com/cedricmendelin/bujo-ai/pull/125); they do not
@@ -274,7 +275,7 @@ Layouts wrap from 320 CSS pixels upward. Forms, grid children, long titles,
 tags, IDs, and digest strings can shrink/wrap without hiding content.
 Buttons, links, navigation, and legend summaries have at least 44×44 CSS pixel
 targets; checkboxes/radios use their enclosing 44px-high clickable labels.
-Keyboard focus uses an offset 3px outline. Reduced-motion mode suppresses
+Keyboard focus uses an offset 2px outline. Reduced-motion mode suppresses
 animation/transitions, and forced-colors mode uses system control/border colors
 while retaining text labels, underlines, and abandoned strike-throughs.
 

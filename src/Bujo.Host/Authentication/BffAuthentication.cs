@@ -43,7 +43,7 @@ public static class BffAuthentication
                 options.Cookie.Path = "/";
                 options.ExpireTimeSpan = TimeSpan.FromHours(1);
                 options.SlidingExpiration = false;
-                options.LoginPath = "/auth/sign-in";
+                options.LoginPath = "/";
                 options.AccessDeniedPath = "/auth/denied";
                 options.Events.OnValidatePrincipal = async context =>
                 {

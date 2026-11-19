@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Bujo.Host.Authentication;
+using Bujo.Application.Chat;
 using Bujo.Domain;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Antiforgery;
@@ -29,6 +30,8 @@ public sealed class BrowserFixture : IAsyncLifetime
     // Redirects must never reach Entra, even when browser request routing misses a redirect hop.
     internal const string IdentityHostDenialRule = "--host-resolver-rules=MAP login.microsoftonline.com ~NOTFOUND";
     private readonly ProofHostFactory _factory = new();
+    private readonly List<WebApplicationFactory<Program>> _additionalFactories = [];
+    private readonly List<HttpClient> _additionalClients = [];
     private IPlaywright _playwright = null!;
     private HttpClient _client = null!;
 
@@ -52,11 +55,33 @@ public sealed class BrowserFixture : IAsyncLifetime
         });
     }
 
-    public async Task<IBrowserContext> CreateContextAsync(string? identity = "allow", int width = 1280, int height = 900)
+    public async Task<IBrowserContext> CreateContextAsync(
+        string? identity = "allow",
+        int width = 1280,
+        int height = 900,
+        IChatRuntime? chatRuntime = null)
     {
+        var baseUrl = BaseUrl;
+        if (chatRuntime is not null)
+        {
+            var factory = _factory.WithWebHostBuilder(builder =>
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IChatRuntime>();
+                    services.AddSingleton(chatRuntime);
+                }));
+            factory.UseKestrel(0);
+            var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!;
+            client.BaseAddress = new Uri(addresses.Addresses.Single());
+            _additionalFactories.Add(factory);
+            _additionalClients.Add(client);
+            baseUrl = client.BaseAddress.ToString().TrimEnd('/');
+        }
+
         var context = await Browser.NewContextAsync(new()
         {
-            BaseURL = BaseUrl,
+            BaseURL = baseUrl,
             ViewportSize = new() { Width = width, Height = height },
             TimezoneId = "Europe/Zurich"
         });
@@ -79,6 +104,8 @@ public sealed class BrowserFixture : IAsyncLifetime
     {
         if (Browser is not null) await Browser.DisposeAsync();
         _playwright?.Dispose();
+        foreach (var client in _additionalClients) client.Dispose();
+        foreach (var factory in _additionalFactories) await factory.DisposeAsync();
         _client?.Dispose();
         await _factory.DisposeAsync();
     }
@@ -197,7 +224,7 @@ internal sealed class ProofUiAuthentication(
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {
-        Response.Redirect("/auth/sign-in");
+        Response.Redirect("/");
         return Task.CompletedTask;
     }
 

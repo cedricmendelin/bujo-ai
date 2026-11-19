@@ -68,9 +68,9 @@ responses, identities or journal data. Offline writes are neither queued nor
 replayed.
 
 The approved issue #124 plan extends this baseline with Interactive Server
-journal workflows for approved sessions at `/`; the original proof route
-remains under Diagnostics. Local synthetic browser tests verify those UI
-workflows, not live Entra sign-in, target-device installation, or SQL
+journal workflows for approved sessions; the original proof route remains
+available directly to approved accounts, without a main-navigation link. Local
+synthetic browser tests verify those UI workflows, not live Entra sign-in, target-device installation, or SQL
 persistence across a host restart. See the [issue #124 delivery
 matrix](../delivery-matrix-124.md) for current implementation and evidence.
 

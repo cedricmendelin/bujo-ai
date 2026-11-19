@@ -40,7 +40,6 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
     }
 
     [Theory]
-    [InlineData("/auth/sign-in")]
     [InlineData("/auth/signed-out")]
     [InlineData("/auth/denied")]
     [InlineData("/auth/error")]
@@ -57,17 +56,12 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         Assert.Contains("frame-ancestors 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
         var csp = response.Headers.GetValues("Content-Security-Policy").Single();
-        if (path == "/auth/sign-in")
-            Assert.Contains("form-action 'self' https://login.microsoftonline.com;", csp);
-        else
-        {
-            Assert.Contains("form-action 'self';", csp);
-            Assert.DoesNotContain("login.microsoftonline.com", csp);
-        }
+        Assert.Contains("form-action 'self';", csp);
+        Assert.DoesNotContain("login.microsoftonline.com", csp);
     }
 
     [Fact]
-    public async Task ProtectedUiRedirectsToSafeSignInAndApiDoesNotRedirect()
+    public async Task ProtectedUiRedirectsToHomeAndApiDoesNotRedirect()
     {
         using var api = await _client.GetAsync("/api/journal");
         Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
@@ -77,8 +71,45 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         {
             using var ui = await _client.GetAsync(path);
             Assert.Equal(HttpStatusCode.Redirect, ui.StatusCode);
-            Assert.StartsWith("https://localhost/auth/sign-in", ui.Headers.Location!.ToString());
+            Assert.StartsWith("https://localhost/?ReturnUrl=", ui.Headers.Location!.ToString());
         }
+    }
+
+    [Fact]
+    public async Task LegacySignInGetRedirectsToHomeAndHomeAllowsOnlyTheConfiguredProviderOrigin()
+    {
+        using var legacy = await _client.GetAsync("/auth/sign-in");
+        Assert.Equal(HttpStatusCode.Redirect, legacy.StatusCode);
+        Assert.Equal("/", legacy.Headers.Location!.ToString());
+        Assert.DoesNotContain("login.microsoftonline.com",
+            legacy.Headers.GetValues("Content-Security-Policy").Single());
+
+        using var home = await _client.GetAsync("/");
+        Assert.Equal(HttpStatusCode.OK, home.StatusCode);
+        var policies = home.Headers.GetValues("Content-Security-Policy").ToArray();
+        Assert.NotEmpty(policies);
+        Assert.Contains(policies, policy => policy.Contains(
+            "form-action 'self' https://login.microsoftonline.com;", StringComparison.Ordinal));
+        Assert.All(policies, policy =>
+        {
+            if (policy.Contains("form-action", StringComparison.Ordinal))
+                Assert.DoesNotContain("https://", policy.Replace(
+                    "form-action 'self' https://login.microsoftonline.com;", "", StringComparison.Ordinal));
+        });
+    }
+
+    [Fact]
+    public async Task SignInChallengeCspAllowsOnlyConfiguredHttpsProviderOrigin()
+    {
+        var html = await _client.GetStringAsync("/");
+        var token = System.Text.RegularExpressions.Regex.Match(html,
+            "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
+        using var response = await _client.PostAsync("/auth/sign-in",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("form-action 'self';", csp);
+        Assert.DoesNotContain("login.microsoftonline.com", csp);
     }
 
     [Theory]
@@ -103,7 +134,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
                 context.Request.Headers["X-Forwarded-Host"] = "ignored.example.test";
             });
 
-        var signIn = await GetAsync("/auth/sign-in");
+        var signIn = await GetAsync("/");
         if (expectHttps)
         {
             Assert.Equal(200, signIn.Response.StatusCode);
@@ -119,21 +150,24 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
 
         var protectedPage = await GetAsync("/rendering-proof");
         Assert.Equal(302, protectedPage.Response.StatusCode);
-        Assert.StartsWith($"{(expectHttps ? "https" : "http")}://bujo.example.test/auth/sign-in",
+        Assert.StartsWith($"{(expectHttps ? "https" : "http")}://bujo.example.test/?ReturnUrl=",
             protectedPage.Response.Headers.Location.ToString());
     }
 
     [Fact]
-    public async Task StateChangingAccountEndpointsRejectMissingAntiforgery()
+    public async Task StateChangingAccountEndpointsRejectMissingOrInvalidAntiforgery()
     {
         using var signIn = await _client.PostAsync("/auth/sign-in", new FormUrlEncodedContent([]));
         Assert.Equal(HttpStatusCode.BadRequest, signIn.StatusCode);
+        using var invalid = await _client.PostAsync("/auth/sign-in",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = "invalid" }));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
     }
 
     [Fact]
     public async Task MissingHumanConfigurationDoesNotStartUnconfiguredOidc()
     {
-        var html = await _client.GetStringAsync("/auth/sign-in");
+        var html = await _client.GetStringAsync("/");
         var token = System.Text.RegularExpressions.Regex.Match(html,
             "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
         Assert.NotEmpty(token);
@@ -207,7 +241,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
             BaseAddress = new Uri("https://bujo.example.test"),
             AllowAutoRedirect = false
         });
-        var html = await client.GetStringAsync("/auth/sign-in");
+        var html = await client.GetStringAsync("/");
         var token = System.Text.RegularExpressions.Regex.Match(html,
             "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
         using var response = await client.PostAsync("/auth/sign-in",
@@ -274,7 +308,7 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         uiRequest.Headers.Add("Cookie", $"__Host-Bujo={value}");
         using var ui = await _client.SendAsync(uiRequest);
         Assert.Equal(HttpStatusCode.Redirect, ui.StatusCode);
-        Assert.StartsWith("https://localhost/auth/sign-in", ui.Headers.Location!.ToString());
+        Assert.StartsWith("https://localhost/?ReturnUrl=", ui.Headers.Location!.ToString());
     }
 
     [Fact]
@@ -303,6 +337,9 @@ public sealed class BffAuthorizationTests : IClassFixture<BffTestFactory>
         Assert.Contains("proof-input", html);
         Assert.Contains("<title>Connection proof · Bujo-AI</title>", html);
         Assert.DoesNotContain(token, html);
+        using var home = await client.GetAsync("/");
+        Assert.DoesNotContain("login.microsoftonline.com",
+            string.Join(" ", home.Headers.GetValues("Content-Security-Policy")));
         using var api = await client.GetAsync("/api/journal");
         Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
         Assert.Null(api.Headers.Location);
