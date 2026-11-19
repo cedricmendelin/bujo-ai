@@ -120,6 +120,12 @@ variable "foundry_enabled" {
   default     = false
 }
 
+variable "foundry_runtime_roles_enabled" {
+  type        = bool
+  description = "Assign Cognitive Services OpenAI User and Speech User to the runtime managed identity."
+  default     = false
+}
+
 variable "foundry_access_group" {
   type = object({
     object_id    = string
@@ -163,16 +169,22 @@ variable "foundry_deployments" {
       sku      = "DataZoneStandard"
       capacity = 1
     }
-    decision = {
-      model    = "gpt-5-mini"
-      version  = "2025-08-07"
+    sol = {
+      model    = "gpt-6.2-sol"
+      version  = "2026-11-17"
+      sku      = "DataZoneStandard"
+      capacity = 1
+    }
+    astra = {
+      model    = "gpt-6.2-astra"
+      version  = "2026-11-17"
       sku      = "DataZoneStandard"
       capacity = 1
     }
     embedding = {
-      model    = "text-embedding-3-small"
+      model    = "text-embedding-3-large"
       version  = "1"
-      sku      = "DataZoneStandard"
+      sku      = "Standard"
       capacity = 1
     }
   }

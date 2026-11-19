@@ -1,0 +1,488 @@
+@implements IAsyncDisposable
+
+<div class="chat-page" data-requires-circuit>
+    <div class="chat-heading">
+        <div>
+            <h1 tabindex="-1">Chat</h1>
+            <p>Ask for journal reads or propose a change. Mutations that need review wait for approval.</p>
+        </div>
+        <button type="button" class="chat-secondary" disabled="@_busy" @onclick="NewChatAsync">New chat</button>
+    </div>
+
+    <div class="chat-status" aria-live="polite" aria-atomic="true">
+        @_status
+    </div>
+
+    <section class="chat-thread" aria-label="Chat messages">
+        @if (_messages.Count == 0)
+        {
+            <div class="chat-empty">
+                <p>Try “what is today”, “capture Buy milk”, or “review list Projects”.</p>
+            </div>
+        }
+        @foreach (var message in _messages)
+        {
+            <article class="chat-message chat-message-@message.Role.ToString().ToLowerInvariant()">
+                <h2>@(message.Role == ChatRole.User ? "You" : "Bujo-AI")</h2>
+                <p class="chat-message-text">@message.Text</p>
+            </article>
+        }
+    </section>
+
+    @foreach (var card in _proposals)
+    {
+        <section class="chat-proposal" aria-labelledby="proposal-@card.ProposalId">
+            <h2 id="proposal-@card.ProposalId">Approval required</h2>
+            <p>@card.Summary</p>
+            <p>List: <a href="/lists/@card.Proposal.ListId">@card.ListName (@card.Proposal.ListId)</a> · version @card.Proposal.ExpectedListVersion</p>
+            <p>@(card.Proposal.RequestCloseList ? "Close this list after applying the changes." : "Keep this list open.")</p>
+            <ul>
+                @foreach (var entry in card.Changes)
+                {
+                    var change = entry.Change;
+                    <li>
+                        @change.Action · item @entry.ItemName (@change.ItemId) ·
+                        <a href="/items/@change.OccurrenceId">occurrence @change.OccurrenceId</a> · item version @change.ExpectedItemVersion
+                        @if (change.DestinationListId is { } destination)
+                        {
+                            <span> · destination <a href="/lists/@destination">@entry.DestinationName (@destination)</a> · version @change.ExpectedDestinationListVersion</span>
+                        }
+                    </li>
+                }
+            </ul>
+            <p class="journal-meta">Proposal expires @card.ExpiresAt.ToLocalTime().ToString("g")</p>
+            @if (card.State == "pending")
+            {
+                <div class="journal-actions">
+                    <button type="button" disabled="@_approvalBusy" @onclick="() => ApproveAsync(card)">Approve exact changes</button>
+                    <button type="button" class="chat-secondary" disabled="@_approvalBusy" @onclick="() => RejectAsync(card)">Reject</button>
+                    <button type="button" class="chat-secondary" disabled="@_approvalBusy" @onclick="() => CancelAsync(card)">Cancel</button>
+                </div>
+            }
+            else
+            {
+                <p class="journal-confirmation">@card.State</p>
+            }
+        </section>
+    }
+
+    <form class="chat-composer" method="post" data-journal-write @onsubmit="SendAsync" @onsubmit:preventDefault>
+        <label for="chat-message">Message</label>
+        <div class="chat-composer-row">
+            <textarea id="chat-message"
+                      rows="3"
+                      maxlength="4000"
+                      disabled="@_busy"
+                      @bind="_draft"
+                      @bind:event="oninput"></textarea>
+            <button type="button"
+                    class="chat-mic"
+                    disabled="@_busy"
+                    aria-pressed="@(_micRunning ? "true" : "false")"
+                    @onclick="ToggleMicrophoneAsync">
+                @(_micRunning ? "Stop" : "Speak")
+            </button>
+            <button type="submit" disabled="@(_busy || string.IsNullOrWhiteSpace(_draft))">Send</button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_micStatus))
+        {
+            <p class="journal-meta">@_micStatus</p>
+        }
+    </form>
+
+    @if (_busy)
+    {
+        <div class="chat-actions">
+            <button type="button" class="chat-secondary" @onclick="CancelRunAsync">Stop response</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Inject] private IChatRuntime Runtime { get; set; } = null!;
+    [Inject] private JournalApplicationService Journal { get; set; } = null!;
+    [Inject] private ReviewApplicationService Reviews { get; set; } = null!;
+    [Inject] private AuthenticationStateProvider Authentication { get; set; } = null!;
+    [Inject] private IJSRuntime JS { get; set; } = null!;
+    [Inject] private IAuthorizationService Authorization { get; set; } = null!;
+    [Inject] private NavigationManager Navigation { get; set; } = null!;
+
+    private readonly List<ChatMessage> _messages = [];
+    private readonly List<ChatTurn> _history = [];
+    private readonly List<ProposalCardState> _proposals = [];
+    private string _draft = "";
+    private string _status = "";
+    private string _micStatus = "";
+    private bool _busy;
+    private bool _approvalBusy;
+    private bool _micRunning;
+    private bool _speechSubmitted;
+    private CancellationTokenSource? _runCancellation;
+    private IJSObjectReference? _speechModule;
+    private DotNetObjectReference<ChatInterface>? _dotNetRef;
+    private Task<AuthenticationState> _initialAuthentication = null!;
+
+    protected override void OnInitialized()
+    {
+        _initialAuthentication = Authentication.GetAuthenticationStateAsync();
+        Authentication.AuthenticationStateChanged += AuthenticationChanged;
+    }
+
+    private void AuthenticationChanged(Task<AuthenticationState> state) =>
+        _ = InvokeAsync(async () =>
+        {
+            var initial = (await _initialAuthentication).User;
+            var current = (await state).User;
+            if (initial.FindFirst("tid")?.Value != current.FindFirst("tid")?.Value ||
+                initial.FindFirst("oid")?.Value != current.FindFirst("oid")?.Value ||
+                !(await Authorization.AuthorizeAsync(current, "ApprovedUi")).Succeeded)
+            {
+                Navigation.NavigateTo("/", forceLoad: true);
+            }
+        });
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _speechModule = await JS.InvokeAsync<IJSObjectReference>(
+                "import",
+                "./_content/Bujo.Web/js/speech.js");
+            _dotNetRef = DotNetObjectReference.Create(this);
+            StateHasChanged();
+        }
+        catch (JSException)
+        {
+            _micStatus = "Speech input is unavailable. Typed chat remains available.";
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (_busy || string.IsNullOrWhiteSpace(_draft))
+        {
+            return;
+        }
+
+        var text = _draft.Trim();
+        _draft = "";
+        await RunAsync(text);
+    }
+
+    private async Task RunAsync(string text)
+    {
+        _messages.Add(new ChatMessage(ChatRole.User, text));
+        _history.Add(new ChatTurn(ChatRole.User, text));
+        _busy = true;
+        _status = "Thinking";
+        _runCancellation?.Dispose();
+        _runCancellation = new CancellationTokenSource();
+
+        try
+        {
+            var principal = (await Authentication.GetAuthenticationStateAsync()).User;
+            var timeZone = await ReadTimeZoneAsync();
+            var result = await Runtime.RunAsync(
+                new ChatRunRequest(text, timeZone, _history.ToArray()),
+                principal,
+                _runCancellation.Token);
+
+            _messages.Add(new ChatMessage(ChatRole.Assistant, result.Text));
+            _history.Add(new ChatTurn(ChatRole.Assistant, result.Text));
+            _status = result.ToolCalls.Count == 0
+                ? "Done"
+                : result.ToolCalls.All(call => call.Succeeded) ? "Tools complete" : "A tool could not complete";
+
+            foreach (var proposal in result.Proposals)
+            {
+                if (_proposals.All(card => card.ProposalId != proposal.ProposalId))
+                {
+                    var actor = ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: false);
+                    var fetched = Reviews.GetProposal(proposal.ProposalId, actor);
+                    if (!fetched.IsSuccess || fetched.Value!.Status != ReviewProposalStatus.Pending ||
+                        !StringComparer.Ordinal.Equals(fetched.Value.Digest, proposal.Digest))
+                    {
+                        _status = "The proposal could not be verified. No approval is available.";
+                        continue;
+                    }
+
+                    var snapshot = Journal.GetSnapshot();
+                    var list = snapshot.Lists.SingleOrDefault(item =>
+                        item.Id == fetched.Value.ListId && item.Version == fetched.Value.ExpectedListVersion);
+                    var changes = new List<ProposalChangeState>();
+                    foreach (var change in fetched.Value.Changes)
+                    {
+                        var item = snapshot.Items.SingleOrDefault(candidate =>
+                            candidate.Id == change.ItemId && candidate.Version == change.ExpectedItemVersion);
+                        var destination = change.DestinationListId is { } id
+                            ? snapshot.Lists.SingleOrDefault(candidate =>
+                                candidate.Id == id && candidate.Version == change.ExpectedDestinationListVersion)
+                            : null;
+                        if (item is null || (change.DestinationListId is not null && destination is null))
+                        {
+                            changes.Clear();
+                            break;
+                        }
+                        changes.Add(new ProposalChangeState(change, item.Name, destination?.Name));
+                    }
+                    if (list is null || changes.Count != fetched.Value.Changes.Count)
+                    {
+                        _status = "The proposal is stale. Review the current journal before trying again.";
+                        continue;
+                    }
+
+                    _proposals.Add(new ProposalCardState(
+                        fetched.Value,
+                        proposal.Summary,
+                        list.Name,
+                        changes,
+                        "pending"));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _status = "Cancelled";
+        }
+        catch (Exception)
+        {
+            _status = "Error";
+            _messages.Add(new ChatMessage(ChatRole.Assistant,
+                "The chat run could not be completed. Your journal has not been replayed or rolled back."));
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CancelRunAsync()
+    {
+        _runCancellation?.Cancel();
+        if (_speechModule is not null)
+        {
+            await StopMicrophoneAsync();
+        }
+        await Task.CompletedTask;
+    }
+
+    private async Task NewChatAsync()
+    {
+        _runCancellation?.Cancel();
+        if (_speechModule is not null)
+        {
+            await StopMicrophoneAsync();
+        }
+
+        _messages.Clear();
+        _history.Clear();
+        _proposals.Clear();
+        _draft = "";
+        _status = "New chat";
+        _micStatus = "";
+    }
+
+    private async Task ToggleMicrophoneAsync()
+    {
+        if (_speechModule is null)
+        {
+            _micStatus = "Speech input is unavailable. Typed chat remains available.";
+            return;
+        }
+
+        if (_micRunning)
+        {
+            await StopMicrophoneAsync();
+            return;
+        }
+
+        try
+        {
+            _speechSubmitted = false;
+            await _speechModule.InvokeVoidAsync("startRecognition", _dotNetRef, "en-US");
+            _micRunning = true;
+            _micStatus = "Listening. Speak once; recognition language is en-US.";
+        }
+        catch (JSException)
+        {
+            _micRunning = false;
+            _micStatus = "Microphone access or recognition is unavailable. Typed chat remains available.";
+        }
+    }
+
+    private async Task StopMicrophoneAsync()
+    {
+        if (_speechModule is not null)
+        {
+            try { await _speechModule.InvokeVoidAsync("stopRecognition"); }
+            catch (JSException) { }
+        }
+        _micRunning = false;
+        _micStatus = "Microphone stopped.";
+    }
+
+    [JSInvokable]
+    public async Task ReceiveSpeechResult(string transcript)
+    {
+        if (_speechSubmitted || _busy)
+        {
+            return;
+        }
+
+        var text = transcript?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _micStatus = "No speech was recognized.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _speechSubmitted = true;
+        await StopMicrophoneAsync();
+        await InvokeAsync(() => RunAsync(text));
+    }
+
+    [JSInvokable]
+    public async Task ReceiveSpeechError(string code)
+    {
+        _micRunning = false;
+        _micStatus = code switch
+        {
+            "not-allowed" => "Microphone permission was denied. Typed chat remains available.",
+            "no-speech" => "No speech was heard. Try again or type a message.",
+            "audio-capture" => "No usable microphone was found. Typed chat remains available.",
+            "network" => "Speech recognition lost its network connection. Typed chat remains available.",
+            _ => "Speech recognition failed. Typed chat remains available."
+        };
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task ReceiveSpeechEnded()
+    {
+        _micRunning = false;
+        if (string.IsNullOrWhiteSpace(_micStatus) ||
+            _micStatus.StartsWith("Listening", StringComparison.Ordinal))
+        {
+            _micStatus = "Microphone stopped.";
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task<string?> ReadTimeZoneAsync()
+    {
+        try { return await JS.InvokeAsync<string?>("bujoPwa.getTimeZone"); }
+        catch (JSException) { return null; }
+    }
+
+    private async Task ApproveAsync(ProposalCardState card)
+    {
+        await ResolveProposalAsync(card, actor =>
+        {
+            var approved = Reviews.ApproveProposal(card.ProposalId, card.Digest, actor);
+            if (!approved.IsSuccess)
+            {
+                throw new DomainException(approved.Error!.Code, approved.Error.Message);
+            }
+
+            var applied = Reviews.ApplyProposal(card.ProposalId, actor);
+            if (!applied.IsSuccess)
+            {
+                throw new DomainException(applied.Error!.Code, applied.Error.Message);
+            }
+
+            return Task.FromResult(applied);
+        }, "Approved and applied.");
+    }
+
+    private async Task RejectAsync(ProposalCardState card) =>
+        await ResolveProposalAsync(card, actor =>
+            Task.FromResult(Reviews.RejectProposal(card.ProposalId, actor)),
+            "Rejected. No journal data changed.");
+
+    private async Task CancelAsync(ProposalCardState card) =>
+        await ResolveProposalAsync(card, actor =>
+            Task.FromResult(Reviews.CancelProposal(card.ProposalId, actor)),
+            "Cancelled. No journal data changed.");
+
+    private async Task ResolveProposalAsync(
+        ProposalCardState card,
+        Func<ReviewActor, Task<DomainResult<ReviewProposalSnapshot>>> action,
+        string confirmation)
+    {
+        if (_approvalBusy)
+        {
+            return;
+        }
+
+        _approvalBusy = true;
+        _status = "Applying proposal";
+        try
+        {
+            var principal = (await Authentication.GetAuthenticationStateAsync()).User;
+            var actor = ReviewActor.FromPrincipal(principal, ReviewProposalSource.Pwa, interactive: true);
+            var result = await action(actor);
+            if (!result.IsSuccess)
+            {
+                throw new DomainException(result.Error!.Code, result.Error.Message);
+            }
+            card.State = confirmation;
+            _status = confirmation;
+        }
+        catch (DomainException exception)
+        {
+            card.State = $"No change: {exception.Message}";
+            _status = card.State;
+        }
+        catch (Exception)
+        {
+            card.State = "Result unknown. Check the journal before trying again.";
+            _status = card.State;
+        }
+        finally
+        {
+            _approvalBusy = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Authentication.AuthenticationStateChanged -= AuthenticationChanged;
+        _runCancellation?.Cancel();
+        _runCancellation?.Dispose();
+        if (_speechModule is not null)
+        {
+            try { await _speechModule.InvokeVoidAsync("disposeRecognition"); }
+            catch (JSDisconnectedException) { }
+            catch (JSException) { }
+            await _speechModule.DisposeAsync();
+        }
+
+        _dotNetRef?.Dispose();
+    }
+
+    private sealed record ChatMessage(ChatRole Role, string Text);
+    private sealed record ProposalChangeState(ReviewChange Change, string ItemName, string? DestinationName);
+
+    private sealed class ProposalCardState(
+        ReviewProposalSnapshot proposal,
+        string summary,
+        string listName,
+        IReadOnlyList<ProposalChangeState> changes,
+        string state)
+    {
+        public ReviewProposalSnapshot Proposal { get; } = proposal;
+        public Guid ProposalId => Proposal.Id;
+        public string Digest => Proposal.Digest;
+        public string Summary { get; } = summary;
+        public string ListName { get; } = listName;
+        public IReadOnlyList<ProposalChangeState> Changes { get; } = changes;
+        public DateTimeOffset ExpiresAt => Proposal.ExpiresAt;
+        public string State { get; set; } = state;
+    }
+}

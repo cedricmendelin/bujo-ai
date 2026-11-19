@@ -214,6 +214,25 @@ main:has(> .auth-card) { padding: clamp(.25rem, 2vw, 1rem) 0; background: transp
 .journal-error p:first-child { margin-top: 0; }
 .journal-confirmation, .journal-busy, p[role="status"]:not(:empty) { padding: var(--space-3) var(--space-4); border-inline-start: 3px solid var(--sage); border-radius: var(--radius-control); background: var(--sage-soft); color: var(--sage); font-weight: 600; }
 .journal-confirmation:empty { margin: 0; padding: 0; border: 0; }
+.chat-page { display: grid; gap: 1rem; max-width: 52rem; margin-inline: auto; }
+.chat-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.chat-heading p { margin-block: .25rem 0; }
+.chat-thread { display: grid; gap: .75rem; min-height: 12rem; }
+.chat-empty { padding: 1rem; border: 1px dashed #aebdc5; border-radius: .35rem; }
+.chat-message { max-width: 42rem; padding: .75rem 1rem; border: 1px solid #cdd7dc; border-radius: .35rem; }
+.chat-message h2 { margin: 0 0 .25rem; font-size: 1rem; }
+.chat-message-user { justify-self: end; background: #edf6f3; }
+.chat-message-assistant { justify-self: start; background: #fff; }
+.chat-message-text { white-space: pre-wrap; margin: 0; }
+.chat-status { min-height: 1.5rem; color: #435963; font-weight: 650; }
+.chat-composer { display: grid; gap: .5rem; }
+.chat-composer-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+.chat-composer textarea { width: 100%; min-height: 6rem; resize: vertical; }
+.chat-mic { min-width: 6.5rem; }
+.chat-secondary { background: white; color: #075b82; border: 1px solid #526a76; }
+.chat-actions { display: flex; justify-content: flex-end; }
+.chat-proposal { padding: 1rem; border: 2px solid #8a4000; border-radius: .35rem; background: #fff3da; }
+.chat-proposal h2 { margin-top: 0; }
 #components-reconnect-modal { display: none; }
 #components-reconnect-modal :is(.reconnect-progress, [data-reload-page]) { display: none; }
 #components-reconnect-modal:is(.components-reconnect-show, .components-reconnect-retrying) .reconnect-progress,
@@ -248,6 +267,7 @@ main:has(> .auth-card) { padding: clamp(.25rem, 2vw, 1rem) 0; background: transp
     .site-header { justify-content: space-between; }
     nav { width: auto; }
     .auth-shell { padding-top: var(--space-7); }
+    .chat-composer-row { grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; }
 }
 
 @media (prefers-reduced-motion: reduce) {

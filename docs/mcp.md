@@ -11,6 +11,7 @@ is public and contains no credentials or journal data.
 | Tool | Purpose |
 |---|---|
 | `get_journal` | Read the journal snapshot and move history. |
+| `export_journal` | Read a versioned JSON export of lists, items, occurrences, and history. |
 | `get_daily_start` | Read daily-start results for an explicit IANA time zone. |
 | `get_upcoming` | Read the upcoming view for an explicit IANA time zone. |
 | `find_lists` | Find matching lists and return candidate IDs. |

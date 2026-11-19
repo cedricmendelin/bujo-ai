@@ -36,6 +36,15 @@ recorded decisions; read history only when prior work is relevant.
   Never transfer a necessary outcome, safeguard, compatibility contract or test.
 - If a genuinely necessary deviation is made, list it under
   `## Deviations from plan`; do not silently broaden scope.
+- When the owner makes a direct, explicit product or infrastructure decision,
+  preserve it as the current source of truth. If it changes an earlier accepted
+  decision, add or record a dated superseding entry that names the old decision,
+  the owner-approved replacement, and affected repository evidence. Reflect the
+  decision in the relevant code, configuration, tests, docs, PR description, and
+  `.squad/decisions.md` (through the configured Squad decision bridge where
+  applicable). The direct owner decision authorizes only its stated scope; do not
+  infer additional design or cost approvals. Specialist reviews must treat an
+  explicit dated superseding decision as resolved metadata, not a contradiction.
 - Add focused tests for behavior changes. Run build/tests and `terraform
   fmt`/`validate` when infrastructure changes.
 - Do not add Python test suites for infrastructure or deployment behavior.

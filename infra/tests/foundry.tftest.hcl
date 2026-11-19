@@ -115,23 +115,111 @@ run "foundry_enabled" {
   assert {
     condition = toset(keys(azurerm_cognitive_deployment.model)) == toset([
       "chat",
-      "decision",
+      "sol",
+      "astra",
       "embedding",
     ])
-    error_message = "Enabling Foundry must create only the chat, decision, and embedding deployments."
+    error_message = "Enabling Foundry must create only the chat, Sol, Astra, and embedding deployments."
   }
 
   assert {
     condition = alltrue([
       for deployment in values(azurerm_cognitive_deployment.model) :
-      deployment.sku[0].name == "DataZoneStandard" && deployment.sku[0].capacity == 1
+      deployment.sku[0].capacity == 1
     ])
-    error_message = "The proposed deployments must use low-capacity Data Zone Standard pay-per-token SKUs."
+    error_message = "The proposed deployments must use low-capacity pay-per-token SKUs."
+  }
+
+  assert {
+    condition = (
+      azurerm_cognitive_deployment.model["chat"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["sol"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["astra"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["embedding"].sku[0].name == "Standard"
+    )
+    error_message = "The GPT deployments must use Data Zone Standard and the embedding deployment must use Standard."
+  }
+
+  assert {
+    condition = (
+      azurerm_cognitive_deployment.model["chat"].model[0].name == "gpt-6.1-terra"
+      && azurerm_cognitive_deployment.model["chat"].model[0].version == "2026-10-26"
+      && azurerm_cognitive_deployment.model["sol"].model[0].name == "gpt-6.2-sol"
+      && azurerm_cognitive_deployment.model["sol"].model[0].version == "2026-11-17"
+      && azurerm_cognitive_deployment.model["astra"].model[0].name == "gpt-6.2-astra"
+      && azurerm_cognitive_deployment.model["astra"].model[0].version == "2026-11-17"
+      && azurerm_cognitive_deployment.model["embedding"].model[0].name == "text-embedding-3-large"
+      && azurerm_cognitive_deployment.model["embedding"].model[0].version == "1"
+    )
+    error_message = "The approved Foundry model names and versions must be preserved."
   }
 
   assert {
     condition     = length(regexall("(?mi)^output\\s+\"[^\"]*(foundry|cognitive|model)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
     error_message = "Foundry model endpoints, names, and credentials must not be added as Terraform outputs."
+  }
+}
+
+run "foundry_runtime_roles_disabled" {
+  command = plan
+
+  variables {
+    foundry_enabled               = true
+    foundry_runtime_roles_enabled = false
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.foundry_runtime) == 0
+    error_message = "Runtime role assignments must remain disabled unless the flag is explicitly enabled."
+  }
+}
+
+run "foundry_runtime_roles_enabled" {
+  command = plan
+
+  variables {
+    foundry_enabled               = true
+    foundry_runtime_roles_enabled = true
+  }
+
+  override_resource {
+    target          = azurerm_cognitive_account.foundry[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-foundry"
+    }
+  }
+
+  assert {
+    condition = toset(keys(azurerm_role_assignment.foundry_runtime)) == toset([
+      "Cognitive Services OpenAI User",
+      "Cognitive Services Speech User",
+    ])
+    error_message = "The runtime must receive exactly the OpenAI User and Speech User roles."
+  }
+
+  assert {
+    condition = alltrue([
+      for role, assignment in azurerm_role_assignment.foundry_runtime :
+      assignment.scope == azurerm_cognitive_account.foundry[0].id
+      && assignment.role_definition_name == role
+      && assignment.principal_type == "ServicePrincipal"
+    ])
+    error_message = "Runtime roles must use service-principal principals and Foundry account scope."
+  }
+}
+
+run "foundry_runtime_roles_disabled_with_foundry_disabled" {
+  command = plan
+
+  variables {
+    foundry_enabled               = false
+    foundry_runtime_roles_enabled = true
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.foundry_runtime) == 0
+    error_message = "Runtime role assignments must not exist when Foundry is disabled."
   }
 }
 

@@ -22,10 +22,15 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
         var (list, occurrence) = SeedLongContent(width);
         await using var context = await fixture.CreateContextAsync(width: width);
         var page = await context.NewPageAsync();
-        foreach (var path in new[] { "/", "/upcoming", "/capture", "/lists", $"/lists/{list.Id}", $"/lists/{list.Id}/review", $"/items/{occurrence.Id}", "/rendering-proof" })
+        foreach (var path in new[] { "/", "/today", "/upcoming", "/capture", "/lists", $"/lists/{list.Id}", $"/lists/{list.Id}/review", $"/items/{occurrence.Id}", "/rendering-proof" })
         {
             await page.GotoAsync(path);
-            if (path != "/rendering-proof")
+            if (path == "/")
+            {
+                await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Chat", Level = 1 })).ToBeVisibleAsync();
+                await Expect(page).ToHaveTitleAsync("Chat · Bujo-AI");
+            }
+            else if (path != "/rendering-proof")
                 await Expect(page.Locator(".notation-legend")).ToBeVisibleAsync();
             await page.WaitForFunctionAsync("() => window.bujoPwa?.writesAvailable()");
             await AssertLayoutAsync(page, path, width);
