@@ -88,6 +88,26 @@ test('manual recovery and continuation execute only from the default branch', ()
   }
 });
 
+test('compiled acceptance recovery binds its issue-only writer to the dispatch contract', () => {
+  const lock = read('.github/workflows/squad-acceptance-recovery.lock.yml');
+  assert.match(lock, /if: github\.ref_name == github\.event\.repository\.default_branch/);
+  for (const input of ['delivery_owner', 'issue_number', 'plan_id', 'pr_number']) {
+    const env = `GH_AW_INPUTS_${input.toUpperCase()}`;
+    assert.ok(lock.includes(`${env}: \${{ inputs.${input} }}`), `Missing value for ${input}`);
+    assert.ok(lock.includes(`"inputs.${input}":"${env}"`), `Missing prompt binding for ${input}`);
+  }
+  const agent = lock.split('\n  agent:')[1].split(/\n  \w+:/)[0];
+  assert.doesNotMatch(agent, /^\s+(?:issues|contents|pull-requests): write/m);
+  assert.match(agent, /"required": \[\s+"actions_json"\s+\][\s\S]*?"name": "append_acceptance_tracking"/);
+  const writer = lock.split('\n  append_acceptance_tracking:')[1].split(/\n  \w+:/)[0];
+  assert.match(writer, /issues: write/);
+  assert.doesNotMatch(writer, /(?:contents|pull-requests): write/);
+  assert.match(writer, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(writer, /GH_AW_AGENT_OUTPUT: \$\{\{ runner\.temp \}\}\/gh-aw\/safe-jobs\/agent_output\.json/);
+  assert.match(writer, /publishTracking\(\{ github, context, core, agentOutput: process\.env\.GH_AW_AGENT_OUTPUT \}\)/);
+  assert.match(lock, /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
+});
+
 test('controller preserves reviewer bypass boundaries, human blocks, CI, and no PR-code execution', () => {
   const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
   assert.match(lifecycle, /review:none/);

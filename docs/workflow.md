@@ -352,9 +352,22 @@ and concrete next action. Use `evidence:` on checked rows; use `open` or
 The controller checks that the issue is open and
 has an outstanding checklist before it reports merge readiness, including on
 the `review:none` path. It copies a quoted handoff once per changed
-remaining-work text as history; it does not edit the issue checklist or
-validate evidence on its own. If you corrected only the issue, the hourly fallback re-evaluates eligible
-PRs, or you can run **Squad PR Lifecycle** with the PR number immediately.
+remaining-work text as history. Before handing off a partial PR, the delivery
+agent updates the checklist. If it is missing, the controller can request
+**Squad Acceptance Recovery** once per issue and approved plan. The issue-only
+agent acts in the approved plan owner's role and proposes next actions. A
+separate writer rechecks the request and live records, then appends the original
+acceptance criteria as unchecked rows. It cannot change code, mark a criterion
+complete, replace an existing checklist, or reset the implementation repair
+budget. The delivery owner still records verified evidence.
+
+Automatic recovery needs a flat `## Acceptance criteria` bullet list and an
+approved, cloud-eligible handoff. If the checklist already exists but is
+invalid, recovery is ineligible, or the one attempt fails, the lifecycle
+reports what the delivery owner needs to correct instead of repeatedly
+dispatching. A completion event re-evaluates the PR; the hourly fallback or
+manual **Squad PR Lifecycle** dispatch also picks up checklist corrections.
+Conflicts, CI, and all other review gates still apply.
 
 If GitHub records the issue as completed while the checklist still has
 unchecked criteria, the closure check posts a warning. It does not reopen
