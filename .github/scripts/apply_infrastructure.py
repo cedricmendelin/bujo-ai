@@ -12,10 +12,42 @@ class InfrastructureError(RuntimeError):
     pass
 
 
-def command(label, args, *, env=None):
-    result = subprocess.run(args, capture_output=True, text=True, env=env, timeout=1800)
+REDACT_ENVIRONMENT_KEYS = (
+    "ARM_SUBSCRIPTION_ID",
+    "ARM_TENANT_ID",
+    "ARM_CLIENT_ID",
+    "TF_VAR_sql_entra_admin_object_id",
+    "TF_VAR_sql_entra_admin_login",
+    "TF_VAR_auth_allowed_principal_object_ids",
+    "TF_VAR_budget_alert_email",
+    "TFSTATE_STORAGE_ACCOUNT",
+    "TFSTATE_CONTAINER",
+)
+
+
+def redact_output(text):
+    for key in REDACT_ENVIRONMENT_KEYS:
+        value = os.environ.get(key)
+        if value:
+            text = text.replace(value, "[REDACTED]")
+    return text
+
+
+def command(label, args, *, env=None, visible=False):
+    result = subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        timeout=1800,
+    )
+    output = redact_output(result.stdout or "")
+    if visible:
+        if output:
+            print(output, end="" if output.endswith("\n") else "\n", flush=True)
     if result.returncode:
-        raise InfrastructureError(f"{label} failed (exit {result.returncode}); raw output withheld.")
+        raise InfrastructureError(f"{label} failed (exit {result.returncode}).")
     return result.stdout
 
 
@@ -68,11 +100,11 @@ def apply_infrastructure(*, always):
         command("Terraform infrastructure plan", [
             *tf, "plan", "-input=false", "-no-color", "-lock-timeout=5m", "-var-file=prod.tfvars",
             f"-var=bootstrap_only={'true' if job_image is None else 'false'}", f"-out={plan}",
-        ], env=env)
+        ], env=env, visible=True)
         print("Applying the saved infrastructure plan.", flush=True)
         command("Terraform infrastructure apply", [
             *tf, "apply", "-input=false", "-no-color", "-lock-timeout=5m", str(plan),
-        ])
+        ], env=env, visible=True)
         marker.write_text(revision + "\n", encoding="ascii")
         az("storage", "blob", "upload", *blob, "--file", str(marker), "--overwrite", "true")
         print("Infrastructure applied.", flush=True)
