@@ -103,6 +103,10 @@ The AppHost's SQL data volume persists across local runs. Its `--migrate`
 argument applies EF migrations only while the host runs in Development. The
 production host does not run migrations at startup; production deployment uses
 the dedicated `--migrate-only` job entry point before promoting an app revision.
+SQL Server full-text catalog DDL cannot run inside an EF migration transaction;
+keep it transaction-suppressed. KnowledgeEntries full-text creation is a
+separate idempotent migration so failures can be retried safely. Cover its
+generated SQL with migration-script tests.
 The Aspire dashboard shows the host and SQL resource status. Of the health
 endpoints, only `/health/live` allows anonymous access; `/health/ready` is
 protected by the approved-principal policy and returns no response body.

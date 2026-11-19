@@ -54,33 +54,11 @@ public sealed class AddKnowledgeEntries : Migration
             table: "KnowledgeEntryTags",
             column: "NormalizedValue");
 
-        migrationBuilder.Sql("""
-            IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') = 1
-            BEGIN
-                EXEC(N'
-                    IF NOT EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N''KnowledgeCatalog'')
-                        CREATE FULLTEXT CATALOG [KnowledgeCatalog];
-
-                    IF NOT EXISTS (
-                        SELECT 1 FROM sys.fulltext_indexes
-                        WHERE object_id = OBJECT_ID(N''dbo.KnowledgeEntries''))
-                    BEGIN
-                        CREATE FULLTEXT INDEX ON dbo.KnowledgeEntries
-                        (
-                            Content LANGUAGE 1033,
-                            Title LANGUAGE 1033
-                        )
-                        KEY INDEX PK_KnowledgeEntries
-                        ON [KnowledgeCatalog]
-                        WITH CHANGE_TRACKING AUTO;
-                    END
-                ');
-            END
-            """);
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
+        // Preserve rollback for databases that applied this migration before full-text setup was split out.
         migrationBuilder.Sql("""
             IF FULLTEXTSERVICEPROPERTY('IsFullTextInstalled') = 1
             BEGIN
@@ -95,7 +73,8 @@ public sealed class AddKnowledgeEntries : Migration
                         DROP FULLTEXT CATALOG [KnowledgeCatalog];
                 ');
             END
-            """);
+            """,
+            suppressTransaction: true);
         migrationBuilder.DropTable(name: "KnowledgeEntryTags");
         migrationBuilder.DropTable(name: "KnowledgeEntries");
     }
