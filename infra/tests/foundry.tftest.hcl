@@ -115,18 +115,29 @@ run "foundry_enabled" {
   assert {
     condition = toset(keys(azurerm_cognitive_deployment.model)) == toset([
       "chat",
-      "decision",
+      "sol",
+      "astra",
       "embedding",
     ])
-    error_message = "Enabling Foundry must create only the chat, decision, and embedding deployments."
+    error_message = "Enabling Foundry must create only the chat, Sol, Astra, and embedding deployments."
   }
 
   assert {
     condition = alltrue([
       for deployment in values(azurerm_cognitive_deployment.model) :
-      deployment.sku[0].name == "DataZoneStandard" && deployment.sku[0].capacity == 1
+      deployment.sku[0].capacity == 1
     ])
-    error_message = "The proposed deployments must use low-capacity Data Zone Standard pay-per-token SKUs."
+    error_message = "The proposed deployments must use low-capacity pay-per-token SKUs."
+  }
+
+  assert {
+    condition = (
+      azurerm_cognitive_deployment.model["chat"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["sol"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["astra"].sku[0].name == "DataZoneStandard"
+      && azurerm_cognitive_deployment.model["embedding"].sku[0].name == "Standard"
+    )
+    error_message = "The GPT deployments must use Data Zone Standard and the embedding deployment must use Standard."
   }
 
   assert {

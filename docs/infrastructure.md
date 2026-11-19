@@ -148,9 +148,10 @@ substitute another model or deployment type.
 
 | Purpose | Approved model and version | Catalog / Data Zone Standard availability | Capacity | Public price assumption (USD per 1M tokens) | Fallback if Data Zone Standard is unavailable |
 | --- | --- | --- | ---: | --- | --- |
-| Chat | `gpt-6.1-terra` / `2026-10-26` | Microsoft GA announcement lists EU Data Zone Standard; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $1.10; output $5.50; Data Zone row not independently verified | No automatic fallback; owner must verify and approve an available alternative |
-| Decision | `gpt-5-mini` / `2025-08-07` | GA; Data Zone Standard listed; exact Switzerland North version/SKU/quota not verified | 1 | Indexed pricing: input $0.28 (cached $0.03); output $2.20 | No automatic fallback; do not assume `Standard` is offered for GPT models in Switzerland North |
-| Embedding | `text-embedding-3-small` / `1` | Azure model; exact Switzerland North version/SKU/quota not verified | 1 | Assumed input $0.022; verify billing units and Data Zone price row | No automatic fallback; owner must verify and approve an available alternative |
+| Chat | `gpt-6.1-terra` / `2026-10-26` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Sol | `gpt-6.2-sol` / `2026-11-17` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Astra | `gpt-6.2-astra` / `2026-11-17` | Owner-selected production deployment; Data Zone Standard | 1 | Verify current pricing | No automatic fallback |
+| Embedding | `text-embedding-3-large` / `1` | Owner-selected production deployment; Standard | 1 | Verify current pricing | No automatic fallback |
 
 The public Azure OpenAI pricing page is the source to recheck these assumptions;
 the figures above are not an approved quote. The owner approved a monthly
