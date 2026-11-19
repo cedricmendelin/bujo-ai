@@ -267,6 +267,40 @@ because this stylesheet is precached; its static allowlist and exclusion of
 navigation/auth/journal/API responses are unchanged. This is presentation-only:
 no API endpoint or MCP tool contract changes are needed.
 
+#### UI verification and screenshots
+
+The issue #135 verification used Chromium, synthetic authentication and fixture
+data only. The Release solution build completed with zero warnings/errors; all
+190 tests passed (15 application, 66 domain, 63 integration, 46 E2E), including
+the existing journal, connection, authentication and MCP contract scenarios.
+
+`JournalPresentationTests` checks journal pages, list review, diagnostics,
+signed-out Home and all app-owned account pages at 320, 390 and 1280 CSS pixels:
+no page overflow, at least 44×44 clickable targets (including checkbox labels),
+and zero axe violations. Keyboard checks cover opening/closing the legend with
+Enter, tabbing to the capture input and sign-in button, visible focus, and
+server-confirmed capture. Forced-colors/reduced-motion emulation checks readable
+state labels, abandoned strike-through, confirmation boundaries and disabled
+animation/transitions. The contrast measurements are recorded above. These
+checks do not establish live Entra authentication or target-device installation.
+
+The before images use original source
+`46ca82955eb6fc26838a057a6a81445da62996ec`; the after images show this refresh.
+Images contain fixture data only, never Microsoft-hosted sign-in pages.
+
+| Screen/state | Mobile before (390px) | Mobile after (390px) | Desktop before (1280px) | Desktop after (1280px) |
+| --- | --- | --- | --- | --- |
+| Today, planned item | [Before](images/ui-135/before/390-today.png) | [After](images/ui-135/after/390-today.png) | [Before](images/ui-135/before/1280-today.png) | [After](images/ui-135/after/1280-today.png) |
+| Today, empty groups | [Before](images/ui-135/before/390-today-empty.png) | [After](images/ui-135/after/390-today-empty.png) | [Before](images/ui-135/before/1280-today-empty.png) | [After](images/ui-135/after/1280-today-empty.png) |
+| Capture | [Before](images/ui-135/before/390-capture.png) | [After](images/ui-135/after/390-capture.png) | [Before](images/ui-135/before/1280-capture.png) | [After](images/ui-135/after/1280-capture.png) |
+| List | [Before](images/ui-135/before/390-list.png) | [After](images/ui-135/after/390-list.png) | [Before](images/ui-135/before/1280-list.png) | [After](images/ui-135/after/1280-list.png) |
+| Item/history | [Before](images/ui-135/before/390-item-history.png) | [After](images/ui-135/after/390-item-history.png) | [Before](images/ui-135/before/1280-item-history.png) | [After](images/ui-135/after/1280-item-history.png) |
+| Validation error | [Before](images/ui-135/before/390-error.png) | [After](images/ui-135/after/390-error.png) | [Before](images/ui-135/before/1280-error.png) | [After](images/ui-135/after/1280-error.png) |
+| Connection loss, unsaved draft | [Before](images/ui-135/before/390-offline.png) | [After](images/ui-135/after/390-offline.png) | [Before](images/ui-135/before/1280-offline.png) | [After](images/ui-135/after/1280-offline.png) |
+| App-owned sign-in | [Before](images/ui-135/before/390-sign-in.png) | [After](images/ui-135/after/390-sign-in.png) | [Before](images/ui-135/before/1280-sign-in.png) | [After](images/ui-135/after/1280-sign-in.png) |
+| Signed-out Home | [Before](images/ui-135/before/390-signed-out-home.png) | [After](images/ui-135/after/390-signed-out-home.png) | [Before](images/ui-135/before/1280-signed-out-home.png) | [After](images/ui-135/after/1280-signed-out-home.png) |
+| Signed-out confirmation | [Before](images/ui-135/before/390-signed-out.png) | [After](images/ui-135/after/390-signed-out.png) | [Before](images/ui-135/before/1280-signed-out.png) | [After](images/ui-135/after/1280-signed-out.png) |
+
 ### Owner-operated proof gate
 
 Interactive Server with static SSR where appropriate is Accepted in
