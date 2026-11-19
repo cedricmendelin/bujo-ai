@@ -11,6 +11,38 @@ The Foundry account, project, and model deployments are enabled in
 model/region/SKU settings and owner-managed runtime identity grant are
 documented in [Optional Microsoft Foundry model provider](../docs/infrastructure.md#optional-microsoft-foundry-model-provider).
 Provisioning these resources does not enable model inference or journal access.
+The owner approved this configuration after issue #128 plan v1's disabled
+milestone A; the rollout issue remains open for live verification.
+
+`foundry_access_group` can reference an existing Entra group, but production
+sets it to `null` so Terraform does not attempt group role assignments. The
+group and its membership are never managed or looked up by Terraform.
+
+When enabled with a configured group, Terraform assigns **Cognitive Services
+OpenAI User** and **Foundry User** (the renamed **Azure AI User** role) at the
+Foundry account scope. The production configuration leaves these group roles
+external; an authorized administrator can assign them manually if needed. The
+runtime identity's OpenAI User role is a separate manual grant before inference.
+Do not grant role-assignment permissions to GitHub OIDC; Contributor cannot
+create role assignments, even at subscription scope.
+
+Before the next apply, verify current model/region/SKU availability, quota and
+pricing. Follow the [remaining evidence checklist](../docs/infrastructure.md#remaining-work-and-acceptance-evidence)
+for an enabled plan, workflow apply, and sanitized account-scoped role
+verification.
+
+Local checks (from this directory):
+
+```sh
+terraform init -backend=false -input=false -lockfile=readonly
+terraform fmt -check -recursive
+terraform validate
+terraform test
+```
+
+The Foundry mock contracts run through `terraform test`; no Python test suite
+is used for infrastructure or deployment behavior. Mock tests do not establish
+live Azure provisioning.
 
 ## PWA BFF client
 

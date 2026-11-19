@@ -74,6 +74,7 @@ run "foundry_disabled" {
       length(azurerm_cognitive_account.foundry) == 0
       && length(azurerm_cognitive_account_project.foundry) == 0
       && length(azurerm_cognitive_deployment.model) == 0
+      && length(azurerm_role_assignment.foundry_group) == 0
     )
     error_message = "The default-disabled Foundry configuration must plan no Foundry resources."
   }
@@ -84,6 +85,11 @@ run "foundry_enabled" {
 
   variables {
     foundry_enabled = true
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.foundry_group) == 0
+    error_message = "An unset group must not create role assignments, even when Foundry is enabled."
   }
 
   assert {
@@ -127,6 +133,95 @@ run "foundry_enabled" {
     condition     = length(regexall("(?mi)^output\\s+\"[^\"]*(foundry|cognitive|model)[^\"]*\"", file("${path.root}/outputs.tf"))) == 0
     error_message = "Foundry model endpoints, names, and credentials must not be added as Terraform outputs."
   }
+}
+
+run "foundry_disabled_with_group" {
+  command = plan
+
+  variables {
+    foundry_access_group = {
+      object_id    = "00000000-0000-0000-0000-000000000009"
+      display_name = "test-foundry-users"
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.foundry_group) == 0
+    error_message = "A configured group must not create role assignments while Foundry is disabled."
+  }
+}
+
+run "foundry_enabled_with_group" {
+  command = plan
+
+  variables {
+    foundry_enabled = true
+    foundry_access_group = {
+      object_id    = "00000000-0000-0000-0000-000000000009"
+      display_name = "test-foundry-users"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_cognitive_account.foundry[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-foundry"
+    }
+  }
+
+  assert {
+    condition = toset(keys(azurerm_role_assignment.foundry_group)) == toset([
+      "Cognitive Services OpenAI User",
+      "Foundry User",
+    ])
+    error_message = "Only the two approved non-management group roles may be assigned."
+  }
+
+  assert {
+    condition = alltrue([
+      for role, assignment in azurerm_role_assignment.foundry_group :
+      assignment.scope == azurerm_cognitive_account.foundry[0].id
+      && assignment.role_definition_name == role
+      && assignment.principal_type == "Group"
+      && assignment.principal_id == var.foundry_access_group.object_id
+      && assignment.principal_id != var.deployment_client_id
+      && assignment.principal_id != data.azuread_service_principal.deployment[0].object_id
+      && assignment.name == uuidv5("url", "${lower(azurerm_cognitive_account.foundry[0].id)}/${lower(var.foundry_access_group.object_id)}/${role}")
+    ])
+    error_message = "Roles must have stable names, target only the configured group, and use the Foundry account scope, never the deployment identity."
+  }
+
+  assert {
+    condition     = length(regexall("(?mi)^\\s*(resource|data)\\s+\"azuread_group", join("\n", [for name in fileset(path.root, "*.tf") : file("${path.root}/${name}")]))) == 0
+    error_message = "Foundry access must not create, manage membership of, or look up Entra groups."
+  }
+}
+
+run "foundry_invalid_group_guid_rejected" {
+  command = plan
+
+  variables {
+    foundry_access_group = {
+      object_id    = "not-a-guid"
+      display_name = "test-foundry-users"
+    }
+  }
+
+  expect_failures = [var.foundry_access_group]
+}
+
+run "foundry_blank_group_name_rejected" {
+  command = plan
+
+  variables {
+    foundry_access_group = {
+      object_id    = "00000000-0000-0000-0000-000000000009"
+      display_name = "   "
+    }
+  }
+
+  expect_failures = [var.foundry_access_group]
 }
 
 run "foundry_empty_deployments_rejected" {

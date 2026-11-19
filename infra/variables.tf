@@ -120,6 +120,23 @@ variable "foundry_enabled" {
   default     = false
 }
 
+variable "foundry_access_group" {
+  type = object({
+    object_id    = string
+    display_name = string
+  })
+  description = "Existing Entra group for account-scoped Foundry access; null leaves group role assignments external. Terraform does not manage or look up the group."
+  default     = null
+
+  validation {
+    condition = var.foundry_access_group == null ? true : (
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.foundry_access_group.object_id))
+      && try(trimspace(var.foundry_access_group.display_name) != "", false)
+    )
+    error_message = "foundry_access_group must be null or contain a GUID object_id and a non-empty display_name."
+  }
+}
+
 variable "foundry_location" {
   type        = string
   description = "Azure region for the optional Foundry account and project."

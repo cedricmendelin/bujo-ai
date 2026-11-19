@@ -505,5 +505,7 @@
   planning assumption. It is not a cost cap; the $50 budget only alerts.
 - The owner will manually grant `Cognitive Services OpenAI User` to the runtime
   Container App identity at the Foundry account scope before inference.
-  Terraform does not manage that role assignment; provisioning does not enable
-  the application adapter or authorize sending journal data.
+  Terraform does not manage that role assignment. Production leaves
+  `foundry_access_group = null`, so group roles also remain external and the
+  GitHub OIDC permissions are unchanged. Provisioning does not enable the
+  application adapter or authorize sending journal data.
