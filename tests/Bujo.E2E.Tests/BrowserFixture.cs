@@ -35,6 +35,7 @@ public sealed class BrowserFixture : IAsyncLifetime
     public IBrowser Browser { get; private set; } = null!;
     public string BaseUrl => _client.BaseAddress!.ToString().TrimEnd('/');
     internal BrowserJournalRepository Journal => _factory.Journal;
+    internal BrowserClock Clock => _factory.Clock;
     internal InMemoryKnowledgeRepository Knowledge => _factory.Knowledge;
 
     public async Task InitializeAsync()
@@ -90,6 +91,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
     private readonly string _approvedObject = Guid.NewGuid().ToString("D");
     private readonly string _clientId = Guid.NewGuid().ToString("D");
     internal BrowserJournalRepository Journal { get; } = new();
+    internal BrowserClock Clock { get; } = new();
     internal InMemoryKnowledgeRepository Knowledge { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -118,7 +120,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
                 provider.GetRequiredService<IJournalRepository>(),
                 provider.GetRequiredService<IKnowledgeRepository>()));
-            services.AddSingleton<TimeProvider>(new BrowserClock());
+            services.AddSingleton<TimeProvider>(Clock);
             services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
             {
                 options.ClientId = _clientId;
@@ -159,7 +161,15 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
 
 internal sealed class BrowserClock : TimeProvider
 {
-    public override DateTimeOffset GetUtcNow() => new(2026, 11, 18, 23, 30, 0, TimeSpan.Zero);
+    private long _utcNowTicks = new DateTimeOffset(2026, 11, 18, 23, 30, 0, TimeSpan.Zero).Ticks;
+
+    public DateTimeOffset UtcNow
+    {
+        get => new(Interlocked.Read(ref _utcNowTicks), TimeSpan.Zero);
+        set => Interlocked.Exchange(ref _utcNowTicks, value.ToUniversalTime().Ticks);
+    }
+
+    public override DateTimeOffset GetUtcNow() => UtcNow;
 }
 
 internal sealed record ProofIdentity(string Tenant, string ApprovedObject);
