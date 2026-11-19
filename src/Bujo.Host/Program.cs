@@ -128,6 +128,7 @@ var connectionString = builder.Configuration.GetConnectionString("journal")
 builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
 builder.Services.Configure<ChatOptions>(builder.Configuration.GetSection(ChatOptions.SectionName));
+builder.Services.AddSingleton<ChatConversationStateStore>();
 builder.Services.AddHttpClient("ChatProvider");
 builder.Services.AddHttpClient("ChatSpeech");
 builder.Services.AddScoped<IChatRuntime, ChatRuntime>();

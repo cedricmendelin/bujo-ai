@@ -113,6 +113,7 @@
     private string _draft = "";
     private string _status = "";
     private string _micStatus = "";
+    private string _conversationId = Guid.NewGuid().ToString("D");
     private bool _busy;
     private bool _approvalBusy;
     private bool _micRunning;
@@ -188,7 +189,7 @@
             var principal = (await Authentication.GetAuthenticationStateAsync()).User;
             var timeZone = await ReadTimeZoneAsync();
             var result = await Runtime.RunAsync(
-                new ChatRunRequest(text, timeZone, _history.ToArray()),
+                new ChatRunRequest(text, timeZone, _history.ToArray(), _conversationId),
                 principal,
                 _runCancellation.Token);
 
@@ -282,6 +283,7 @@
         _messages.Clear();
         _history.Clear();
         _proposals.Clear();
+        _conversationId = Guid.NewGuid().ToString("D");
         _draft = "";
         _status = "New chat";
         _micStatus = "";

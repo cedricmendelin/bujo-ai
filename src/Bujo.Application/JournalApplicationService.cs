@@ -43,6 +43,29 @@ public sealed class JournalApplicationService
             : DomainResult<UpcomingPlan>.Failure(timeZone.Error!);
     }
 
+    public DomainResult<IsoWeekKey> GetNextWeek(string? timeZoneId)
+    {
+        var timeZone = FindTimeZone(timeZoneId);
+        if (!timeZone.IsSuccess)
+        {
+            return DomainResult<IsoWeekKey>.Failure(timeZone.Error!);
+        }
+
+        try
+        {
+            var localToday = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTime(_clock.GetUtcNow(), timeZone.Value!).DateTime);
+            var nextMonday = IsoWeekKey.FromDate(localToday).Monday.AddDays(7);
+            return DomainResult<IsoWeekKey>.Success(IsoWeekKey.FromDate(nextMonday));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return DomainResult<IsoWeekKey>.Failure(new DomainError(
+                DomainErrorCode.InvalidInput,
+                "The next ISO week is outside the supported calendar range."));
+        }
+    }
+
     public DomainResult<JournalListSnapshot> CreateList(
         string name,
         JournalListKind kind,

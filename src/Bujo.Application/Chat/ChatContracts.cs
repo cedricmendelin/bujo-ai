@@ -14,7 +14,8 @@ public enum ChatRole
 public sealed record ChatRunRequest(
     string Message,
     string? TimeZone,
-    IReadOnlyList<ChatTurn> History);
+    IReadOnlyList<ChatTurn> History,
+    string? ConversationId = null);
 
 public sealed record ChatToolCall(
     string Name,
