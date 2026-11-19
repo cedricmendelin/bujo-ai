@@ -110,22 +110,17 @@ Search results carry the stable entry ID, original content passage, title,
 source reference, tags, and timestamps so an assistant can identify saved
 evidence. Saved entries are untrusted user data, not tool instructions.
 
-Knowledge export currently uses a versioned knowledge snapshot containing
-original content, IDs, source, tags, archive state, timestamps, and concurrency
-versions. The authenticated API exposes `GET /api/knowledge/export` and
-`POST /api/knowledge/restore`; the PWA provides export and restore controls.
-Restore validates the complete knowledge snapshot before writing, rejects
-duplicate IDs/tags, and replaces the knowledge set atomically.
-Snapshots are limited to 10,000 entries and 25 MB; export reports an explicit
-size error rather than emitting a snapshot that restore cannot accept.
-
-The repository did not have a journal-wide backup/export/restore contract when
-this capability was implemented. The knowledge-only endpoints therefore do
-not claim to back up or restore journal lists and items, nor do they yet make
-knowledge a section of a whole-journal backup. Integrating this versioned
-knowledge section with a journal-wide backup format remains required before
-the full backup acceptance criterion is complete. Older full-journal snapshots
-are not currently accepted by these knowledge-only endpoints.
+Journal export uses a versioned whole-state snapshot containing journal items,
+lists, occurrences, move history, and a knowledge section with original
+content, IDs, source, tags, archive state, timestamps, and concurrency
+versions. The authenticated API exposes `GET /api/journal/export` and
+`POST /api/journal/restore`; the PWA provides journal export and restore
+controls. Restore validates the complete snapshot before writing, rejects
+duplicate IDs/tags, and atomically replaces the journal and knowledge state.
+Legacy snapshots without a knowledge section remain valid and leave the
+current knowledge collection unchanged. Snapshots are limited to 50 MB and
+10,000 knowledge entries; export reports an explicit size error rather than
+emitting a snapshot that restore cannot accept.
 
 The SQL Server migration creates a full-text catalog and English (LCID 1033)
 full-text index when the database supports full-text search. The DDL is guarded
