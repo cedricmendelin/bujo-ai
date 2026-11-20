@@ -3,6 +3,7 @@ using Bujo.Host;
 using Bujo.Host.Authentication;
 using Bujo.Web;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Bujo.Infrastructure;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using ModelContextProtocol.AspNetCore;
 using Bujo.Host.Mcp;
@@ -128,6 +130,7 @@ var connectionString = builder.Configuration.GetConnectionString("journal")
 builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
 builder.Services.Configure<ChatOptions>(builder.Configuration.GetSection(ChatOptions.SectionName));
+builder.Services.AddSingleton<ChatConversationStateStore>();
 builder.Services.AddHttpClient("ChatProvider");
 builder.Services.AddHttpClient("ChatSpeech");
 builder.Services.AddScoped<IChatRuntime, ChatRuntime>();
@@ -181,11 +184,24 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/auth/error");
     app.UseHsts();
 }
+app.UseMcpRequestSecurity();
+app.UseAuthentication();
 app.Use(async (context, next) =>
 {
-    // Chromium applies form-action to redirects of the sign-in POST as well.
-    var formAction = context.Request.Path.Equals("/auth/sign-in", StringComparison.OrdinalIgnoreCase)
-        ? "'self' https://login.microsoftonline.com" : "'self'";
+    // Chromium applies form-action from Home to redirects of its sign-in POST.
+    var formAction = "'self'";
+    if (context.Request.Path.Equals("/", StringComparison.Ordinal) &&
+        HttpMethods.IsGet(context.Request.Method) &&
+        context.User.Identity?.IsAuthenticated != true)
+    {
+        var authority = context.RequestServices.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>()
+            .Get(BffAuthentication.OidcScheme).Authority;
+        if (Uri.TryCreate(authority, UriKind.Absolute, out var providerUri) &&
+            providerUri.Scheme == Uri.UriSchemeHttps)
+        {
+            formAction += $" {providerUri.GetLeftPart(UriPartial.Authority)}";
+        }
+    }
     context.Response.Headers.ContentSecurityPolicy =
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
         $"connect-src 'self'; object-src 'none'; base-uri 'self'; form-action {formAction}; frame-ancestors 'none'";
@@ -198,8 +214,6 @@ app.Use(async (context, next) =>
         context.Response.Headers.CacheControl = "no-store, private";
     await next();
 });
-app.UseMcpRequestSecurity();
-app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();

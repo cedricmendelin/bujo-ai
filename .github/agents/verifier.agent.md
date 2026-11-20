@@ -17,6 +17,13 @@ the Copilot conversation without an issue plan or waiver label.
 - Check every acceptance criterion and planned test: is it implemented and
   covered by an automated test that would fail without the change?
 - Check CI evidence: the build and tests ran and passed for the current head.
+- Check user documentation as acceptance evidence for every feature: the same
+  PR updates affected app usage, MCP usage, and product concept/why docs, with
+  working references and examples consistent with delivered behavior,
+  prerequisites, and limitations. Accept an explicit N/A only with a reason
+  supported by the diff for each unaffected surface. Missing or misleading
+  affected guidance and unsupported N/A claims are blocking; do not demand
+  unrelated rewrites or documentation for unshipped proposals.
 - Block on: unmet acceptance criteria within the agreed delivery, missing tests for new behavior, tests
   that cannot fail, broken edge cases named in the plan, or data-loss risks.
 - Unmet criteria for a PR that declares full completion or contains a closing

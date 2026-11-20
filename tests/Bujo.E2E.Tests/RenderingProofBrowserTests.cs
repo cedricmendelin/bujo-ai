@@ -169,7 +169,7 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
     }
 
     [Theory]
-    [InlineData(null, "/auth/sign-in")]
+    [InlineData(null, "/")]
     [InlineData("deny", "/auth/denied")]
     public async Task AnonymousAndUnapprovedAccountsCannotSeeTheProof(string? identity, string expectedPath)
     {
@@ -294,7 +294,10 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
         var page = await context.NewPageAsync();
         var pageErrors = new List<string>();
         var consoleErrors = new List<string>();
+        var observedRequests = new List<string>();
         page.PageError += (_, error) => pageErrors.Add(error);
+        page.Request += (_, request) => observedRequests.Add($"{request.Method} {request.Url}");
+        page.Response += (_, response) => observedRequests.Add($"{response.Status} {response.Url}");
         page.Console += (_, message) =>
         {
             if (message.Type == "error") consoleErrors.Add(message.Text);
@@ -312,9 +315,21 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
             .Select(argument => argument.GetString()).ToArray();
         Assert.Contains(BrowserFixture.IdentityHostDenialRule, arguments);
         Assert.Contains("--no-proxy-server", arguments);
-        await page.GotoAsync("/auth/sign-in");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
-        var failedRequest = await blockedRequest.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await page.GotoAsync("/");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in to your journal", Exact = true }).ClickAsync();
+        IRequest failedRequest;
+        try
+        {
+            failedRequest = await blockedRequest.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch (TimeoutException)
+        {
+            output.WriteLine($"Current URL: {page.Url}");
+            output.WriteLine(await page.Locator("body").InnerTextAsync());
+            output.WriteLine(string.Join(Environment.NewLine, observedRequests));
+            output.WriteLine(string.Join(Environment.NewLine, consoleErrors));
+            throw;
+        }
         Assert.Equal("net::ERR_NAME_NOT_RESOLVED", failedRequest.Failure);
         Assert.True(failedRequest.IsNavigationRequest);
         Assert.Equal("GET", failedRequest.Method);
@@ -329,7 +344,6 @@ public sealed class RenderingProofBrowserTests(BrowserFixture fixture, ITestOutp
     }
 
     [Theory]
-    [InlineData("/auth/sign-in")]
     [InlineData("/auth/signed-out")]
     [InlineData("/auth/denied")]
     [InlineData("/auth/error")]

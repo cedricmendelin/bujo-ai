@@ -44,6 +44,9 @@ public static class ChatEndpoints
                 return Results.BadRequest(new { error = "A non-empty message is required." });
             }
 
+            var threadId = string.IsNullOrWhiteSpace(request.ThreadId) || request.ThreadId.Trim().Length > 128
+                ? Guid.NewGuid().ToString("D")
+                : request.ThreadId.Trim();
             var runId = Guid.NewGuid();
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "text/event-stream";
@@ -52,7 +55,7 @@ public static class ChatEndpoints
             await WriteEventAsync(context, "run_started", new
             {
                 runId,
-                threadId = request.ThreadId
+                threadId
             }, cancellationToken);
 
             try
@@ -60,7 +63,8 @@ public static class ChatEndpoints
                 var result = await runtime.RunAsync(new ChatRunRequest(
                     request.Message,
                     request.TimeZone,
-                    request.History ?? []), principal, cancellationToken);
+                    request.History ?? [],
+                    threadId), principal, cancellationToken);
 
                 foreach (var toolCall in result.ToolCalls)
                 {

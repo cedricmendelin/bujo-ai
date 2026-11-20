@@ -8,18 +8,7 @@ public static class AccountEndpoints
 {
     public static void MapAccountEndpoints(this WebApplication app)
     {
-        app.MapGet("/auth/sign-in", (HttpContext context, IAntiforgery antiforgery) =>
-        {
-            var token = antiforgery.GetAndStoreTokens(context);
-            return Page("Sign in",
-                $"""
-                <p>Use your approved account to continue. No journal data is shown here.</p>
-                <form method="post" action="/auth/sign-in">
-                  <input type="hidden" name="{HtmlEncoder.Default.Encode(token.FormFieldName)}" value="{HtmlEncoder.Default.Encode(token.RequestToken!)}">
-                  <button type="submit">Sign in</button>
-                </form>
-                """);
-        }).AllowAnonymous();
+        app.MapGet("/auth/sign-in", () => Results.Redirect("/")).AllowAnonymous();
 
         app.MapPost("/auth/sign-in", async (HttpContext context, IAntiforgery antiforgery, IConfiguration configuration) =>
         {

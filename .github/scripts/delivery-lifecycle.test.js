@@ -144,9 +144,9 @@ test('human change requests and unresolved blocking threads remain blockers unde
   }), false);
 });
 
-test('CI, completion, humans, and cloud-session state independently block readiness', () => {
+test('CI, needs:human, humans, and cloud-session state independently block readiness', () => {
   const base = {
-    draft: false, needsHuman: false, completionOk: true, sessionOk: true,
+    draft: false, needsHuman: false, sessionOk: true,
     ci: true, reviewsOk: true, humanBlocks: false,
   };
   assert.equal(lifecycle.readiness(base).conclusion, 'success');
@@ -154,7 +154,6 @@ test('CI, completion, humans, and cloud-session state independently block readin
   assert.notEqual(lifecycle.readiness({ ...base, humanBlocks: true }).conclusion, 'success');
   assert.notEqual(lifecycle.readiness({ ...base, needsHuman: true }).conclusion, 'success');
   assert.equal(lifecycle.readiness({ ...base, sessionOk: false }).status, 'in_progress');
-  assert.notEqual(lifecycle.readiness({ ...base, completionOk: false }).conclusion, 'success');
 });
 
 test('only ci and aggregate readiness are the final required branch contexts', () => {

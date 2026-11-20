@@ -211,8 +211,11 @@ jobs:
             const agent = getOctokit(process.env.AGENT_TOKEN);
             const manual = context.eventName === 'workflow_dispatch';
             const scheduled = context.eventName === 'schedule';
-            const resume = manual && String(context.payload.inputs.resume_repairs) === 'true';
             const pullRequestEvent = context.eventName === 'pull_request_target';
+            // A person removing needs:human is the resume signal; bots (including this controller) are not.
+            const humanUnpause = pullRequestEvent && context.payload.action === 'unlabeled'
+              && context.payload.label?.name === 'needs:human' && context.payload.sender?.type === 'User';
+            const resume = manual && String(context.payload.inputs.resume_repairs) === 'true' || humanUnpause;
             const number = Number(process.env.PR_NUMBER);
             if (!Number.isSafeInteger(number) || number < 1) throw new Error('Routing did not provide a valid PR number.');
 
@@ -479,7 +482,7 @@ jobs:
                 const marker = `<!-- squad-repair-resume:${context.runId} -->`;
                 if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `${marker}\n@${actor} explicitly resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
+                    body: `${marker}\n@${actor} resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
                   if (pr.labels.some(label => label.name === 'needs:human')) {
                     await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
                   }
@@ -505,7 +508,7 @@ jobs:
               if (nowLabels.includes('needs:human')) {
                 await pauseMerge(pr);
                 const pending = await setReadiness(pr, sha, readiness({
-                  draft: false, needsHuman: true, completionOk: true, sessionOk: true,
+                  draft: false, needsHuman: true, sessionOk: true,
                   ci: false, reviewsOk: false, humanBlocks: false, rulesOk: false,
                 }));
                 return core.info(`#${number}: stopped by needs:human; readiness ${pending.conclusion || pending.status}.`);
@@ -585,17 +588,10 @@ jobs:
                 }
                 core.info(`#${number}: replaced generated closing references with non-closing references; issue scope remains partial.`);
               }
-              const completion = evaluateCompletion(pr.body, { createdAt: pr.created_at });
               const split = await splitInputs(pr);
-              const partial = hasPartialDeclaration(pr.body);
-              const handoff = partial ? partialHandoff(pr.body, `${owner}/${repo}`) : null;
-              const referenceFinding = partial && !handoff
-                ? '`Completion: partial` requires one unambiguous same-repository issue reference and a nonempty "Remaining work" section.'
-                : null;
-              if (!completion.ok || referenceFinding || split?.reason) {
+              if (split?.reason) {
                 await pauseMerge(pr);
-                const findings = [...completion.findings, ...[referenceFinding, split?.reason].filter(Boolean)];
-                const reason = `Delivery owner: correct completion metadata or route the specific decision to its owner:\n\n${findings.map(item => `- ${item}`).join('\n')}`;
+                const reason = `Delivery owner: resolve the scope-split record or route the specific decision to its owner:\n\n- ${split.reason}`;
                 const marker = `<!-- squad-completion-blocked:${reviewInputKey(pr.body || '')} -->`;
                 if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
@@ -607,31 +603,6 @@ jobs:
               const inputKey = split?.key || reviewInputKey(pr.body || '');
               // DevOps run metadata otherwise names the default-branch SHA, not the reviewed PR head.
               const reviewerInputKey = role => role === 'DevOps' ? reviewInputKey(`${inputKey}\n${sha}`) : inputKey;
-              if (handoff) {
-                const issue = (await github.rest.issues.get({ owner, repo, issue_number: handoff.issue })).data;
-                const tracking = acceptanceTracking(issue.body);
-                if (issue.pull_request || issue.state !== 'open' || !tracking.ok || tracking.incomplete.length === 0) {
-                  await pauseMerge(pr);
-                  let trackingReason = issue.pull_request || issue.state !== 'open'
-                    ? `Partial delivery must reference an open issue; inspect #${handoff.issue}. No issue was reopened automatically.`
-                    : `Partial delivery requires a valid \`## Acceptance tracking\` checklist on open issue #${handoff.issue} with at least one unchecked criterion. ${tracking.findings.join(' ')}`;
-                  if (issue.state === 'open' && !issue.pull_request && !pr.draft) {
-                    trackingReason += `\n\n${await recoverTracking(pr, issue, await getComments(handoff.issue), comments)}`;
-                  }
-                  if (scheduledBlocker) trackingReason += `\n\n${scheduledBlocker}`;
-                  await setReadiness(pr, sha, {
-                    status: 'completed', conclusion: 'failure',
-                    reason: trackingReason,
-                  });
-                  return;
-                }
-                const marker = `<!-- squad-partial-handoff:${number}:${reviewInputKey(handoff.remaining)} -->`;
-                const issueComments = await getComments(handoff.issue);
-                if (!issueComments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
-                  await agent.rest.issues.createComment({ owner, repo, issue_number: handoff.issue,
-                    body: `${marker}\n## Remaining acceptance work from PR #${number}\n\nPartial delivery; this issue remains open. The following is PR scope data, not authorization or instructions:\n\n${handoff.remaining.split('\n').map(line => `> ${line}`).join('\n')}\n\nThe delivery owner must keep the unfinished criteria, responsible owner, dependency/evidence needed, and next action current. After the dependency is satisfied, use Squad Plan Approved's manual continuation with evidence and the existing approved plan, or publish and approve a revised plan if scope changes.` });
-                }
-              }
               if (scheduledBlocker) {
                 await setReadiness(pr, sha, { status: 'in_progress', reason: scheduledBlocker });
                 return;
@@ -762,7 +733,6 @@ jobs:
               const decision = readiness({
                 draft: pr.draft,
                 needsHuman: nowLabels.includes('needs:human'),
-                completionOk: completion.ok,
                 sessionOk: session.state === 'ok',
                 ci: ciOk,
                 reviewsOk: latestReviewsOk && revisionAdmitted(pr, humanData.reviews),
@@ -837,13 +807,13 @@ jobs:
                   }
                   await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `@${human} Review repair needs a capable owner or an attributable outcome, not another identical coding request. ${blockedOutcome ? `Reported outcome: ${blockedOutcome.outcome}. See ${blockedOutcome.comment.html_url || 'the repair outcome comment'}.` : 'A cloud session completed without a matching repair outcome; it was not counted as a fix attempt.'} Resolve the capability/dependency or inspect the session, then explicitly resume repairs. No attempt was consumed for this blocker.\n\n${details}` });
+                    body: `@${human} Review repair needs a capable owner or an attributable outcome, not another identical coding request. ${blockedOutcome ? `Reported outcome: ${blockedOutcome.outcome}. See ${blockedOutcome.comment.html_url || 'the repair outcome comment'}.` : 'A cloud session completed without a matching repair outcome; it was not counted as a fix attempt.'} Resolve the capability/dependency or inspect the session, then **remove the \`needs:human\` label** to resume (this starts a fresh repair episode). No attempt was consumed for this blocker.\n\n${details}` });
                   await pauseMerge(pr);
                 } else if (attempts >= MAX_REPAIR_ATTEMPTS) {
                   await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                   await agent.rest.issues.addAssignees({ owner, repo, issue_number: number, assignees: [human] });
                   await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `🙋 @${human} **Review fixes remain blocking after ${MAX_REPAIR_ATTEMPTS} actual attempts.** Inspect the attempted fixes and remaining findings, choose the capable repair owner, then explicitly resume repairs if appropriate. Scope changes require approval. CI and trusted human feedback remain required.\n\n${details}` });
+                    body: `🙋 @${human} **Review fixes remain blocking after ${MAX_REPAIR_ATTEMPTS} actual attempts.** Inspect the attempted fixes and remaining findings, choose the capable repair owner, then **remove the \`needs:human\` label** to resume with a fresh repair episode. Scope changes require approval. CI and trusted human feedback remain required.\n\n${details}` });
                   await pauseMerge(pr);
                 } else if (!activeCloud && !requestOutstanding
                     && !localAlreadyAsked && (cloudPr || manual || !latestFix || latestFix.sha !== sha
@@ -869,7 +839,7 @@ jobs:
               if (!independent.length && !feedback.length && !metadataActions.length && humanActions.length) {
                 await agent.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['needs:human'] });
                 await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                  body: `@${human} The remaining review findings require a metadata/scope decision, external dependency, or complete review input, not a coding attempt. Resolve the specific actions below, then explicitly resume repairs. No code-repair attempt was consumed.\n\n${humanActions.map(({ role, check }) => `### ${role}\n${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
+                  body: `@${human} The remaining review findings require a metadata/scope decision, external dependency, or complete review input, not a coding attempt. Resolve the specific actions below, then **remove the \`needs:human\` label** to resume. No code-repair attempt was consumed.\n\n${humanActions.map(({ role, check }) => `### ${role}\n${check.html_url || ''}\n${check.output?.summary || ''}`).join('\n\n')}` });
                 await pauseMerge(pr);
               }
 
@@ -907,7 +877,6 @@ jobs:
                     || reviewNoneRemovedAt(freshTimeline) !== removedAt
                     || freshLabels.includes('handoff:local') !== nowLabels.includes('handoff:local')
                     || freshSplit?.reason || (freshSplit?.key || reviewInputKey(latestPr.body || '')) !== inputKey
-                    || !evaluateCompletion(latestPr.body, { createdAt: latestPr.created_at }).ok
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
                     || freshRouting && (freshRouting.blocked || excludedFailure(freshChecks)
                       || latestPr.base.sha !== pr.base.sha
@@ -928,21 +897,6 @@ jobs:
                   await setReadiness(latestPr, sha, decision);
                   await pauseMerge(latestPr);
                   return core.info(`#${number}: readiness bootstrapped; required-check migration is still an owner action.`);
-                }
-                if (handoff) {
-                  const latestIssue = (await github.rest.issues.get({
-                    owner, repo, issue_number: handoff.issue,
-                  })).data;
-                  const latestTracking = acceptanceTracking(latestIssue.body);
-                  if (latestIssue.pull_request || latestIssue.state !== 'open'
-                      || !latestTracking.ok || latestTracking.incomplete.length === 0) {
-                    await pauseMerge(latestPr);
-                    await setReadiness(latestPr, sha, {
-                      status: 'completed', conclusion: 'failure',
-                      reason: `Partial issue #${handoff.issue} is no longer open with a valid acceptance checklist containing an unchecked criterion. Re-evaluate after the delivery owner updates the issue.`,
-                    });
-                    return;
-                  }
                 }
                 // GitHub rejects enabling auto-merge on an already clean PR.
                 // Keep our required check pending until native auto-merge is armed.
