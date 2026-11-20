@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,6 +24,124 @@ namespace Bujo.Integration.Tests;
 [Trait("Category", "SqlDurability")]
 public sealed class SqlDurabilityTests
 {
+    [SqlDurabilityFact]
+    public async Task ItemTypeMigrationPreservesLegacyRowsAndOldWritesAndThoughtRoundTrips()
+    {
+        var adminConnectionString = Environment.GetEnvironmentVariable("BUJO_SQL_DURABILITY_CONNECTION")!;
+        var databaseName = $"BujoItemType_{Guid.NewGuid():N}";
+        var created = false;
+        try
+        {
+            var connectionString = await CreateDatabaseAsync(adminConnectionString, databaseName);
+            created = true;
+            var options = new DbContextOptionsBuilder<JournalDbContext>().UseSqlServer(connectionString).Options;
+            var legacyId = Guid.NewGuid();
+            var oldWriteId = Guid.NewGuid();
+            await using (var context = new JournalDbContext(options))
+            {
+                var migrator = context.GetService<IMigrator>();
+                await migrator.MigrateAsync("20261119120000_AddKnowledgeEntries");
+                await InsertOldItemAsync(context, legacyId);
+                await migrator.MigrateAsync();
+                await InsertOldItemAsync(context, oldWriteId);
+                var existing = await context.Items.AsNoTracking().ToArrayAsync();
+                Assert.Equal(2, existing.Length);
+                Assert.All(existing, item => Assert.Equal(ItemType.Task, item.Type));
+                context.Items.RemoveRange(await context.Items.ToArrayAsync());
+                await context.SaveChangesAsync();
+            }
+
+            var factory = new TestContextFactory(options);
+            Guid itemId;
+            using (var app = new SqlJournalApiFactory(connectionString))
+            using (var client = app.CreateClient())
+            {
+                using var captured = await SendJsonAsync(client, HttpMethod.Post, "/api/items",
+                    new { name = "Synthetic thought", type = "thought" });
+                Assert.Equal(HttpStatusCode.OK, captured.StatusCode);
+                using var body = JsonDocument.Parse(await captured.Content.ReadAsStringAsync());
+                itemId = body.RootElement.GetProperty("item").GetProperty("id").GetGuid();
+                Assert.Equal((int)ItemType.Thought, body.RootElement.GetProperty("item").GetProperty("type").GetInt32());
+            }
+
+            Assert.Equal(ItemType.Thought, new EfJournalRepository(factory).GetSnapshot().Items.Single(item => item.Id == itemId).Type);
+            using (var restarted = new SqlJournalApiFactory(connectionString))
+            using (var client = restarted.CreateClient())
+            {
+                using var response = await GetAsync(client, "/api/journal");
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var snapshot = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var item = snapshot.RootElement.GetProperty("items").EnumerateArray()
+                    .Single(item => item.GetProperty("id").GetGuid() == itemId);
+                Assert.Equal((int)ItemType.Thought, item.GetProperty("type").GetInt32());
+                using var mcpHttpClient = restarted.CreateClient();
+                mcpHttpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+                await using var transport = new HttpClientTransport(
+                    new HttpClientTransportOptions
+                    {
+                        Endpoint = new Uri("http://localhost/mcp"),
+                        TransportMode = HttpTransportMode.StreamableHttp
+                    },
+                    mcpHttpClient,
+                    NullLoggerFactory.Instance);
+                await using var mcp = await McpClient.CreateAsync(transport);
+                var result = await mcp.CallToolAsync("get_journal", new Dictionary<string, object?>());
+                Assert.False(result.IsError);
+                var mcpItem = result.StructuredContent!.Value.GetProperty("items").EnumerateArray()
+                    .Single(item => item.GetProperty("id").GetGuid() == itemId);
+                Assert.Equal((int)ItemType.Thought, mcpItem.GetProperty("type").GetInt32());
+                var export = await GetExportAsync(client);
+                Assert.Equal("Thought", export["items"]!.AsArray()
+                    .Single(item => item!["id"]!.GetValue<Guid>() == itemId)!["type"]!.GetValue<string>());
+            }
+
+            var repository = new EfJournalRepository(factory);
+            var beforeMove = repository.GetSnapshot();
+            var thought = beforeMove.Items.Single(item => item.Id == itemId);
+            var destination = repository.CreateList(new CreateListCommand("Synthetic destination", JournalListKind.Custom)).Value!;
+            var move = new MoveCommand(Guid.NewGuid(), itemId, thought.CurrentOccurrenceId,
+                destination.Id, thought.Version, destination.Version, DateTimeOffset.UtcNow);
+            Assert.True(repository.Move(move).IsSuccess);
+            Assert.Equal(ItemType.Thought, new EfJournalRepository(factory).Move(move).Value!.Resolution.Item.Type);
+            await using (var context = new JournalDbContext(options))
+            {
+                var stored = await context.MoveOperations.SingleAsync(operation => operation.OperationId == move.OperationId);
+                var oldResult = JsonNode.Parse(stored.ResultJson)!;
+                oldResult["resolution"]!["item"]!.AsObject().Remove("type");
+                stored.ResultJson = oldResult.ToJsonString();
+                await context.SaveChangesAsync();
+            }
+            Assert.Equal(ItemType.Task, new EfJournalRepository(factory).Move(move).Value!.Resolution.Item.Type);
+            Assert.Equal(ItemType.Thought, Assert.Single(repository.GetSnapshot().Items).Type);
+
+            var backups = new EfJournalBackupRepository(factory);
+            var serializer = new JournalBackupSerializer();
+            var backup = serializer.Deserialize(serializer.Serialize(backups.ExportBackup()));
+            Assert.Equal(ItemType.Thought, Assert.Single(backup.Items).Type);
+            Assert.True(backups.RestoreBackup(backup).IsSuccess);
+            Assert.Equal(ItemType.Thought, Assert.Single(new EfJournalRepository(factory).GetSnapshot().Items).Type);
+        }
+        finally
+        {
+            if (created)
+            {
+                await DropDatabaseAsync(adminConnectionString, databaseName);
+            }
+        }
+    }
+
+    private static Task<int> InsertOldItemAsync(JournalDbContext context, Guid id) =>
+        context.Database.ExecuteSqlAsync($"""
+            INSERT INTO [Items] ([Id], [Name], [PlannedPeriodKind], [CurrentOccurrenceId], [Version])
+            VALUES ({id}, {"Synthetic legacy"}, {0}, {Guid.NewGuid()}, {1L})
+            """);
+
+    private sealed class TestContextFactory(DbContextOptions<JournalDbContext> options)
+        : IDbContextFactory<JournalDbContext>
+    {
+        public JournalDbContext CreateDbContext() => new(options);
+    }
+
     [SqlDurabilityFact]
     public async Task SqlJournalSurvivesHostRestartAndExportRestoresTheCanonicalSnapshot()
     {
@@ -416,7 +536,8 @@ public sealed class SqlDurabilityTests
                 PlannedMonth = item.PlannedMonth,
                 PlannedQuarter = item.PlannedQuarter,
                 CurrentOccurrenceId = item.CurrentOccurrenceId,
-                Version = item.Version
+                Version = item.Version,
+                Type = Enum.Parse<ItemType>(item.Type)
             };
             foreach (var tag in item.Tags)
             {
@@ -464,6 +585,11 @@ public sealed class SqlDurabilityTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("ConnectionStrings:journal", connectionString);
+            builder.UseSetting("Auth:TenantId", "b3f84e9d-2dfb-4e8d-a1c3-91f7d8f59ca7");
+            builder.UseSetting("Auth:Audience", "journal-api");
+            builder.UseSetting("Auth:AllowedPrincipals", "2b4d69e1-46a1-4bd0-9a9e-c47be64c6d72");
+            builder.UseSetting("Mcp:PublicBaseUrl", "http://localhost");
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {

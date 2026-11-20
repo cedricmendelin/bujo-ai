@@ -49,8 +49,15 @@ public sealed class JournalService
         string? description = null,
         IReadOnlyList<string>? tags = null,
         PlannedPeriod? plannedPeriod = null,
-        Guid? listId = null)
+        Guid? listId = null,
+        ItemType type = ItemType.Task)
     {
+        if (!Enum.IsDefined(type))
+        {
+            return DomainResult<CaptureResult>.Failure(
+                new DomainError(DomainErrorCode.InvalidInput, "The item type is invalid."));
+        }
+
         var snapshot = _repository.GetSnapshot();
         var list = listId is { } id
             ? snapshot.Lists.SingleOrDefault(candidate => candidate.Id == id)
@@ -69,7 +76,8 @@ public sealed class JournalService
             plannedPeriod ?? PlannedPeriod.Unplanned,
             list.Id,
             list.Version,
-            UtcNow));
+            UtcNow,
+            type));
     }
 
     public DomainResult<MoveResult> Move(
@@ -109,6 +117,12 @@ public sealed class JournalService
 
         var item = snapshot.Items.Single(candidate => candidate.Id == occurrence.ItemId);
         var list = snapshot.Lists.Single(candidate => candidate.Id == occurrence.ListId);
+        if (item.Type == ItemType.Thought)
+        {
+            return DomainResult<OccurrenceSnapshot>.Failure(
+                new DomainError(DomainErrorCode.InvalidTransition, "Thoughts do not support task transitions."));
+        }
+
         return _repository.Transition(new TransitionCommand(
             occurrenceId,
             action,

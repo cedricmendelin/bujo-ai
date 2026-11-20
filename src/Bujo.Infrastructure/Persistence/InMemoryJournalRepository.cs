@@ -133,7 +133,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                     command.Name,
                     command.Description,
                     command.Tags,
-                    command.PlannedPeriod);
+                    command.PlannedPeriod,
+                    command.Type);
                 var occurrence = Occurrence.Create(
                     Guid.NewGuid(),
                     item.Id,
@@ -269,6 +270,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                 var list = RequireList(occurrence.ListId);
                 RequireVersion(list.Version, command.ExpectedListVersion, "List");
 
+                if (item.Type == ItemType.Thought)
+                {
+                    throw new DomainException(DomainErrorCode.InvalidTransition, "Thoughts cannot change completion state.");
+                }
+
                 switch (command.Action)
                 {
                     case OccurrenceAction.Done:
@@ -303,7 +309,9 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                 var list = RequireList(command.ListId);
                 RequireVersion(list.Version, command.ExpectedVersion, "List");
                 var unresolved = _occurrences.Values
-                    .Where(occurrence => occurrence.ListId == list.Id && occurrence.State == OccurrenceState.Open)
+                    .Where(occurrence => occurrence.ListId == list.Id &&
+                        occurrence.State == OccurrenceState.Open &&
+                        _items[occurrence.ItemId].Type == ItemType.Task)
                     .Select(occurrence => occurrence.Id)
                     .ToArray();
                 var wasOpen = list.State == JournalListState.Open;
@@ -706,6 +714,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                 item.Tags is null ||
                 item.Tags.Count > DomainLimits.TagsPerItem ||
                 item.CurrentOccurrenceId == Guid.Empty ||
+                !Enum.IsDefined(item.Type) ||
                 item.Version < 0) ||
             snapshot.Items.Select(item => item.Id).Distinct().Count() != snapshot.Items.Count ||
             snapshot.Occurrences.Any(occurrence =>
@@ -817,7 +826,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     }
 
     private static ItemSnapshot ToSnapshot(Item item) =>
-        new(item.Id, item.Name, item.Description, item.Tags.ToArray(), item.PlannedPeriod, item.CurrentOccurrenceId, item.Version);
+        new(item.Id, item.Name, item.Description, item.Tags.ToArray(), item.PlannedPeriod, item.CurrentOccurrenceId, item.Version, item.Type);
 
     private static JournalListSnapshot ToSnapshot(JournalList list) =>
         new(list.Id, list.Name, list.Kind, list.State, list.GoalText, list.WeekKey, list.Version);

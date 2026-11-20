@@ -9,13 +9,20 @@ public sealed class Item
         string name,
         string? description,
         IEnumerable<Tag> tags,
-        PlannedPeriod plannedPeriod)
+        PlannedPeriod plannedPeriod,
+        ItemType type)
     {
+        if (!Enum.IsDefined(type))
+        {
+            throw DomainLimits.Invalid("The item type is invalid.");
+        }
+
         Id = id;
         Name = name;
         Description = description;
         _tags = tags.ToList();
         PlannedPeriod = plannedPeriod;
+        Type = type;
     }
 
     public Guid Id { get; }
@@ -28,6 +35,8 @@ public sealed class Item
 
     public PlannedPeriod PlannedPeriod { get; private set; }
 
+    public ItemType Type { get; }
+
     public Guid CurrentOccurrenceId { get; private set; }
 
     public long Version { get; private set; }
@@ -37,19 +46,21 @@ public sealed class Item
         string name,
         string? description,
         IEnumerable<string>? tags,
-        PlannedPeriod plannedPeriod)
+        PlannedPeriod plannedPeriod,
+        ItemType type = ItemType.Task)
     {
         return new Item(
             id,
             DomainLimits.RequiredText(name, DomainLimits.ItemName, "Item name"),
             DomainLimits.OptionalText(description, DomainLimits.ItemDescription, "Description"),
             NormalizeTags(tags),
-            plannedPeriod);
+            plannedPeriod,
+            type);
     }
 
     internal static Item FromSnapshot(ItemSnapshot snapshot)
     {
-        var item = new Item(snapshot.Id, snapshot.Name, snapshot.Description, snapshot.Tags, snapshot.PlannedPeriod)
+        var item = new Item(snapshot.Id, snapshot.Name, snapshot.Description, snapshot.Tags, snapshot.PlannedPeriod, snapshot.Type)
         {
             CurrentOccurrenceId = snapshot.CurrentOccurrenceId,
             Version = snapshot.Version

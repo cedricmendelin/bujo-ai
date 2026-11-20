@@ -129,9 +129,15 @@ public static class JournalEndpoints
         api.MapPost("/items", (CaptureRequest request, JournalApplicationService journal) =>
         {
             var period = JournalContract.ParsePeriod(request.PlannedPeriod);
-            return period.IsSuccess
-                ? ToHttpResult(journal.Capture(request.Name, request.Description, request.Tags, period.Value, request.ListId))
-                : Error(period.Error!);
+            if (!period.IsSuccess)
+            {
+                return Error(period.Error!);
+            }
+
+            var type = JournalContract.ParseItemType(request.Type);
+            return type.IsSuccess
+                ? ToHttpResult(journal.Capture(request.Name, request.Description, request.Tags, period.Value, request.ListId, type.Value))
+                : Error(type.Error!);
         });
         api.MapPost("/items/{itemId:guid}/move", (Guid itemId, MoveRequest request, JournalApplicationService journal) =>
             ToHttpResult(journal.Move(request.OperationId, itemId, request.ExpectedOccurrenceId, request.DestinationListId)));
@@ -225,7 +231,8 @@ public static class JournalEndpoints
         string? Description,
         IReadOnlyList<string>? Tags,
         PeriodRequest? PlannedPeriod,
-        Guid? ListId);
+        Guid? ListId,
+        string? Type = null);
 
     public sealed record MoveRequest(Guid OperationId, Guid ExpectedOccurrenceId, Guid DestinationListId);
 

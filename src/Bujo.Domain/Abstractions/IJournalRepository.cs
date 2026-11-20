@@ -3,7 +3,7 @@ namespace Bujo.Domain;
 /// <summary>
 /// Commits each command atomically after checking its expected versions.
 /// Failed commands leave journal state unchanged. Occurrence creation and list
-/// closure must be coordinated so closed lists never acquire open occurrences.
+/// closure must be coordinated so closed lists never acquire new open occurrences.
 /// Implementations must enforce at most one open occurrence per item.
 /// </summary>
 public interface IJournalRepository

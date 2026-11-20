@@ -7,6 +7,24 @@ namespace Bujo.Application.Tests;
 public sealed class JournalApplicationServiceTests
 {
     [Fact]
+    public void CaptureTypeIsValidatedAndReturnedByApplicationService()
+    {
+        var service = CreateService();
+        Assert.True(service.CreateList("Future Log", JournalListKind.FutureLog).IsSuccess);
+        var legacy = service.Capture("Task", null, null, null, null);
+        var thought = service.Capture("Reflection", null, null, null, null, ItemType.Thought);
+        var invalid = service.Capture("Invalid", null, null, null, null, (ItemType)42);
+
+        Assert.Equal(ItemType.Task, legacy.Value!.Item.Type);
+        Assert.Equal(ItemType.Thought, thought.Value!.Item.Type);
+        Assert.Equal(ItemType.Thought, service.Resolve(thought.Value.Occurrence.Id).Value!.Item.Type);
+        Assert.Equal(DomainErrorCode.InvalidInput, invalid.Error!.Code);
+        Assert.Equal(2, service.GetSnapshot().Items.Count);
+        Assert.Equal(DomainErrorCode.InvalidTransition,
+            service.Transition(thought.Value.Occurrence.Id, OccurrenceAction.Done).Error!.Code);
+    }
+
+    [Fact]
     public void CaptureMoveCompleteAndResolveUseTheSameDomainService()
     {
         var repository = new InMemoryJournalRepository();

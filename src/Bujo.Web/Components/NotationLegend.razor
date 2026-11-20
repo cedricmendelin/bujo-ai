@@ -1,13 +1,12 @@
 <details class="notation-legend">
     <summary>Journal notation</summary>
     <ul role="list">
-        <li><JournalMarker State="OccurrenceState.Open" /></li>
         <li><JournalMarker Type="Task" State="OccurrenceState.Open" /></li>
         <li><JournalMarker Type="Thought" State="OccurrenceState.Open" /></li>
-        <li><JournalMarker State="OccurrenceState.Done" /></li>
-        <li><JournalMarker State="OccurrenceState.Moved" /></li>
-        <li><JournalMarker State="OccurrenceState.Abandoned" /></li>
+        <li>Completed occurrence: <JournalMarker State="OccurrenceState.Done" /></li>
+        <li>Moved occurrence: <JournalMarker State="OccurrenceState.Moved" /></li>
+        <li>Abandoned occurrence: <JournalMarker State="OccurrenceState.Abandoned" /></li>
     </ul>
     <p>Symbols describe occurrences, not actions. Moved entries keep their own history.</p>
-    <p class="journal-meta">Task and thought are notebook conventions. This journal currently records both as items, without a separate type.</p>
+    <p class="journal-meta">Item is the umbrella term for a task or a thought. Tasks are things to do; thoughts are reflections to keep.</p>
 </details>

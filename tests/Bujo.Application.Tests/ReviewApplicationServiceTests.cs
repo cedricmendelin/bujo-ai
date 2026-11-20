@@ -9,6 +9,100 @@ public sealed class ReviewApplicationServiceTests
     private static readonly string UserId = $"{Guid.Parse("d1f218cc-a2c7-43ce-8a8b-925393263fc5"):D}:{Guid.Parse("10c0963d-0a47-4a2d-b1ef-81109b4ceec7"):D}";
 
     [Fact]
+    public void ReviewClosureKeepsThoughtWithoutDispositionButStillRequiresTask()
+    {
+        var setup = CreateSetup();
+        var thought = setup.Journal.Capture("A thought", listId: setup.List.Id, type: ItemType.Thought).Value!;
+        var task = setup.Journal.Capture("A task", listId: setup.List.Id).Value!;
+        var listVersion = setup.Repository.GetSnapshot().Lists.Single(list => list.Id == setup.List.Id).Version;
+        var blocked = setup.Reviews.CreateProposal(
+            new ReviewProposalRequest(setup.List.Id, listVersion, true, []), McpActor());
+
+        Assert.Equal(DomainErrorCode.UnresolvedOccurrences, blocked.Error!.Code);
+        Assert.Equal([task.Occurrence.Id], blocked.Error.RelatedIds);
+        Assert.Contains(setup.Reviews.GetListReview(setup.List.Id).Value!.Unfinished,
+            entry => entry.Item.Id == thought.Item.Id && entry.Item.Type == ItemType.Thought);
+
+        var proposal = setup.Reviews.CreateProposal(
+            new ReviewProposalRequest(setup.List.Id, listVersion, true,
+                [Change(task.Item, task.Occurrence, ReviewDisposition.Done)]), McpActor());
+        Assert.True(proposal.IsSuccess, proposal.Error?.Message);
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Value!.Id, proposal.Value.Digest, PwaActor()).IsSuccess);
+        var applied = setup.Reviews.ApplyProposal(proposal.Value.Id, McpActor());
+        Assert.True(applied.IsSuccess, applied.Error?.Message);
+        var snapshot = setup.Repository.GetSnapshot();
+        Assert.Equal(JournalListState.Closed, snapshot.Lists.Single(list => list.Id == setup.List.Id).State);
+        Assert.Equal(OccurrenceState.Open, snapshot.Resolve(thought.Occurrence.Id).Value!.CurrentOccurrence.State);
+        Assert.Equal(ItemType.Thought, snapshot.Resolve(thought.Occurrence.Id).Value!.Item.Type);
+        Assert.Equal(OccurrenceState.Done, snapshot.Resolve(task.Occurrence.Id).Value!.CurrentOccurrence.State);
+    }
+
+    [Fact]
+    public void ReviewCanCloseThoughtOnlyListAndRejectsTaskDispositionsForThoughts()
+    {
+        var setup = CreateSetup();
+        var thought = setup.Journal.Capture("Reflection", listId: setup.List.Id, type: ItemType.Thought).Value!;
+        var listVersion = setup.Repository.GetSnapshot().Lists.Single(list => list.Id == setup.List.Id).Version;
+        foreach (var action in new[] { ReviewDisposition.Done, ReviewDisposition.Abandon })
+        {
+            var invalid = setup.Reviews.CreateProposal(new ReviewProposalRequest(
+                setup.List.Id, listVersion, false, [Change(thought.Item, thought.Occurrence, action)]), McpActor());
+            Assert.Equal(DomainErrorCode.InvalidInput, invalid.Error!.Code);
+        }
+
+        var proposal = setup.Reviews.CreateProposal(
+            new ReviewProposalRequest(setup.List.Id, listVersion, true, []), McpActor());
+        Assert.True(proposal.IsSuccess, proposal.Error?.Message);
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Value!.Id, proposal.Value.Digest, PwaActor()).IsSuccess);
+        Assert.True(setup.Reviews.ApplyProposal(proposal.Value.Id, McpActor()).IsSuccess);
+        Assert.Equal(OccurrenceState.Open,
+            setup.Repository.GetSnapshot().Resolve(thought.Occurrence.Id).Value!.CurrentOccurrence.State);
+    }
+
+    [Fact]
+    public void ClosureConflictDiagnosticsReportOnlyNewUnresolvedTasks()
+    {
+        var setup = CreateSetup();
+        var proposal = setup.Reviews.CreateProposal(
+            new ReviewProposalRequest(setup.List.Id, setup.List.Version, true, []), McpActor()).Value!;
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Id, proposal.Digest, PwaActor()).IsSuccess);
+        var thought = setup.Journal.Capture("New thought", listId: setup.List.Id, type: ItemType.Thought).Value!;
+        var task = setup.Journal.Capture("New task", listId: setup.List.Id).Value!;
+
+        var conflict = setup.Reviews.ApplyProposal(proposal.Id, McpActor());
+
+        Assert.Equal(DomainErrorCode.ConcurrencyConflict, conflict.Error!.Code);
+        Assert.Contains($"Unresolved occurrence {task.Occurrence.Id}", conflict.Error.Message);
+        Assert.DoesNotContain(thought.Occurrence.Id.ToString(), conflict.Error.Message);
+    }
+
+    [Fact]
+    public void ClosingReviewMayAlsoMoveThoughtToAnotherList()
+    {
+        var setup = CreateSetup();
+        var destination = setup.Journal.CreateList("Destination", JournalListKind.Custom).Value!;
+        var thought = setup.Journal.Capture("Reflection", listId: setup.List.Id, type: ItemType.Thought).Value!;
+        var task = setup.Journal.Capture("Task", listId: setup.List.Id).Value!;
+        var listVersion = setup.Repository.GetSnapshot().Lists.Single(list => list.Id == setup.List.Id).Version;
+        var proposal = setup.Reviews.CreateProposal(new ReviewProposalRequest(
+            setup.List.Id, listVersion, true,
+            [
+                MoveChange(thought.Item, thought.Occurrence, destination),
+                Change(task.Item, task.Occurrence, ReviewDisposition.Done)
+            ]), McpActor());
+
+        Assert.True(proposal.IsSuccess, proposal.Error?.Message);
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Value!.Id, proposal.Value.Digest, PwaActor()).IsSuccess);
+        var applied = setup.Reviews.ApplyProposal(proposal.Value.Id, McpActor());
+        Assert.True(applied.IsSuccess, applied.Error?.Message);
+        var resolution = setup.Repository.GetSnapshot().Resolve(thought.Occurrence.Id).Value!;
+        Assert.Equal(ItemType.Thought, resolution.Item.Type);
+        Assert.Equal(destination.Id, resolution.CurrentList.Id);
+        Assert.Equal(OccurrenceState.Moved, resolution.SourceOccurrence.State);
+        Assert.Equal(OccurrenceState.Open, resolution.CurrentOccurrence.State);
+    }
+
+    [Fact]
     public void ApprovedMultiItemProposalAppliesOnceAndCanBeAppliedByMcpAfterPwaApproval()
     {
         var setup = CreateSetup();

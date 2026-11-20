@@ -356,6 +356,44 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task CaptureTypeDefaultsToTaskAndThoughtCannotBeCompleted()
+    {
+        using var factory = new JournalApiFactory { ShareInMemoryRepository = true };
+        using var client = factory.CreateClient();
+        using var taskResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post, "/api/items", new { name = "Legacy task" }));
+        using var thoughtResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post, "/api/items", new { name = "A learning", type = "Thought" }));
+        using var invalidResponse = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post, "/api/items", new { name = "Invalid", type = "other" }));
+        using var taskBody = JsonDocument.Parse(await taskResponse.Content.ReadAsStringAsync());
+        using var thoughtBody = JsonDocument.Parse(await thoughtResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, taskResponse.StatusCode);
+        Assert.Equal((int)ItemType.Task, taskBody.RootElement.GetProperty("item").GetProperty("type").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, thoughtResponse.StatusCode);
+        Assert.Equal((int)ItemType.Thought, thoughtBody.RootElement.GetProperty("item").GetProperty("type").GetInt32());
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+
+        var occurrenceId = thoughtBody.RootElement.GetProperty("occurrence").GetProperty("id").GetGuid();
+        using var transition = await client.SendAsync(AuthenticatedJsonRequest(
+            HttpMethod.Post, $"/api/occurrences/{occurrenceId}/transition", new { action = OccurrenceAction.Done }));
+        Assert.Equal(HttpStatusCode.Conflict, transition.StatusCode);
+        using var transitionBody = JsonDocument.Parse(await transition.Content.ReadAsStringAsync());
+        Assert.Equal(nameof(DomainErrorCode.InvalidTransition), transitionBody.RootElement.GetProperty("code").GetString());
+
+        using var snapshotResponse = await client.SendAsync(AuthenticatedGet("/api/journal"));
+        using var snapshot = JsonDocument.Parse(await snapshotResponse.Content.ReadAsStringAsync());
+        var items = snapshot.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Contains(items, item => item.GetProperty("name").GetString() == "A learning"
+            && item.GetProperty("type").GetInt32() == (int)ItemType.Thought);
+        Assert.DoesNotContain(items, item => item.GetProperty("name").GetString() == "Invalid");
+        var savedOccurrence = snapshot.RootElement.GetProperty("occurrences").EnumerateArray()
+            .Single(occurrence => occurrence.GetProperty("id").GetGuid() == occurrenceId);
+        Assert.Equal((int)OccurrenceState.Open, savedOccurrence.GetProperty("state").GetInt32());
+    }
+
+    [Fact]
     public async Task ListReviewShowsUnfinishedOccurrencesAndBlocksUnapprovedClosure()
     {
         using var factory = new JournalApiFactory { ShareInMemoryRepository = true };

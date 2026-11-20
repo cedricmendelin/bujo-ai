@@ -12,18 +12,18 @@
     @if (_review is { } review)
     {
         <h2>Unfinished active occurrences</h2>
-        @if (review.Unfinished.Count == 0)
+        @if (UnfinishedTasks.Length == 0)
         {
             <p>No unfinished occurrences.</p>
         }
         else
         {
             <ul class="journal-rows" role="list">
-                @foreach (var entry in review.Unfinished)
+                @foreach (var entry in UnfinishedTasks)
                 {
                     var draft = _drafts[entry.Occurrence.Id];
                     <li class="journal-entry">
-                        <JournalMarker State="entry.Occurrence.State" />
+                        <JournalMarker Type="@entry.Item.Type.ToString()" State="entry.Occurrence.State" />
                         <a class="journal-entry-text" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
                         <span> · item @entry.Item.Id · occurrence @entry.Occurrence.Id · version @entry.Item.Version</span>
                         <label for="disposition-@entry.Occurrence.Id">Disposition</label>
@@ -49,6 +49,25 @@
             </ul>
         }
 
+        <h2>Thoughts to keep</h2>
+        <p>Thoughts remain in this list without a disposition, including after closure.</p>
+        @if (review.Unfinished.Any(entry => entry.Item.Type == ItemType.Thought))
+        {
+            <ul class="journal-rows" role="list">
+                @foreach (var entry in review.Unfinished.Where(entry => entry.Item.Type == ItemType.Thought))
+                {
+                    <li class="journal-entry">
+                        <JournalMarker Type="@entry.Item.Type.ToString()" State="entry.Occurrence.State" />
+                        <a class="journal-entry-text" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
+                    </li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p>No thoughts in this list.</p>
+        }
+
         <h2>Historical moved links</h2>
         @if (review.Moved.Count == 0)
         {
@@ -60,11 +79,11 @@
                 @foreach (var entry in review.Moved)
                 {
                     <li class="journal-entry">
-                        <JournalMarker State="entry.Occurrence.State" />
+                        <JournalMarker Type="@entry.Item.Type.ToString()" State="entry.Occurrence.State" />
                         <a class="journal-entry-text" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a> · @entry.Occurrence.Id
                         @if (entry.Resolution is { } resolution)
                         {
-                            <div class="journal-meta">Latest: <a href="/items/@resolution.CurrentOccurrence.Id">@resolution.CurrentList.Name · @resolution.CurrentOccurrence.State</a></div>
+                            <div class="journal-meta">Latest: <a href="/items/@resolution.CurrentOccurrence.Id">@resolution.CurrentList.Name · @JournalLabels.State(entry.Item.Type, resolution.CurrentOccurrence.State)</a></div>
                         }
                     </li>
                 }
@@ -82,7 +101,7 @@
                 @foreach (var entry in review.Resolved)
                 {
                     <li class="journal-entry">
-                        <JournalMarker State="entry.Occurrence.State" />
+                        <JournalMarker Type="@entry.Item.Type.ToString()" State="entry.Occurrence.State" />
                         <a class="journal-entry-text @(entry.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@entry.Occurrence.Id">@entry.Item.Name</a>
                     </li>
                 }
@@ -91,7 +110,7 @@
 
         @if (ProposalId is null)
         {
-            <fieldset class="journal-form" disabled="@(Busy || !Ready || review.Unfinished.Count == 0)">
+            <fieldset class="journal-form" disabled="@(Busy || !Ready || UnfinishedTasks.Length == 0)">
                 <label>
                     <input type="checkbox" @bind="_requestClose" />
                     Close this list after applying all dispositions
@@ -147,6 +166,7 @@
     private ReviewProposalSnapshot? _proposal;
     private ReviewActor? _actor;
     private bool _requestClose;
+    private ListReviewEntry[] UnfinishedTasks => _review?.Unfinished.Where(entry => entry.Item.Type == ItemType.Task).ToArray() ?? [];
 
     protected override async Task InitializeAsync() => _actor = await GetReviewActorAsync();
 
@@ -159,9 +179,9 @@
         _review = result.Value!;
         var snapshot = Journal.GetSnapshot();
         _destinations = snapshot.Lists.Where(list => list.State == JournalListState.Open).ToArray();
-        foreach (var entry in _review.Unfinished)
+        foreach (var entry in UnfinishedTasks)
             _drafts.TryAdd(entry.Occurrence.Id, new DispositionDraft());
-        foreach (var id in _drafts.Keys.Except(_review.Unfinished.Select(entry => entry.Occurrence.Id)).ToArray())
+        foreach (var id in _drafts.Keys.Except(UnfinishedTasks.Select(entry => entry.Occurrence.Id)).ToArray())
             _drafts.Remove(id);
         if (ProposalId is { } proposalId)
         {
@@ -186,7 +206,7 @@
             return Task.CompletedTask;
 
         var changes = new List<ReviewChangeRequest>();
-        foreach (var entry in _review.Unfinished)
+        foreach (var entry in UnfinishedTasks)
         {
             var draft = _drafts[entry.Occurrence.Id];
             if (!Enum.TryParse<ReviewDisposition>(draft.Action, out var action))
