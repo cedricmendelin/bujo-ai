@@ -9,11 +9,11 @@
         <button type="button" class="chat-secondary" disabled="@_busy" @onclick="NewChatAsync">New chat</button>
     </div>
 
-    <div class="chat-status" aria-live="polite" aria-atomic="true">
+    <div class="chat-status" role="status" aria-live="polite" aria-atomic="true">
         @_status
     </div>
 
-    <section class="chat-thread" aria-label="Chat messages">
+    <section class="chat-thread" aria-label="Chat messages" aria-busy="@(_busy ? "true" : "false")">
         @if (_messages.Count == 0)
         {
             <div class="chat-empty">
@@ -86,7 +86,7 @@
         </div>
         @if (!string.IsNullOrWhiteSpace(_micStatus))
         {
-            <p class="journal-meta">@_micStatus</p>
+            <p class="journal-meta" role="status">@_micStatus</p>
         }
     </form>
 
@@ -169,19 +169,26 @@
             return;
         }
 
-        var text = _draft.Trim();
+        var text = _draft;
         _draft = "";
-        await RunAsync(text);
+        await SubmitAsync(text);
     }
 
-    private async Task RunAsync(string text)
+    private async Task SubmitAsync(string text, bool spoken = false)
     {
+        if (_busy || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        text = text.Trim();
         _messages.Add(new ChatMessage(ChatRole.User, text));
         _history.Add(new ChatTurn(ChatRole.User, text));
         _busy = true;
-        _status = "Thinking";
+        _status = spoken ? "Processing spoken message." : "Thinking.";
         _runCancellation?.Dispose();
         _runCancellation = new CancellationTokenSource();
+        await InvokeAsync(StateHasChanged);
 
         try
         {
@@ -251,13 +258,14 @@
         }
         catch (Exception)
         {
-            _status = "Error";
+            _status = "The response failed. Try sending your message again.";
             _messages.Add(new ChatMessage(ChatRole.Assistant,
                 "The chat run could not be completed. Your journal has not been replayed or rolled back."));
         }
         finally
         {
             _busy = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -343,8 +351,9 @@
         }
 
         _speechSubmitted = true;
-        await StopMicrophoneAsync();
-        await InvokeAsync(() => RunAsync(text));
+        _micRunning = false;
+        _micStatus = "";
+        await SubmitAsync(text, spoken: true);
     }
 
     [JSInvokable]

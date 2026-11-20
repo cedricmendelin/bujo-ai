@@ -50,6 +50,7 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
         await summary.FocusAsync();
         await Expect(summary).ToBeFocusedAsync();
         Assert.NotEqual("none", await summary.EvaluateAsync<string>("element => getComputedStyle(element).outlineStyle"));
+        Assert.Equal("2px", await summary.EvaluateAsync<string>("element => getComputedStyle(element).outlineWidth"));
         await page.Keyboard.PressAsync("Enter");
         await Expect(page.Locator(".notation-legend")).ToHaveAttributeAsync("open", "");
         await Expect(page.Locator(".notation-legend")).ToContainTextAsync("without a separate type");
@@ -63,6 +64,7 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
             await page.Keyboard.PressAsync("Tab");
         await Expect(input).ToBeFocusedAsync();
         Assert.NotEqual("none", await input.EvaluateAsync<string>("element => getComputedStyle(element).outlineStyle"));
+        Assert.Equal("2px", await input.EvaluateAsync<string>("element => getComputedStyle(element).outlineWidth"));
         Assert.Equal("0s", await input.EvaluateAsync<string>("element => getComputedStyle(element).transitionDuration"));
         Assert.Equal("none", await input.EvaluateAsync<string>("element => getComputedStyle(element).animationName"));
         await page.Keyboard.TypeAsync("Synthetic keyboard capture");
@@ -86,15 +88,15 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
         var page = await context.NewPageAsync();
         var externalRequests = new List<string>();
         await context.RouteAsync("https://**/*", route => { externalRequests.Add(route.Request.Url); return route.AbortAsync(); });
-        foreach (var path in new[] { "/", "/auth/sign-in", "/auth/signed-out", "/auth/denied", "/auth/error" })
+        foreach (var path in new[] { "/", "/auth/signed-out", "/auth/denied", "/auth/error" })
         {
             await page.GotoAsync(path);
             await Expect(page.Locator("link[rel=stylesheet][href='/_content/Bujo.Web/pwa.css']")).ToHaveCountAsync(1);
             await Expect(page.Locator(path == "/" ? "section.auth-card" : "main.auth-card")).ToBeVisibleAsync();
             await AssertLayoutAsync(page, path, width);
-            if (path == "/auth/sign-in")
+            if (path == "/")
             {
-                var signIn = page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true });
+                var signIn = page.GetByRole(AriaRole.Button, new() { Name = "Sign in to your journal", Exact = true });
                 for (var index = 0; index < 10 && !await signIn.EvaluateAsync<bool>("element => element === document.activeElement"); index++)
                     await page.Keyboard.PressAsync("Tab");
                 await Expect(signIn).ToBeFocusedAsync();
