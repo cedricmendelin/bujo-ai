@@ -745,18 +745,9 @@ test('hourly fallback recovers a completed cloud draft without bypassing partial
   state.pr.draft = true;
   state.pr.body = '- **Remaining work:** Builder to run SQL verification after access.\n\n'
     + 'Completion: partial\n\n<!-- START COPILOT CODING AGENT SUFFIX -->\n- Fixes #11';
-  const validTracking = state.issue.body;
-  state.issue.body = '## Acceptance criteria\n- Run SQL verification.';
-  const blocked = await execute(state);
+  const resumed = await execute(state);
   assert.equal(state.pr.draft, false);
   assert.match(state.pr.body, /- Refs #11$/);
-  assert.equal(readinessFrom(state).conclusion, 'failure');
-  assert.match(readinessFrom(state).output.summary, /Acceptance tracking.*#11/);
-  assert.equal(blocked.calls.some(call => call.name === 'dispatch'), false);
-  assert.equal(enables(blocked).length, 0);
-
-  state.issue.body = validTracking;
-  const resumed = await execute(state);
   assert.deepEqual(resumed.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ROLES);
   assert.equal(enables(resumed).length, 0, 'reviews still need to pass');
 });
@@ -844,7 +835,7 @@ test('approval assignment controller honors local handoff/duplicate delivery and
   }
 });
 
-test('completion preflight repairs the observed suffix once, records remaining scope, and refreshes reviews without coding sessions', async () => {
+test('completion preflight repairs the observed suffix once and refreshes reviews without coding sessions', async () => {
   const state = fixture();
   cloud(state);
   state.pr.body = '- **Remaining work:**\n  - **Builder:** Implement journal screens after the proof review.\n\n'
@@ -858,9 +849,6 @@ test('completion preflight repairs the observed suffix once, records remaining s
     assert.equal(call.args.inputs.review_input, reviewRunInput(call.args.workflow_id, reviewInputKey(state.pr.body)));
   }
   assert.equal(commentsFrom(first).some(body => body.includes('@copilot Fix')), false);
-  const handoff = commentsFrom(first).find(body => body.includes('Remaining acceptance work from PR #81'));
-  assert.match(handoff, /> - \*\*Builder:\*\* Implement journal screens after the proof review\./);
-  assert.doesNotMatch(handoff, /> Completion: partial/);
   assert.equal(enables(first).length, 0);
   const again = await execute(state);
   assert.equal(again.calls.some(call => call.name === 'updatePr' || call.name === 'dispatch'), false);
@@ -871,8 +859,8 @@ test('completion preflight repairs the observed suffix once, records remaining s
   assert.equal(regenerated.calls.some(call => call.name === 'dispatch'), false, 'regenerated suffix converges on the same review input');
 });
 
-test('metadata write and partial-handoff failures never become successful readiness', async () => {
-  for (const failure of ['updatePr', 'comment']) {
+test('metadata write failures never become successful readiness', async () => {
+  for (const failure of ['updatePr']) {
     const state = fixture();
     state.pr.body = 'Completion: partial\n## Remaining work\nOwner: AI; live verification after access.\n'
       + '<!-- START COPILOT CODING AGENT SUFFIX -->\n- Fixes #11';
@@ -882,114 +870,30 @@ test('metadata write and partial-handoff failures never become successful readin
   }
 });
 
-test('ambiguous completion errors are actionable without specialist findings or coding retries', async () => {
-  const state = fixture();
-  state.pr.body = 'Completion: partial\nFixes #11';
-  const first = await execute(state);
-  assert.equal(first.calls.some(call => call.name === 'dispatch' || call.name === 'updatePr'), false);
-  assert.match(readinessFrom(state).output.summary, /Remaining work.*\n.*partial PR must not close/s);
-  assert.match(commentsFrom(first)[0], /No coding session was requested/);
-  assert.equal(commentsFrom(await execute(state)).length, 0);
-});
-
-test('completion errors withhold model reviews but do not prevent initial CI', async () => {
-  const state = fixture();
-  cloud(state);
-  state.pr.body = 'Completion: partial\nFixes #11';
-  state.checks = [];
-  const result = await execute(state);
-  assert.deepEqual(result.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['ci']);
-  assert.equal(enables(result).length, 0);
-});
-
-test('partial handoff never reopens a closed issue or publishes merge readiness', async () => {
-  const state = fixture();
-  state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: AI; test clients after access.';
-  state.issue.state = 'closed';
-  const result = await execute(state);
-  assert.match(readinessFrom(state).output.summary, /must reference an open issue/);
-  assert.equal(commentsFrom(result).length, 0);
-  assert.equal(enables(result).length, 0);
-});
-
-test('partial tracking blocks local and review:none readiness unless one open issue has a durable unchecked checklist', async () => {
-  for (const labels of [['handoff:local'], ['review:none']]) {
+test('completion declarations and acceptance checklists never gate readiness; reviewers judge them', async () => {
+  for (const body of ['Completion: partial\nFixes #11', 'Completion: partial\nRefs #11\n## Remaining work\nAfter access.']) {
     const state = fixture();
-    state.pr.labels.push(...labels.map(name => ({ name })));
-    state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
+    state.pr.body = body;
+    state.issue.body = '## Acceptance criteria\n- No tracking checklist.';
     for (const role of ROLES) {
       state.runs[role][0].display_title = `Squad Review ${role} · PR #81 · input ${reviewRunInput(role, reviewInputKey(state.pr.body))}`;
     }
     const result = await execute(state);
-    assert.equal(enables(result).length, 1, `${labels.join(',')}: ${readinessFrom(state).output.summary}`);
-    assert.equal(result.calls.filter(call => call.name === 'issue').length, 2, 'initial and final live issue reads');
-  }
-
-  for (const bypassLabel of ['handoff:local', 'review:none']) {
-    for (const problem of ['missing reference', 'foreign reference', 'missing checklist', 'all complete']) {
-      const state = fixture();
-      state.pr.labels.push({ name: bypassLabel });
-      state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
-      if (problem === 'missing reference') state.pr.body = state.pr.body.replace('Refs #11', 'Notes only');
-      if (problem === 'foreign reference') state.pr.body += '\nPart of other/repo#12';
-      if (problem === 'missing checklist') state.issue.body = '## Acceptance criteria\n- Browser installation';
-      if (problem === 'all complete') state.issue.body = '## Acceptance tracking\n- [x] Browser installation — evidence: PR #125 and test.';
-      const result = await execute(state);
-      assert.notEqual(readinessFrom(state).conclusion, 'success', `${bypassLabel}: ${problem}`);
-      assert.equal(enables(result).length, 0, `${bypassLabel}: ${problem}`);
-      assert.equal(result.calls.some(call => call.name === 'dispatch'), false, `${bypassLabel}: ${problem}`);
-    }
+    assert.equal(readinessFrom(state).conclusion, 'success', readinessFrom(state).output.summary);
+    assert.equal(enables(result).length, 1);
+    assert.equal(commentsFrom(result).some(text => text.includes('squad-completion-blocked')), false);
   }
 });
 
-test('missing tracking launches one issue-only task for the approved owner, even during a conflict', async () => {
-  const state = fixture();
-  cloud(state);
-  state.scopedComments = true;
-  state.context.eventName = 'schedule';
-  state.pr.mergeable = false;
-  state.pr.body = 'Completion: partial\nRefs #11\n## Remaining work\nRun the SQL suite after access.';
-  state.issue.labels = [{ name: 'plan:approved' }];
-  state.issue.body = '## Acceptance criteria\n- Run the SQL suite.';
-  state.comments = [{ id: 123, issue_number: 11, user: { login: owner },
-    body: '## 📋 Implementation plan v1 · owner: builder' }];
-  state.workflows.push({ id: 'acceptance', path: '.github/workflows/squad-acceptance-recovery.lock.yml' });
-  const first = await execute(state);
-  const dispatch = first.calls.filter(call => call.name === 'dispatch').map(call => call.args);
-  assert.deepEqual(dispatch, [{ owner, repo: 'bujo-ai', workflow_id: 'acceptance', ref: 'main',
-    inputs: { pr_number: '81', issue_number: '11', plan_id: '123', delivery_owner: 'builder' } }]);
-  assert.match(readinessFrom(state).output.summary, /Acceptance tracking.*Requested one issue-only.*merge conflict/s);
-  assert.equal(enables(first).length, 0);
-  const claim = state.comments.find(comment => comment.body.startsWith('<!-- squad-acceptance-recovery:123 -->\n'));
-  claim.created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const queued = await execute(state);
-  assert.equal(queued.calls.some(call => call.name === 'dispatch'), false);
-  assert.equal(commentsFrom(queued).length, 0);
-  state.runs.acceptance = [{ status: 'in_progress', display_title: 'Squad Acceptance Recovery · PR #81 · plan 123' }];
-  assert.equal((await execute(state)).calls.some(call => call.name === 'dispatch'), false);
-
-  state.runs.acceptance[0].status = 'completed';
-  state.runs.acceptance[0].html_url = 'https://github.com/cedricmendelin/bujo-ai/actions/runs/123';
-  const unsuccessful = await execute(state);
-  assert.match(commentsFrom(unsuccessful)[0], /ended without a valid checklist/);
-  assert.equal(unsuccessful.calls.some(call => call.name === 'dispatch'), false);
-  assert.equal(commentsFrom(await execute(state)).length, 0);
-});
-
-test('final readiness rechecks partial issue state and withholds success when the checklist goes stale', async () => {
-  const state = fixture();
-  state.pr.labels.push({ name: 'review:none' });
-  state.pr.body = 'Completion: partial\nRelates to #11\n## Remaining work\nOwner: Builder; test browser flow after selection.';
-  let issueReads = 0;
-  state.before = name => {
-    if (name === 'issue' && ++issueReads === 2) {
-      state.issue.body = '## Acceptance tracking\n- [x] Browser installation — evidence: PR #125 and test.';
-    }
-  };
-  const result = await execute(state);
-  assert.notEqual(readinessFrom(state).conclusion, 'success');
-  assert.equal(enables(result).length, 0);
-  assert.match(readinessFrom(state).output.summary, /no longer open with a valid acceptance checklist/i);
+test('a person removing needs:human resumes the PR and starts a new repair episode; bots do not', async () => {
+  for (const [type, resumed] of [['User', true], ['Bot', false]]) {
+    const state = fixture();
+    state.context.eventName = 'pull_request_target';
+    state.context.payload = { ...state.context.payload, action: 'unlabeled', label: { name: 'needs:human' },
+      sender: { login: owner, type } };
+    const result = await execute(state);
+    assert.equal(commentsFrom(result).some(text => text.includes('squad-repair-resume:')), resumed, type);
+  }
 });
 
 test('completed issue closure warns idempotently only for explicitly completed state with unchecked criteria', async () => {

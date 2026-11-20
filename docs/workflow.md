@@ -325,12 +325,12 @@ action that unblocks work. For example: “Live-client verification is required 
 the plan. Local smoke tests pass, but the test account cannot sign in. Please
 grant the test account access or name the person who can; then resume the PR.”
 
-Resolve the cause, then deliberately run **Squad PR Lifecycle** with its PR
-number and `resume_repairs: true` to clear the pause and start a fresh bounded
-episode. This operation requires repository write permission, refuses an active
+Resolve the cause, then remove `needs:human` (or deliberately run **Squad PR
+Lifecycle** with its PR number and `resume_repairs: true`) to start a fresh
+bounded episode. This operation requires repository write permission, refuses an active
 cloud session, and is idempotent for a rerun of the same Actions run. Normal
-dispatches and code commits do not reset attempts or clear a pause. Removing the
-label alone preserves the previous budget. Human review blocks, CI, completion,
+dispatches and code commits do not reset attempts or clear a pause. A person
+removing the label resets the budget; a bot removing it does not. Human review blocks, CI, completion,
 and scope approval still apply. `needs:human` does not stop native Watch and fix,
 which must be disabled separately when pausing.
 
@@ -338,6 +338,69 @@ The resume operation removes the PR label with the existing `GH_AW_AGENT_TOKEN`
 PR-write credential. If a run records a resume marker but fails to remove the
 label, fix the reported cause and start a **new** dispatch; rerunning the same
 Actions run must not clear a later pause.
+
+## Roles, readiness, and escalation
+
+Superseded 2026-11-20 (owner decision): the earlier readiness gate that also
+validated the completion declaration, acceptance checklist, and scope records.
+Replacement: readiness is a simple aggregate; the Verifier owns acceptance.
+
+### Who is responsible for what
+
+| Role | Responsibility | Can write |
+|---|---|---|
+| Repository owner (@cedricmendelin) | Approves plans, sets the `SQUAD_REVIEW_ROUTING=enforce` Actions variable, resolves `needs:human`, owns ruleset and secrets. | Everything |
+| Architect | Plans, design conformance, and user documentation ownership. | Plan comments, review checks |
+| Builder / cloud agent | Implements and pushes fixes to the PR branch. Any new cloud session continues the same branch. | Commits and **new** comments on the PR branch/PR only; it cannot edit the PR body, issue bodies, or old comments |
+| Reviewers (Verifier, Security, DevOps, Architect) | Each posts one check per head: `✅ Approved` or `❌ Changes required: N blocking`. Verifier always reviews and owns acceptance criteria, the completion declaration, and the acceptance checklist. Routing (`enforce`) adds at most two specialists by changed paths. | Review checks and comments |
+| Lifecycle controller (`squad-pr-lifecycle.yml`) | Starts CI/reviews, forwards blocking findings as repair requests, counts attempts, publishes readiness, arms auto-merge. Default-branch code only. | Checks, labels, comments |
+| GitHub | The only merge executor (squash auto-merge) under the ruleset. | Merge |
+
+### Squad Merge Readiness
+
+`Squad Merge Readiness` is the single aggregate required check (with `ci`).
+It succeeds when, for the current head:
+
+1. `ci` is green;
+2. every selected reviewer's latest check on that head is a success
+   (`✅ Approved`); and
+3. no `needs:human` label is present.
+
+Trusted human change requests and blocking threads still block it, and a
+draft is not ready. It no longer validates the completion declaration,
+acceptance checklist, or tracking recovery. The Verifier judges those and
+fails its check when they are wrong.
+
+### Reviewer rejection and repair loop
+
+Everything is append-only; an agent never edits an earlier verdict.
+
+1. A reviewer rejects with a `❌ Changes required: N blocking` check on the head.
+2. The controller turns the blocking findings into one `@copilot` repair request
+   comment (a fresh token each time).
+3. Any cloud agent session pushes a fix commit. That creates a new head.
+4. Reviewers re-run on the new head and publish a new check. The controller
+   uses only the latest check per reviewer for the current head, so a later
+   `✅ Approved` supersedes an earlier rejection.
+5. Up to three attributed attempts per repair episode on that PR; the third
+   failure escalates.
+
+Repair routes keep non-code findings away from coding agents:
+`implementation` goes to the cloud agent; `metadata` is delivery-record
+feedback; `human` goes straight to escalation.
+
+### Human escalation
+
+Triggers: three failed attempts, a capability or external block, a failed
+reviewer run, an unresolved conflict, or an owner-only decision. The controller
+adds `needs:human`, mentions @cedricmendelin, and posts one comment with the
+cause, evidence, and the exact action that unblocks work.
+
+To resume: fix the cause, then **remove the `needs:human` label**. A person
+removing the label re-evaluates the PR and starts a fresh repair episode
+(attempt budget reset). Removals by bots do not reset it. Manual
+`workflow_dispatch` with `resume_repairs: true` remains available. Resume is
+refused while a cloud session is active. Merge protection and CI are unchanged.
 
 ## Completion and partial delivery
 
@@ -366,9 +429,11 @@ change repository files. A paused or active cloud PR is not mutated.
 GitHub does not support conditional PATCH for this endpoint: these are
 optimistic pre/post checks, not an atomic compare-and-swap guarantee against
 an external edit inside the HTTP read/write window.
-Other syntax/closing-reference errors receive explicit completion feedback and
-blocked readiness, even if no specialist check has failed. They consume no
-code-repair budget. Correcting the description triggers re-evaluation.
+Completion and acceptance-checklist problems no longer block `Squad Merge
+Readiness` directly (superseded 2026-11-20; see
+[Roles, readiness, and escalation](#roles-readiness-and-escalation)). The
+Verifier judges the declaration, closing references, `Remaining work`, and the
+acceptance checklist and reports a metadata finding if they are wrong.
 
 Use one unambiguous same-repository `Refs #N`, `Relates to #N`, or
 `Part of #N` and a nonempty `## Remaining work` section or `Remaining work:`
@@ -389,11 +454,10 @@ For a partial milestone, mark work done once it has landed and has evidence;
 leave each unmet criterion unchecked with its owner, dependency or blocker,
 and concrete next action. Use `evidence:` on checked rows; use `open` or
 `blocked`, `owner:`, and `next:` on unchecked rows, as in the example.
-The controller checks that the issue is open and
-has an outstanding checklist before it reports merge readiness, including on
-the `review:none` path. It copies a quoted handoff once per changed
-remaining-work text as history. Before handing off a partial PR, the delivery
-agent updates the checklist. If it is missing, the controller can request
+The Verifier checks that the issue is open and
+has an outstanding checklist; the controller no longer gates readiness on it
+and no longer copies a handoff comment. Before handing off a partial PR, the
+delivery agent updates the checklist. If it is missing, the controller can request
 **Squad Acceptance Recovery** once per issue and approved plan. The issue-only
 agent acts in the approved plan owner's role and proposes next actions. A
 separate writer rechecks the request and live records, then appends the original
