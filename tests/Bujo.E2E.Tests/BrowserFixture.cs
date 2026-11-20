@@ -4,7 +4,6 @@ using System.Text.Encodings.Web;
 using Bujo.Application.Chat;
 using Bujo.Host.Chat;
 using Bujo.Host.Authentication;
-using Bujo.Application.Chat;
 using Bujo.Domain;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Antiforgery;

@@ -14,6 +14,208 @@ namespace Bujo.Integration.Tests;
 
 public sealed class ChatApprovalBoundaryTests
 {
+    [Theory]
+    [InlineData("What is overdue and what should I focus on this week?")]
+    [InlineData("Show me past due tasks and what I should prioritize for the week.")]
+    [InlineData("What's late, and what's on my plate for the rest of the week?")]
+    [InlineData("What past-due work do I have, and what should I focus on?")]
+    public async Task MockAnswersCompoundOverdueAndLocalWeekQuestionsWithReadOnlyQueries(string message)
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        var overdue = Capture(journal, "Overdue report", PlannedPeriod.ForDay(new DateOnly(2026, 11, 16)));
+        Capture(journal, "Current week review", PlannedPeriod.ForWeek(new IsoWeekKey(2026, 47)));
+        Capture(journal, "Friday task", PlannedPeriod.ForDay(new DateOnly(2026, 11, 20)));
+        var completed = Capture(journal, "Completed task", PlannedPeriod.ForDay(new DateOnly(2026, 11, 17)));
+        Assert.True(journal.Transition(completed.Occurrence.Id, OccurrenceAction.Done).IsSuccess);
+        Capture(journal, "Next week task", PlannedPeriod.ForDay(new DateOnly(2026, 11, 23)));
+
+        var before = JsonSerializer.Serialize(journal.GetSnapshot());
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(new ChatRunRequest(message, "Europe/Zurich", []), Principal());
+
+        Assert.Contains("Overdue", result.Text);
+        Assert.Contains("Overdue report", result.Text);
+        Assert.Contains("This week", result.Text);
+        Assert.Contains("Current week review", result.Text);
+        Assert.Contains("Friday task", result.Text);
+        Assert.DoesNotContain("Completed task", result.Text);
+        Assert.DoesNotContain("Next week task", result.Text);
+        Assert.DoesNotContain("I can read Today or the journal", result.Text);
+        Assert.Equal(["get_daily_start", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+        Assert.All(result.ToolCalls, call => Assert.True(call.Succeeded, call.Summary));
+        Assert.Empty(result.Proposals);
+        Assert.Equal(before, JsonSerializer.Serialize(journal.GetSnapshot()));
+    }
+
+    [Fact]
+    public async Task CompoundQuestionIncludesAllUpcomingPages()
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        for (var index = 0; index < 53; index++)
+        {
+            Capture(
+                journal,
+                $"This week item {index:D2}",
+                PlannedPeriod.ForDay(new DateOnly(2026, 11, 19)));
+        }
+
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", "UTC", []),
+            Principal());
+
+        Assert.Contains("This week item 52", result.Text);
+        Assert.Equal(["get_daily_start", "get_upcoming", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task CompoundQuestionUsesTheCallersRemainingLocalWeekAtTheWeekBoundary()
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 23, 6, 30, 0, TimeSpan.Zero));
+        Capture(journal, "Sunday item", PlannedPeriod.ForDay(new DateOnly(2026, 11, 22)));
+        Capture(journal, "Monday item", PlannedPeriod.ForDay(new DateOnly(2026, 11, 23)));
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", "America/Los_Angeles", []),
+            Principal());
+
+        Assert.Contains("Sunday item", result.Text);
+        Assert.DoesNotContain("Monday item", result.Text);
+        Assert.Contains("No overdue open items.", result.Text);
+    }
+
+    [Fact]
+    public async Task CompoundQuestionClearlyReportsWhenBothQueriesHaveNoMatches()
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", "UTC", []),
+            Principal());
+
+        Assert.Contains("No overdue open items.", result.Text);
+        Assert.Contains("No open planned items overlap the remaining local week.", result.Text);
+        Assert.Equal(["get_daily_start", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+    }
+
+    [Theory]
+    [InlineData(null, "An IANA time zone is required.")]
+    [InlineData("Not/A_Time_Zone", "Unknown or invalid IANA time zone")]
+    public async Task CompoundQuestionExplainsMissingOrInvalidCallerZone(string? timeZone, string expectedFeedback)
+    {
+        var (journal, reviews) = Services();
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", timeZone, []),
+            Principal());
+
+        Assert.Contains(expectedFeedback, result.Text);
+        Assert.Contains("Overdue:", result.Text);
+        Assert.Contains("This week:", result.Text);
+        Assert.Equal(["get_daily_start", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+        Assert.All(result.ToolCalls, call => Assert.False(call.Succeeded));
+    }
+
+    [Theory]
+    [InlineData("get_daily_start", "Overdue: I couldn't load overdue items")]
+    [InlineData("get_upcoming", "This week: I couldn't load open work")]
+    public async Task CompoundQuestionReportsOneFailedQueryAndKeepsTheOtherResult(string failedTool, string expectedFeedback)
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        Capture(journal, "Overdue item", PlannedPeriod.ForDay(new DateOnly(2026, 11, 16)));
+        Capture(journal, "This week item", PlannedPeriod.ForDay(new DateOnly(2026, 11, 19)));
+        var before = JsonSerializer.Serialize(journal.GetSnapshot());
+        var executor = new FailingChatToolExecutor(new ChatToolExecutor(journal, reviews), failedTool);
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()),
+            toolExecutor: executor);
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", "Europe/Zurich", []),
+            Principal());
+
+        Assert.Contains(expectedFeedback, result.Text);
+        if (failedTool == "get_daily_start")
+        {
+            Assert.Contains("This week item", result.Text);
+        }
+        else
+        {
+            Assert.Contains("Overdue item", result.Text);
+        }
+
+        Assert.Equal(["get_daily_start", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+        Assert.Equal(before, JsonSerializer.Serialize(journal.GetSnapshot()));
+    }
+
+    [Fact]
+    public async Task CompoundQuestionUsesTheSameReadOnlyRouteWhenFoundryIsConfigured()
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        Capture(journal, "Overdue item", PlannedPeriod.ForDay(new DateOnly(2026, 11, 16)));
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions
+            {
+                Provider = "Foundry",
+                Endpoint = "https://example.invalid",
+                Deployment = "test"
+            }),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(
+            new ChatRunRequest("What is overdue and what should I focus on this week?", "UTC", []),
+            Principal());
+
+        Assert.Contains("Overdue item", result.Text);
+        Assert.Equal(["get_daily_start", "get_upcoming"], result.ToolCalls.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task TodayOnlyQuestionKeepsItsExistingDailyStartRoute()
+    {
+        var (journal, reviews) = Services(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        var runtime = new ChatRuntime(
+            journal,
+            reviews,
+            Options.Create(new ChatOptions()),
+            new TestHttpClientFactory(new ReadModelHandler()));
+
+        var result = await runtime.RunAsync(new ChatRunRequest("what is today", "UTC", []), Principal());
+
+        Assert.StartsWith("Today is 2026-11-18.", result.Text);
+        Assert.Equal("get_daily_start", Assert.Single(result.ToolCalls).Name);
+    }
+
     [Fact]
     public async Task FoundryToolCallsCannotCloseListsOrApplyPendingProposals()
     {
@@ -159,10 +361,23 @@ public sealed class ChatApprovalBoundaryTests
         Assert.Contains("too large", toolResult.RootElement.GetProperty("summary").GetString());
     }
 
-    private static (JournalApplicationService Journal, ReviewApplicationService Reviews) Services()
+    private static (JournalApplicationService Journal, ReviewApplicationService Reviews) Services(DateTimeOffset? now = null)
     {
         var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
-        return (new JournalApplicationService(new JournalService(repository)), new ReviewApplicationService(repository));
+        var clock = new FrozenTimeProvider(now ?? new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
+        return (
+            new JournalApplicationService(new JournalService(repository, clock), clock),
+            new ReviewApplicationService(repository));
+    }
+
+    private static CaptureResult Capture(
+        JournalApplicationService journal,
+        string name,
+        PlannedPeriod plannedPeriod)
+    {
+        var result = journal.Capture(name, null, null, plannedPeriod, null);
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        return result.Value!;
     }
 
     private static ClaimsPrincipal Principal() => new(new ClaimsIdentity(
@@ -184,6 +399,19 @@ public sealed class ChatApprovalBoundaryTests
     private sealed class TestHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class FailingChatToolExecutor(IChatToolExecutor inner, string failedTool) : IChatToolExecutor
+    {
+        public ChatToolResult Execute(ChatToolRequest request) =>
+            request.Name == failedTool
+                ? new ChatToolResult(false, "The test query failed.", null)
+                : inner.Execute(request);
+    }
+
+    private sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class ModelHandler(Guid listId, Guid proposalId) : HttpMessageHandler
