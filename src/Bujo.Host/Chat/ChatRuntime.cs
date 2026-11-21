@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Azure.Core;
 using Azure.Identity;
 using Bujo.Application;
@@ -14,7 +15,7 @@ namespace Bujo.Host.Chat;
 
 public sealed class ChatRuntime : IChatRuntime
 {
-    private readonly ChatToolExecutor _tools;
+    private readonly IChatToolExecutor _tools;
     private readonly JournalApplicationService _journal;
     private readonly ChatConversationStateStore _conversationStates;
     private readonly ChatOptions _options;
@@ -28,10 +29,11 @@ public sealed class ChatRuntime : IChatRuntime
         IOptions<ChatOptions> options,
         IHttpClientFactory httpClientFactory,
         TokenCredential? credential = null,
-        ChatConversationStateStore? conversationStates = null)
+        ChatConversationStateStore? conversationStates = null,
+        IChatToolExecutor? toolExecutor = null)
     {
         _journal = journal;
-        _tools = new ChatToolExecutor(journal, reviews);
+        _tools = toolExecutor ?? new ChatToolExecutor(journal, reviews);
         _conversationStates = conversationStates ?? new ChatConversationStateStore();
         _options = options.Value;
         _httpClientFactory = httpClientFactory;
@@ -40,6 +42,17 @@ public sealed class ChatRuntime : IChatRuntime
             _options.Endpoint,
             _options.Deployment,
             _options.ApiVersion);
+    }
+
+    public ChatRuntime(
+        JournalApplicationService journal,
+        ReviewApplicationService reviews,
+        IOptions<ChatOptions> options,
+        IHttpClientFactory httpClientFactory,
+        TokenCredential? credential,
+        IChatToolExecutor toolExecutor)
+        : this(journal, reviews, options, httpClientFactory, credential, null, toolExecutor)
+    {
     }
 
     public Task<ChatRunResult> RunAsync(
@@ -69,9 +82,93 @@ public sealed class ChatRuntime : IChatRuntime
             return Task.FromResult(StartNextWeekCapture(request, principal, taskName));
         }
 
+        if (IsOverdueAndWeekQuestion(request.Message))
+        {
+            return RunOverdueAndWeekAsync(request, principal, cancellationToken);
+        }
+
         return StringComparer.OrdinalIgnoreCase.Equals(_options.Provider, "Foundry")
             ? RunFoundryAsync(request, principal, cancellationToken)
             : RunMockAsync(request, principal, cancellationToken);
+    }
+
+    private Task<ChatRunResult> RunOverdueAndWeekAsync(
+        ChatRunRequest request,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var toolCalls = new List<ChatToolCall>();
+        var proposals = new List<ChatProposalCard>();
+        var dailyResult = Execute(
+            "get_daily_start",
+            new { timeZone = request.TimeZone },
+            principal,
+            toolCalls);
+        var daily = dailyResult.Succeeded ? dailyResult.Value as DailyStartReview : null;
+        var dailyError = daily is null
+            ? dailyResult.Succeeded ? "The daily-start query returned no usable data." : dailyResult.Summary
+            : null;
+
+        var upcomingPages = new List<UpcomingPlan>();
+        string? upcomingError = null;
+        var page = 1;
+        while (true)
+        {
+            var upcomingResult = Execute(
+                "get_upcoming",
+                new { timeZone = request.TimeZone, horizon = 7, page, limit = 50, futureLog = false },
+                principal,
+                toolCalls);
+            if (!upcomingResult.Succeeded || upcomingResult.Value is not UpcomingPlan upcoming)
+            {
+                upcomingError = upcomingResult.Succeeded
+                    ? "The upcoming query returned no usable data."
+                    : upcomingResult.Summary;
+                break;
+            }
+
+            upcomingPages.Add(upcoming);
+            if (!upcoming.Truncated)
+            {
+                break;
+            }
+
+            page++;
+        }
+
+        var overdueItems = daily?.Groups
+            .SingleOrDefault(group => group.Code == "Overdue")?.Items ?? [];
+        var resultText = new List<string>
+        {
+            daily is null
+                ? $"Overdue: I couldn't load overdue items ({dailyError})."
+                : FormatItems("Overdue", overdueItems, "No overdue open items.")
+        };
+        if (upcomingPages.Count == 0)
+        {
+            resultText.Add($"This week: I couldn't load open work for the local week ({upcomingError}).");
+        }
+        else
+        {
+            var remainingWeek = RemainingLocalWeek(upcomingPages[0].Today);
+            var thisWeekItems = upcomingPages
+                .SelectMany(upcoming => upcoming.Groups)
+                .SelectMany(group => group.Items)
+                .Where(item => PlannedPeriodRanges.For(item.PlannedPeriod) is { } range &&
+                               range.Overlaps(remainingWeek))
+                .DistinctBy(item => item.ItemId)
+                .ToArray();
+            var thisWeekText = FormatItems(
+                "This week",
+                thisWeekItems,
+                "No open planned items overlap the remaining local week.");
+            resultText.Add(upcomingError is null
+                ? thisWeekText
+                : $"{thisWeekText} I couldn't load the remaining items ({upcomingError}).");
+        }
+
+        return Task.FromResult(Done(string.Join(Environment.NewLine, resultText), toolCalls, proposals));
     }
 
     private ChatRunResult StartNextWeekCapture(
@@ -954,6 +1051,41 @@ public sealed class ChatRuntime : IChatRuntime
 
     private static bool StartsWith(string text, params string[] prefixes) =>
         prefixes.Any(prefix => text.StartsWith(prefix, StringComparison.Ordinal));
+
+    private static bool IsOverdueAndWeekQuestion(string text)
+    {
+        var lower = text.ToLowerInvariant();
+        return Regex.IsMatch(
+                   lower,
+                   @"\b(?:overdue|over[\s-]+due|past[\s-]+(?:their[\s-]+)?due(?:[\s-]+date)?|late|missed|behind[\s-]+(?:on|schedule))\b",
+                   RegexOptions.CultureInvariant) &&
+               Regex.IsMatch(
+                   lower,
+                   @"\b(?:week|weekly|focus|priorit[a-z]*|what\s+should\s+i\s+(?:do|work\s+on))\b",
+                   RegexOptions.CultureInvariant);
+    }
+
+    private static CalendarDateRange RemainingLocalWeek(DateOnly today)
+    {
+        var daysSinceMonday = ((int)today.DayOfWeek + 6) % 7;
+        return new CalendarDateRange(
+            today,
+            PlannedPeriodRanges.AddDaysClamped(today, 6 - daysSinceMonday));
+    }
+
+    private static string FormatItems(
+        string label,
+        IReadOnlyList<PlannedReviewItem> items,
+        string emptyMessage)
+    {
+        if (items.Count == 0)
+        {
+            return $"{label}: {emptyMessage}";
+        }
+
+        var names = items.Select(item => item.Text.Replace('\r', ' ').Replace('\n', ' ').Trim());
+        return $"{label} ({items.Count}): {string.Join("; ", names)}.";
+    }
 
     private static string StripPrefix(string text, params string[] prefixes)
     {
