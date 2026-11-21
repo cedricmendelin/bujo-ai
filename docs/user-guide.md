@@ -56,6 +56,12 @@ so changing your mind doesn't erase the original plan. The web app and a
   after its unfinished tasks are resolved; Thoughts do not block closure. The
   Future Log stays open.
 
+For repeatable assistant routines, see the versioned
+[Bujo assistant skills](../assistants/README.md). Manual equivalents are to open
+**Today** for a daily review, use **Capture** for one item, and select **Start
+review** on a weekly list. No client is verified for unattended scheduled Bujo
+prompts; use these in-app flows until a specific client is verified.
+
 ## Save reference material
 
 Use **Knowledge** for notes, concepts, and quotes you want to find again, rather
@@ -73,9 +79,10 @@ restoring an older one.
 Use the web app for direct edits and review approval. If **Chat** is enabled,
 try asking what is planned for today; available actions depend on the configured
 provider. Chat history isn't saved by the app. You can also use your own
-assistant through [remote MCP](mcp.md) if your deployment and client support
-the connection. If chat or MCP isn't available, use **Today**, **Capture**,
-**Lists**, and **Knowledge** directly.
+assistant through [remote MCP](mcp.md) or use its versioned skills if your
+deployment and client support the connection. Client compatibility and
+scheduled execution remain unverified. If chat or MCP isn't available, use
+**Today**, **Capture**, **Lists**, and **Knowledge** directly.
 
 The app is online-first: even if your browser lets you install it, it doesn't
 queue offline edits. If the connection drops during a save, reconnect and check
