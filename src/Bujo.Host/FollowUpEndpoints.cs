@@ -48,5 +48,7 @@ public static class FollowUpEndpoints
 
     public sealed record RecordEvidenceRequest(EvidenceSource Source, FollowUpObservation Observation, string? CheckedScope);
     public sealed record DeferFollowUpRequest(DateTimeOffset? DueAtUtc);
-    public sealed record FollowUpDraftRequest(string? Draft, [property: JsonRequired] string? ExpectedDraft);
+    public sealed record FollowUpDraftRequest(
+        [property: JsonRequired] string? Draft,
+        [property: JsonRequired] string? ExpectedDraft);
 }

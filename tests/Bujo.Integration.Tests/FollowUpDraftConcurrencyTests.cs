@@ -54,9 +54,15 @@ public sealed class FollowUpDraftConcurrencyTests
         using var retained = await second.GetAsync(path);
         Assert.Equal("First client", (await Body(retained)).GetProperty("draft").GetString());
 
+        using var omittedDraft = await first.PutAsJsonAsync($"{path}/draft",
+            new { expectedDraft = "First client" });
+        Assert.Equal(HttpStatusCode.BadRequest, omittedDraft.StatusCode);
+        using var retainedAfterOmission = await second.GetAsync(path);
+        Assert.Equal("First client", (await Body(retainedAfterOmission)).GetProperty("draft").GetString());
         using var clear = await first.PutAsJsonAsync($"{path}/draft",
             new { draft = (string?)null, expectedDraft = "First client" });
         Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+        Assert.Equal(JsonValueKind.Null, (await Body(clear)).GetProperty("draft").ValueKind);
 
         await using var firstTransport = Transport(first);
         await using var secondTransport = Transport(second);
@@ -65,6 +71,7 @@ public sealed class FollowUpDraftConcurrencyTests
         var schema = (await firstMcp.ListToolsAsync()).Single(tool => tool.Name == "set_followup_draft")
             .ProtocolTool.InputSchema;
         Assert.Contains("expectedDraft", schema.GetProperty("required").EnumerateArray().Select(value => value.GetString()));
+        Assert.Contains("draft", schema.GetProperty("required").EnumerateArray().Select(value => value.GetString()));
         var args = new Dictionary<string, object?> { ["id"] = id };
         var mcpFirstRead = await firstMcp.CallToolAsync("get_followup", args);
         var mcpSecondRead = await secondMcp.CallToolAsync("get_followup", args);
@@ -107,6 +114,26 @@ public sealed class FollowUpDraftConcurrencyTests
         Assert.Equal("ConcurrencyConflict", mcpStaleString.StructuredContent!.Value.GetProperty("code").GetString());
         using var updatedRead = await second.GetAsync(path);
         Assert.Equal("MCP updated", (await Body(updatedRead)).GetProperty("draft").GetString());
+        var mcpOmittedDraft = await firstMcp.CallToolAsync("set_followup_draft", new Dictionary<string, object?>
+        {
+            ["id"] = id, ["expectedDraft"] = "MCP updated"
+        });
+        Assert.True(mcpOmittedDraft.IsError);
+        var mcpInvalidDraft = await firstMcp.CallToolAsync("set_followup_draft", new Dictionary<string, object?>
+        {
+            ["id"] = id, ["draft"] = 42, ["expectedDraft"] = "MCP updated"
+        });
+        Assert.True(mcpInvalidDraft.IsError);
+        using var mcpRetained = await second.GetAsync(path);
+        Assert.Equal("MCP updated", (await Body(mcpRetained)).GetProperty("draft").GetString());
+        var mcpClear = await firstMcp.CallToolAsync("set_followup_draft", new Dictionary<string, object?>
+        {
+            ["id"] = id, ["draft"] = null, ["expectedDraft"] = "MCP updated"
+        });
+        Assert.False(mcpClear.IsError);
+        Assert.Equal(JsonValueKind.Null, mcpClear.StructuredContent!.Value.GetProperty("draft").ValueKind);
+        using var clearedRead = await second.GetAsync(path);
+        Assert.Equal(JsonValueKind.Null, (await Body(clearedRead)).GetProperty("draft").ValueKind);
     }
 
     private static HttpClientTransport Transport(HttpClient client) => new(new HttpClientTransportOptions

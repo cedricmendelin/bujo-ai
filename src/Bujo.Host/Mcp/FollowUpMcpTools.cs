@@ -45,7 +45,7 @@ public sealed class FollowUpMcpTools
         McpErrors.From(followUps.Defer(id, dueAtUtc));
 
     [McpServerTool(Name = "set_followup_draft"), Description(
-        "Stores or clears user-authored plain text for review or copying only if expectedDraft matches the current draft. Supply expectedDraft explicitly: null means no draft. A stale value returns a conflict. Nothing is ever sent.")]
+        "Stores or clears user-authored plain text for review or copying only if expectedDraft matches the current draft. Supply draft explicitly: null clears it. Supply expectedDraft explicitly: null means no current draft. A stale value returns a conflict. Nothing is ever sent.")]
     public static CallToolResult SetFollowUpDraft(
         FollowUpApplicationService followUps, Guid id, string? draft,
         [Description("Required current draft as a string, or null if no draft exists.")] JsonElement expectedDraft) =>

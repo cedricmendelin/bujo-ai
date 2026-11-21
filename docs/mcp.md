@@ -136,10 +136,10 @@ provided. The tools do not generate draft text.
 
 To update a draft, first read it with `get_followup` (or the matching API
 endpoint). Both `set_followup_draft` and `PUT /api/followups/{id}/draft`
-require `expectedDraft`: provide the exact current draft string, or the literal
-JSON `null` if there is no current draft. Do not omit the field or substitute
-the string `"null"` to mean no draft. For example, MCP tool arguments for a
-first draft are:
+require explicit `draft` and `expectedDraft` fields. Provide the exact current
+draft string as `expectedDraft`, or the literal JSON `null` if there is no
+current draft. Do not substitute the string `"null"` to mean no draft. For
+example, MCP tool arguments for a first draft are:
 
 ```json
 {
@@ -149,12 +149,13 @@ first draft are:
 }
 ```
 
-For the API, put the `draft` and `expectedDraft` fields in the request body
-and use the follow-up ID in the URL. Set `draft` to `null` to clear it. An
-omitted `expectedDraft` is rejected; invalid MCP value types also produce a
-tool error. A stale expected value returns `ConcurrencyConflict` without
-changing the saved draft. Read the latest follow-up and review it before
-trying again. Draft text is for review or copying only; nothing is sent.
+For the API, put both fields in the request body and use the follow-up ID in
+the URL. For either surface, explicitly set `draft` to JSON `null` to clear
+it; omitting either field is rejected without changing the saved draft. Invalid
+MCP value types also produce a tool error. A stale expected value returns
+`ConcurrencyConflict` without changing the saved draft. Read the latest
+follow-up and review it before trying again. Draft text is for review or
+copying only; nothing is sent.
 
 There is no live mailbox or calendar integration, background scheduler,
 closed-app notification, external sending, or AI-generated follow-up draft in
