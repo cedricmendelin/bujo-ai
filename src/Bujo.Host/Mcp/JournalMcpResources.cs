@@ -43,6 +43,11 @@ public sealed class JournalMcpResources
         changing occurrence states. The server does not interpret relative dates,
         run schedules, or connect to mail or calendars. Prompts are reusable
         templates only; they do not enable client scheduling or grant write authority.
+        family_weekend_ideas guides suggestions grounded in saved knowledge and asks
+        about missing constraints. It adds no tool or endpoint and does not itself
+        call write tools, book activities, message anyone, or write to a calendar.
+        Public search is only possible when explicitly requested and already
+        available in the user's client; the host does not provide public search.
 
         Knowledge entries preserve user-authored wording and stable IDs. Source
         references are stored but never fetched. Search uses English full-text

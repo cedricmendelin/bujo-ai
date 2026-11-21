@@ -181,7 +181,10 @@ unavailable. The system must not silently treat missing evidence as proof.
 - Set goals and plan the week.
 - Review older backlog items and decide whether to act, move, or abandon them.
 - "We have a free family weekend next week; what could we do?"
-  Consult saved ideas and, if authorized, calendar and web information.
+  The `family_weekend_ideas` MCP prompt can suggest from explicitly saved
+  Knowledge entries after asking about relevant constraints. It does not access
+  the calendar; public information is used only if explicitly requested and
+  already available in the assistant client.
 
 ## Decisions to challenge together
 
