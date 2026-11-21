@@ -7,6 +7,7 @@ namespace Bujo.E2E.Tests;
 internal sealed class BrowserJournalRepository : IJournalRepository
 {
     private readonly InMemoryJournalRepository _inner = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+    internal InMemoryJournalRepository Inner => _inner;
     private int _loseMoveReply;
     private int _failReads;
 

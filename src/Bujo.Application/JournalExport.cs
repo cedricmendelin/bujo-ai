@@ -5,6 +5,12 @@ namespace Bujo.Application;
 
 public sealed class JournalExport(TimeProvider clock) : IJournalExport
 {
+    public JournalExportDocument Create(JournalBackupSnapshot snapshot) =>
+        Create(snapshot.ToJournalSnapshot()) with
+        {
+            FollowUps = snapshot.FollowUps?.FollowUps.OrderBy(item => item.Id).ToArray() ?? []
+        };
+
     public JournalExportDocument Create(JournalSnapshot snapshot) =>
         new(
             1,

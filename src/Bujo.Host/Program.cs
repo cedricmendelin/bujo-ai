@@ -155,6 +155,7 @@ builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
     .WithTools<JournalMcpTools>()
     .WithTools<KnowledgeMcpTools>()
+    .WithTools<FollowUpMcpTools>()
     .WithPrompts<JournalMcpPrompts>()
     .WithResources<JournalMcpResources>();
 builder.Services.AddHealthChecks()
@@ -263,6 +264,7 @@ if (shouldVerifyDatabase || builder.Configuration.GetValue<bool>("Deployment:Ver
 
 app.MapJournalEndpoints();
 app.MapKnowledgeEndpoints();
+app.MapFollowUpEndpoints();
 app.MapProtectedResourceMetadata();
 app.MapMcp("/mcp").RequireAuthorization("ApprovedPrincipal");
 app.MapChatEndpoints();

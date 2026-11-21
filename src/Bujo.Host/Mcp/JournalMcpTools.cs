@@ -27,11 +27,11 @@ public sealed class JournalMcpTools
     }
 
     [McpServerTool(Name = "export_journal", ReadOnly = true, Destructive = false), Description("Exports the current journal as versioned JSON. The result contains sensitive journal data.")]
-    public static CallToolResult ExportJournal(JournalApplicationService journal, IJournalExport export)
+    public static CallToolResult ExportJournal(JournalBackupApplicationService backup, IJournalExport export)
     {
         try
         {
-            return McpErrors.Success(export.Create(journal.GetSnapshot()));
+            return McpErrors.Success(export.Create(backup.ExportJournalWithFollowUps()));
         }
         catch
         {

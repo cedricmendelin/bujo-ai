@@ -5,6 +5,8 @@ namespace Bujo.Infrastructure.Persistence;
 public sealed class InMemoryJournalRepository : IJournalRepository
 {
     private readonly object _gate = new();
+    internal object SyncRoot => _gate;
+    internal Dictionary<Guid, FollowUp> FollowUps { get; } = [];
     private readonly Dictionary<Guid, Item> _items = [];
     private readonly Dictionary<Guid, JournalList> _lists = [];
     private readonly Dictionary<Guid, Occurrence> _occurrences = [];
@@ -73,6 +75,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             try
             {
                 ValidateSnapshot(snapshot);
+                var ids = snapshot.Items.Select(item => item.Id).ToHashSet();
+                if (FollowUps.Values.Any(followUp => followUp.ItemId is { } id && !ids.Contains(id)))
+                {
+                    throw DomainLimits.Invalid("The restore would leave a follow-up item reference missing.");
+                }
                 RestoreUnsafe(snapshot, []);
                 _reviewProposals.Clear();
                 return DomainResult<JournalSnapshot>.Success(SnapshotUnsafe());

@@ -1,0 +1,67 @@
+@page "/followups/new"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits FollowUpPage
+
+<PageTitle>Capture follow-up · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Capture a follow-up</h1>
+    <p>Manual evidence is recorded by you. No mailbox is checked and nothing is sent.</p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (_savedId is { } id)
+    {
+        <p><a href="/followups/@id">Review saved follow-up</a></p>
+    }
+    @if (Ready)
+    {
+        <form method="post" data-journal-write data-journal-form @onsubmit="CaptureAsync" @onsubmit:preventDefault>
+            <fieldset class="journal-form" disabled="@Busy">
+                <legend>New follow-up</legend>
+                <label for="followup-title">Title</label>
+                <input id="followup-title" @bind="_title" maxlength="@DomainLimits.FollowUpTitle" required />
+                <label for="followup-condition">Condition</label>
+                <textarea id="followup-condition" @bind="_condition" maxlength="@DomainLimits.FollowUpCondition" required></textarea>
+                <label for="followup-due">Due date and time (@Zone)</label>
+                <input id="followup-due" type="datetime-local" value="@_due" @onchange="e => _due = e.Value?.ToString() ?? string.Empty" required />
+                <label for="followup-source">Evidence source</label>
+                <select id="followup-source" @bind="_source" required>
+                    <option value="">Select a source</option>
+                    <option value="Manual">Manual</option>
+                </select>
+                <label for="followup-item">Journal item ID (optional)</label>
+                <input id="followup-item" @bind="_item" />
+                <button type="submit">Save follow-up</button>
+            </fieldset>
+        </form>
+    }
+</div>
+
+@code {
+    private string _title = "";
+    private string _condition = "";
+    private string _due = "";
+    private string _source = "";
+    private string _item = "";
+    private Guid? _savedId;
+
+    protected override void Read() => _ = UserZone();
+
+    private Task CaptureAsync() => SaveAsync(() =>
+    {
+        if (_source != "Manual")
+            throw new DomainException(DomainErrorCode.InvariantViolation, "Select the manual evidence source.");
+        Guid? itemId = null;
+        if (!string.IsNullOrWhiteSpace(_item))
+        {
+            if (!Guid.TryParse(_item, out var parsed))
+                throw new DomainException(DomainErrorCode.InvariantViolation, "Enter a valid journal item ID.");
+            itemId = parsed;
+        }
+        return FollowUps.Capture(_title, _condition, ToUtc(_due), UserZone().Id, itemId, EvidenceSource.Manual);
+    }, saved =>
+    {
+        _savedId = saved.Id;
+        _title = _condition = _due = _source = _item = "";
+        return "Follow-up saved.";
+    });
+}

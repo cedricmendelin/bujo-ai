@@ -85,7 +85,7 @@ request supplies a planned period. A separate Inbox is not part of this slice.
 ### Agreed planning model
 
 Each item has one optional planned period with day, week, month, quarter, or year
-precision, or is unplanned. There are no separate planned/due/reminder dates.
+precision, or is unplanned. Items have no separate planned/due/reminder dates.
 "In two weeks" selects a week; "next Tuesday" selects a day.
 
 Planned period expresses intention, not a hard deadline. It is separate from list
@@ -164,9 +164,26 @@ assistant-driven actions. Whether these integrations belong in Bujo-AI or in
 external assistants is unresolved. Connecting an assistant does not implicitly
 authorize reading private sources or sending messages.
 
-Conditional reminders such as "if I have not heard from someone" require an
-explicit evidence source, permission, and defined behavior when evidence is
-unavailable. The system must not silently treat missing evidence as proof.
+### Conditional follow-ups
+
+The separate follow-up record captures an intention such as “follow up in two
+weeks if I haven't heard back.” Unlike an item's planned period, a follow-up
+has a due instant and an explicitly selected evidence source. It may link to
+an item without changing the item's
+list, occurrence, or planned period.
+
+Manual is the only evidence source: the user records a reply seen or
+no reply seen within a stated checked scope. Missing evidence, or a no-reply
+observation without a scope, is unavailable evidence, never proof of absence.
+Corrections preserve evidence history. Review is pull-based when the app is
+opened or an assistant asks; the user may dismiss or defer explicitly.
+
+The follow-up can hold text written or pasted by the user for review or
+copying, but does not generate AI drafts, send messages, contact anyone, read
+a live mailbox, or run a scheduler or closed-app notification. Live mailbox
+evidence requires a separate approved scoped integration and
+privacy/reliability verification. Connecting an assistant does not confer that
+permission.
 
 ## Example journeys
 
@@ -176,7 +193,8 @@ unavailable. The system must not silently treat missing evidence as proof.
 - "In two weeks I need to order diapers." Capture an item planned for that week,
   resurfaced by the relevant ceremony.
 - "If I have not heard from Peter, ask him in two weeks how he is."
-  Clarify whether to remind the user or actually send a message.
+  Capture a manual-evidence follow-up for review; the follow-up feature does
+  not send the message.
 - "What do I need to do today?"
 - Set goals and plan the week.
 - Review older backlog items and decide whether to act, move, or abandon them.

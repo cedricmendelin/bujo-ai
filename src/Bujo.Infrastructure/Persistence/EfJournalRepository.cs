@@ -26,8 +26,8 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
             {
                 using var context = contextFactory.CreateDbContext();
                 using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
-                ReplaceJournal(context, snapshot);
-                context.SaveChanges();
+                var followUps = EfJournalBackupRepository.LoadFollowUps(context);
+                EfJournalBackupRepository.ReplaceJournalAndFollowUps(context, snapshot, followUps);
                 transaction.Commit();
                 return DomainResult<JournalSnapshot>.Success(LoadSnapshot(context, tracked: false));
             });

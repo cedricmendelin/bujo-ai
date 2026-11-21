@@ -1,0 +1,36 @@
+@inherits FollowUpPage
+
+<section data-requires-circuit aria-labelledby="followups-due-heading">
+    <h2 id="followups-due-heading">Follow-ups due</h2>
+    <p>Reminders are shown when you open the app; nothing is sent automatically.</p>
+    <p><a href="/followups/new">Capture a follow-up</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (Ready)
+    {
+        @if (_due.Count == 0)
+        {
+            <p>No follow-ups due.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var item in _due)
+                {
+                    <li><a href="/followups/@item.Id">@item.Title</a> · Due @DisplayDue(item.DueAtUtc)</li>
+                }
+            </ul>
+        }
+    }
+</section>
+
+@code {
+    private IReadOnlyList<FollowUpSnapshot> _due = [];
+
+    protected override void Read()
+    {
+        _ = UserZone();
+        var result = FollowUps.ListDue();
+        if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
+        _due = result.Value!;
+    }
+}

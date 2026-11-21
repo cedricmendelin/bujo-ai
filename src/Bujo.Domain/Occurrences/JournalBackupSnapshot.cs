@@ -6,7 +6,8 @@ public sealed record JournalBackupSnapshot(
     IReadOnlyList<JournalListSnapshot> Lists,
     IReadOnlyList<OccurrenceSnapshot> Occurrences,
     IReadOnlyList<JournalEvent> History,
-    KnowledgeBackupSnapshot? Knowledge = null)
+    KnowledgeBackupSnapshot? Knowledge = null,
+    FollowUpBackupSnapshot? FollowUps = null)
 {
     public JournalSnapshot ToJournalSnapshot() =>
         JournalSnapshot.Restore(Items, Lists, Occurrences, History);

@@ -27,13 +27,13 @@ public static class JournalEndpoints
             }
         });
         api.MapGet("/journal/export", (
-            JournalApplicationService journal,
+            JournalBackupApplicationService backup,
             IJournalExport export,
             ILoggerFactory loggerFactory) =>
         {
             try
             {
-                return Results.Ok(export.Create(journal.GetSnapshot()));
+                return Results.Ok(export.Create(backup.ExportJournalWithFollowUps()));
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {

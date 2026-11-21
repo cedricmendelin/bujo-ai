@@ -56,6 +56,35 @@ so changing your mind doesn't erase the original plan. The web app and a
   after its unfinished tasks are resolved; Thoughts do not block closure. The
   Future Log stays open.
 
+## Conditional follow-ups
+
+1. On the start page, find **Follow-ups due** and select **Capture a follow-up**.
+   Enter **Title**, **Condition** (for example, “if I haven't heard back”),
+   **Due date and time**, and explicitly select **Manual** under **Evidence
+   source**. Optionally enter a **Journal item ID** for an existing item.
+   Select **Save follow-up**; use **Review saved follow-up** to open it.
+2. The due time is entered and displayed in your browser's time zone and stored
+   in UTC. If a local time does not exist or occurs twice because of a clock
+   change, choose another time. Pending follow-ups appear in **Follow-ups due**
+   when due; select the title to review one.
+3. Under **Record or correct manual evidence**, choose **Reply seen** or **No
+   reply seen**. For a no-reply outcome, enter what you checked in **Checked
+   scope**, such as “inbox and spam, 3 Dec”, and select **Record evidence**.
+   With no evidence or no scope for a no-reply observation, the outcome is
+   **Evidence unavailable**, not proof that no reply exists. A no-reply outcome
+   applies only to the recorded scope.
+4. Record another observation to correct the outcome. **Evidence history**
+   keeps prior entries; the latest entry determines the outcome. Choose
+   **Defer** with a new due time or **Dismiss follow-up** explicitly. Under
+   **Draft for review**, write or paste text and select **Save draft**; it is
+   never sent. If another edit changed the draft, copy your unsaved text before
+   choosing **Load latest draft and discard my edit**.
+
+This is a pull-based review, not a scheduler or closed-app notification. The
+feature does not read a live mailbox, contact anyone, or send messages
+automatically, and does not generate AI drafts. Live mailbox evidence needs a
+separately approved integration and privacy/reliability verification.
+
 ## Save reference material
 
 Use **Knowledge** for notes, concepts, and quotes you want to find again, rather
@@ -64,9 +93,11 @@ original passage, optionally with a title, source reference, and tags. Search
 by words, quoted phrases, or tags (all selected tags must match).
 Archive an entry to hide it from default search
 without deleting it. **Knowledge → Journal backup** exports the journal and
-knowledge as a JSON file containing private data. Keep it somewhere secure.
-Restoring from a backup replaces current data; export a fresh backup before
-restoring an older one.
+knowledge and follow-ups as a JSON file containing private data. Keep it
+somewhere secure. Restoring from a backup replaces current data; export a fresh
+backup before restoring an older one. A backup without follow-ups retains
+current follow-ups, but restore is rejected if a retained follow-up would point
+to an item missing from the backup. See the [backup warning](operations.md#follow-up-backup-and-rollback-warning).
 
 ## Choose how to interact
 

@@ -1,3 +1,5 @@
+using Bujo.Domain;
+
 namespace Bujo.Application;
 
 public sealed record JournalExportDocument(
@@ -7,7 +9,8 @@ public sealed record JournalExportDocument(
     IReadOnlyList<JournalItemExport> Items,
     IReadOnlyList<JournalOccurrenceExport> Occurrences,
     IReadOnlyList<JournalEventExport> History,
-    IReadOnlyList<JournalKnowledgeExport> KnowledgeEntries);
+    IReadOnlyList<JournalKnowledgeExport> KnowledgeEntries,
+    IReadOnlyList<FollowUpSnapshot>? FollowUps = null);
 
 public sealed record JournalListExport(
     Guid Id,
