@@ -10,7 +10,7 @@ public sealed class JournalMcpPrompts
     [McpServerPrompt(Name = "capture_item"), Description("Guide for capturing one journal item without inferring a destination or relative date.")]
     public static string CaptureItem(
         [Description("The user's intended item text.")] string itemText) =>
-        $"Capture exactly one item based on this request: {itemText}. Ask for clarification if a list or calendar period is ambiguous. Use a list ID, and pass an explicit ISO planned period; otherwise leave it unplanned in the Future Log.";
+        $"Capture exactly one item based on this request: {itemText}. Use Thought for learning or reflection and Task for an explicit action. Ask for clarification before writing if the type or intent is mixed or ambiguous, or if a list or calendar period is ambiguous. Use a list ID, and pass an explicit ISO planned period; otherwise leave it unplanned in the Future Log. Confirm only a successfully persisted tool result; report failures without claiming a save.";
 
     [McpServerPrompt(Name = "daily_start"), Description("Guide for reviewing daily-start results without automatically changing the journal.")]
     public static string DailyStart(

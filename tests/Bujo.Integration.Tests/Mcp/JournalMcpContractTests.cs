@@ -107,6 +107,79 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     }
 
     [Fact]
+    public async Task CaptureTypeSchemaValidationAndReadsMatchTheSharedContract()
+    {
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            }, httpClient, NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+        var schema = (await mcp.ListToolsAsync()).Single(tool => tool.Name == "capture_item").ProtocolTool.InputSchema;
+        var prompt = JournalMcpPrompts.CaptureItem("I learnt about XY");
+        Assert.Contains("Thought for learning or reflection", prompt);
+        Assert.Contains("mixed or ambiguous", prompt);
+        Assert.Contains("successfully persisted", prompt);
+        var typeSchema = schema.GetProperty("properties").GetProperty("type");
+        Assert.Contains("string", typeSchema.GetProperty("type").ToString());
+        Assert.Contains("Thought", typeSchema.GetProperty("description").GetString());
+        if (schema.TryGetProperty("required", out var required))
+        {
+            Assert.DoesNotContain("type", required.EnumerateArray().Select(value => value.GetString()));
+        }
+
+        var name = $"Reflection {Guid.NewGuid()}";
+        var thought = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = name, ["type"] = "tHoUgHt"
+        });
+        Assert.False(thought.IsError);
+        var item = thought.StructuredContent!.Value.GetProperty("item");
+        var id = item.GetProperty("id").GetGuid();
+        Assert.Equal((int)ItemType.Thought, item.GetProperty("type").GetInt32());
+
+        foreach (var type in new object?[] { null, "tAsK" })
+        {
+            var task = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+            {
+                ["name"] = $"Task {Guid.NewGuid()}", ["type"] = type
+            });
+            Assert.False(task.IsError);
+            Assert.Equal((int)ItemType.Task, task.StructuredContent!.Value.GetProperty("item").GetProperty("type").GetInt32());
+        }
+
+        var legacy = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+        {
+            ["name"] = $"Legacy {Guid.NewGuid()}"
+        });
+        Assert.False(legacy.IsError);
+        Assert.Equal((int)ItemType.Task, legacy.StructuredContent!.Value.GetProperty("item").GetProperty("type").GetInt32());
+
+        foreach (var invalid in new[] { "", "1", "other" })
+        {
+            var failed = await mcp.CallToolAsync("capture_item", new Dictionary<string, object?>
+            {
+                ["name"] = $"Invalid {Guid.NewGuid()}", ["type"] = invalid
+            });
+            Assert.True(failed.IsError);
+            Assert.Equal("InvalidInput", GetErrorCode(failed));
+        }
+
+        var snapshot = await mcp.CallToolAsync("get_journal");
+        var read = snapshot.StructuredContent!.Value.GetProperty("items").EnumerateArray()
+            .Single(entry => entry.GetProperty("id").GetGuid() == id);
+        Assert.Equal((int)ItemType.Thought, read.GetProperty("type").GetInt32());
+        var complete = await mcp.CallToolAsync("complete_occurrence", new Dictionary<string, object?>
+        {
+            ["occurrenceId"] = item.GetProperty("currentOccurrenceId").GetGuid()
+        });
+        Assert.True(complete.IsError);
+    }
+
+    [Fact]
     public async Task McpEndpointRequiresApprovedPrincipalAndPublishesProtectedResourceMetadata()
     {
         using var client = _factory.CreateClient();

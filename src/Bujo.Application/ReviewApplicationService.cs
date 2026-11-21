@@ -71,12 +71,15 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
                 return Conflict<ReviewProposalSnapshot>("The list changed since the review was opened.");
             }
 
-            if (closeReview.Value.Unfinished.Count != 0)
+            var unfinishedTasks = closeReview.Value.Unfinished
+                .Where(entry => entry.Item.Type == ItemType.Task)
+                .ToArray();
+            if (unfinishedTasks.Length != 0)
             {
                 return DomainResult<ReviewProposalSnapshot>.Failure(new DomainError(
                     DomainErrorCode.UnresolvedOccurrences,
-                    "A closing proposal must explicitly resolve every unfinished occurrence.",
-                    closeReview.Value.Unfinished.Select(entry => entry.Occurrence.Id).ToArray()));
+                    "A closing proposal must explicitly resolve every unfinished task.",
+                    unfinishedTasks.Select(entry => entry.Occurrence.Id).ToArray()));
             }
 
             var closeProposalId = Guid.NewGuid();
@@ -151,6 +154,11 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
                 return Conflict<ReviewProposalSnapshot>("An item changed since the review was opened.");
             }
 
+            if (item.Type == ItemType.Thought && requestedChange.Action != ReviewDisposition.Move)
+            {
+                return InvalidProposal("Thoughts do not support task dispositions.");
+            }
+
             if (requestedChange.Action == ReviewDisposition.Move)
             {
                 if (requestedChange.DestinationListId is not { } destinationId ||
@@ -194,13 +202,14 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
         }
 
         if (request.RequestCloseList &&
-            !review.Value.Unfinished.Select(entry => entry.Occurrence.Id).ToHashSet().SetEquals(seenOccurrences))
+            review.Value.Unfinished.Any(entry =>
+                entry.Item.Type == ItemType.Task && !seenOccurrences.Contains(entry.Occurrence.Id)))
         {
             return DomainResult<ReviewProposalSnapshot>.Failure(new DomainError(
                 DomainErrorCode.UnresolvedOccurrences,
-                "A closing proposal must explicitly resolve every unfinished occurrence.",
+                "A closing proposal must explicitly resolve every unfinished task.",
                 review.Value.Unfinished
-                    .Where(entry => !seenOccurrences.Contains(entry.Occurrence.Id))
+                    .Where(entry => entry.Item.Type == ItemType.Task && !seenOccurrences.Contains(entry.Occurrence.Id))
                     .Select(entry => entry.Occurrence.Id)
                     .ToArray()));
         }
@@ -500,6 +509,8 @@ public sealed class ReviewApplicationService(IJournalRepository repository, Time
             foreach (var occurrence in snapshot.Occurrences.Where(candidate =>
                          candidate.ListId == list.Id &&
                          candidate.State == OccurrenceState.Open &&
+                         items.TryGetValue(candidate.ItemId, out var item) &&
+                         item.Type == ItemType.Task &&
                          !changedOccurrences.Contains(candidate.Id)))
             {
                 details.Add($"Unresolved occurrence {occurrence.Id} is not in this proposal.");

@@ -14,7 +14,8 @@ public sealed record PlannedReviewItem(
     string ReasonCode,
     string Reason,
     ReviewDestination Destination,
-    bool Conflict);
+    bool Conflict,
+    ItemType Type = ItemType.Task);
 
 public sealed record DailyStartGroup(
     string Code,
@@ -65,7 +66,10 @@ public static class PlannedReviewQueries
             return DomainResult<DailyStartReview>.Failure(resolutions.Error!);
         }
 
-        var active = resolutions.Value!.Where(item => item.CurrentOccurrence.State == OccurrenceState.Open).ToArray();
+        var active = resolutions.Value!.Where(item =>
+            item.Item.Type == ItemType.Task &&
+            item.CurrentOccurrence.State == OccurrenceState.Open &&
+            item.CurrentList.State == JournalListState.Open).ToArray();
         var overdue = new List<OrderedReviewItem>();
         var todayItems = new List<OrderedReviewItem>();
         var thisWeek = new List<OrderedReviewItem>();
@@ -181,7 +185,8 @@ public static class PlannedReviewQueries
         var matching = new List<OrderedReviewItem>();
         foreach (var resolved in resolutions.Value!)
         {
-            if (resolved.CurrentOccurrence.State != OccurrenceState.Open)
+            if (resolved.CurrentOccurrence.State != OccurrenceState.Open ||
+                resolved.CurrentList.State != JournalListState.Open)
             {
                 continue;
             }
@@ -262,7 +267,8 @@ public static class PlannedReviewQueries
                 resolved.CurrentList.Name,
                 resolved.CurrentOccurrence.Id,
                 resolved.CurrentOccurrence.State.ToString()),
-            PeriodConflictRules.Find(resolved.Item.PlannedPeriod, resolved.CurrentList) is not null);
+            PeriodConflictRules.Find(resolved.Item.PlannedPeriod, resolved.CurrentList) is not null,
+            resolved.Item.Type);
 
     private static DomainResult<IReadOnlyList<ItemResolution>> ResolveCurrentItems(JournalSnapshot snapshot)
     {

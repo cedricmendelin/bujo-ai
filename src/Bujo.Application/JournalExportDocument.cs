@@ -32,7 +32,8 @@ public sealed record JournalItemExport(
     int? PlannedMonth,
     int? PlannedQuarter,
     Guid CurrentOccurrenceId,
-    long Version);
+    long Version,
+    string Type = "Task");
 
 public sealed record JournalOccurrenceExport(
     Guid Id,

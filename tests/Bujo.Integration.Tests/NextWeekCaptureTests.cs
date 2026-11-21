@@ -37,6 +37,37 @@ public sealed class NextWeekCaptureTests
     }
 
     [Theory]
+    [InlineData("I learned about next week")]
+    [InlineData("capture thought The sunrise next week")]
+    [InlineData("capture I learned about X and need to review it next week")]
+    public async Task NextWeekThoughtOrMixedIntentDoesNotCreateATask(string message)
+    {
+        var (journal, runtime) = CreateRuntime();
+        journal.CreateList("Week 01", JournalListKind.Weekly, weekKey: NextLocalWeek);
+
+        var result = await Run(runtime, message, "Europe/Zurich");
+
+        Assert.Empty(result.ToolCalls);
+        Assert.Contains("nothing changed", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(journal.GetSnapshot().Items);
+    }
+
+    [Fact]
+    public async Task ExplicitNextWeekTaskDoesNotIncludeTheTypeInItsName()
+    {
+        var (journal, runtime) = CreateRuntime();
+        journal.CreateList("Week 01", JournalListKind.Weekly, weekKey: NextLocalWeek);
+
+        var result = await Run(runtime, "capture task Buy milk next week", "Europe/Zurich");
+
+        Assert.True(Assert.Single(result.ToolCalls).Succeeded);
+        var item = Assert.Single(journal.GetSnapshot().Items);
+        Assert.Equal("Buy milk", item.Name);
+        Assert.Equal(ItemType.Task, item.Type);
+        Assert.Equal(PlannedPeriod.ForWeek(NextLocalWeek), item.PlannedPeriod);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("Mars/Olympus")]
     public async Task MissingOrInvalidTimeZoneDoesNotCapture(string? timeZone)

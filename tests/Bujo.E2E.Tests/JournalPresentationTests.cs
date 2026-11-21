@@ -53,7 +53,8 @@ public sealed class JournalPresentationTests(BrowserFixture fixture) : IClassFix
         Assert.Equal("2px", await summary.EvaluateAsync<string>("element => getComputedStyle(element).outlineWidth"));
         await page.Keyboard.PressAsync("Enter");
         await Expect(page.Locator(".notation-legend")).ToHaveAttributeAsync("open", "");
-        await Expect(page.Locator(".notation-legend")).ToContainTextAsync("without a separate type");
+        await Expect(page.Locator(".notation-legend")).ToContainTextAsync("Item is the umbrella term for a task or a thought");
+        await Expect(page.Locator(".notation-legend .journal-marker[data-state=open]")).ToHaveCountAsync(2);
         var abandoned = page.Locator(".notation-legend .journal-marker[data-state=abandoned]");
         await Expect(abandoned.Locator(".journal-marker-label")).ToHaveTextAsync("Item, abandoned");
         Assert.Contains("line-through", await abandoned.Locator(".journal-glyph")
@@ -156,7 +157,8 @@ public sealed class JournalMarkerRenderingTests
     {
         var html = await RenderAsync(type, state);
         Assert.Contains($"data-state=\"{state.ToString().ToLowerInvariant()}\"", html);
-        Assert.Contains($"<span class=\"journal-marker-label\">{type}, {state.ToString().ToLowerInvariant()}</span>", html);
+        var status = type == "Thought" && state == OccurrenceState.Open ? "reflection" : state.ToString().ToLowerInvariant();
+        Assert.Contains($"<span class=\"journal-marker-label\">{type}, {status}</span>", html);
         Assert.Contains("class=\"journal-glyph\" aria-hidden=\"true\"", html);
         var glyph = state switch { OccurrenceState.Done => "x", OccurrenceState.Moved => ">", _ => type == "Task" ? "•" : "−" };
         Assert.Contains($">{glyph}</span>", html);

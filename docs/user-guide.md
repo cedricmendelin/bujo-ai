@@ -10,18 +10,21 @@ so changing your mind doesn't erase the original plan. The web app and a
 
 1. Open the Bujo-AI URL from your deployment owner and sign in with your approved
    Microsoft work or school account. There is no public signup.
-2. Open **Capture**, name an item (for example, *Book a bike service*), and select
-   **Capture item**. Add a description or tags if useful. With no destination or
-   planned period selected, the item goes to the **Future Log**, unplanned.
+2. Open **Capture**, name an item (for example, *Book a bike service*), choose
+   **Task** for something to do or **Thought** for a reflection to keep, and select
+   **Capture item**. Task is the default. Add a description or tags if useful.
+   With no destination or planned period selected, the item goes to the **Future
+   Log**, unplanned.
 3. Open **Lists → Future Log** to find it again, or create a custom or weekly list
    in **Lists**. Open an item to edit its details, set a planned period, or move
    it. Use **Complete item** for work that's done and **Abandon item** when you no
    longer intend to do it. Open an item from an old list to see its current
-   destination and occurrence history.
+   destination and occurrence history. Thoughts remain readable but cannot be
+   completed, abandoned, or reopened.
 
 ## Make a daily and weekly habit
 
-- **Today** resurfaces unfinished plans, including overdue items, today's items,
+- **Today** resurfaces unfinished task plans, including overdue items, today's items,
   and this week's plans. **Upcoming** lets you look across a future date range.
   These are views you open, not reminders or notifications.
 - Today also offers two keyboard-accessible actions on an actionable overdue
@@ -48,9 +51,10 @@ so changing your mind doesn't erase the original plan. The web app and a
 - When a list is winding down, select **Start review** on the list page. Look at
   unfinished active items separately from items already moved or resolved. You
   can leave items where they are by keeping the list open. To submit a review
-  proposal, choose whether to move, complete, or abandon each unfinished item.
+  proposal, choose whether to move, complete, or abandon each unfinished task.
   Inspect the proposal before approving and applying it. A list can close only
-  after its unfinished items are resolved; the Future Log stays open.
+  after its unfinished tasks are resolved; Thoughts do not block closure. The
+  Future Log stays open.
 
 ## Save reference material
 

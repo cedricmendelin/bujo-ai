@@ -1,6 +1,6 @@
 <span class="journal-marker" data-state="@State.ToString().ToLowerInvariant()">
     <span class="journal-glyph" aria-hidden="true">@Glyph</span>
-    <span class="journal-marker-label">@Label, @State.ToString().ToLowerInvariant()</span>
+    <span class="journal-marker-label">@Label, @Status</span>
 </span>
 
 @code {
@@ -8,6 +8,8 @@
     [Parameter] public OccurrenceState State { get; set; }
 
     private string Label => Type is "Task" or "Thought" ? Type : "Item";
+    private string Status => Type == "Thought" && State == OccurrenceState.Open
+        ? "reflection" : State.ToString().ToLowerInvariant();
     private string Glyph => State switch
     {
         OccurrenceState.Done => "x",
