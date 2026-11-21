@@ -31,7 +31,8 @@
                 @foreach (var row in _rows)
                 {
                     <li class="journal-entry">
-                        @if (row.Item.Type == ItemType.Task && list.State == JournalListState.Open && row.Occurrence.State == OccurrenceState.Open)
+                        @if (list.State == JournalListState.Open && row.Item.Type == ItemType.Task &&
+                             row.Occurrence.State == OccurrenceState.Open)
                         {
                             <button type="button" class="task-notation"
                                     aria-label="@($"Complete {row.Item.Name}")"
