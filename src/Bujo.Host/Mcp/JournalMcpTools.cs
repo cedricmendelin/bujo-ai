@@ -114,18 +114,24 @@ public sealed class JournalMcpTools
         };
     }
 
-    [McpServerTool(Name = ChatToolNames.CaptureItem), Description("Captures one item in the specified list or Future Log. Omitted plannedPeriod means unplanned; dates must be explicit, not relative.")]
+    [McpServerTool(Name = ChatToolNames.CaptureItem), Description("Captures one Task or Thought in the specified list or Future Log. Omitted type defaults to Task. Omitted plannedPeriod means unplanned; dates must be explicit, not relative.")]
     public static CallToolResult CaptureItem(
         JournalApplicationService journal,
         string name,
         string? description = null,
         IReadOnlyList<string>? tags = null,
         JournalEndpoints.PeriodRequest? plannedPeriod = null,
-        Guid? listId = null)
+        Guid? listId = null,
+        [Description("Item type: Task or Thought. Omitted or null defaults to Task.")] string? type = null)
     {
+        if (!CaptureItemType.TryParse(type, out var itemType))
+        {
+            return McpErrors.Error(DomainErrorCode.InvalidInput, CaptureItemType.InvalidMessage);
+        }
+
         var period = JournalContract.ParsePeriod(plannedPeriod);
         return period.IsSuccess
-            ? McpErrors.From(journal.Capture(name, description, tags, period.Value, listId))
+            ? McpErrors.From(journal.Capture(name, description, tags, period.Value, listId, itemType))
             : McpErrors.Error(period.Error!);
     }
 

@@ -106,7 +106,7 @@ public sealed class JournalList
         {
             throw new DomainException(
                 DomainErrorCode.UnresolvedOccurrences,
-                "Resolve all open occurrences before closing this list.",
+                "Resolve all open tasks before closing this list.",
                 unresolvedOccurrenceIds.ToArray());
         }
 

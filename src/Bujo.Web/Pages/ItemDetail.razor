@@ -11,8 +11,8 @@
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_resolved is { } resolved)
     {
-        <p><JournalMarker State="resolved.SourceOccurrence.State" /> <span class="journal-meta">Viewed occurrence</span></p>
-        <p>Latest: <a href="/lists/@resolved.CurrentList.Id">@resolved.CurrentList.Name</a> · @resolved.CurrentOccurrence.State</p>
+        <p><JournalMarker Type="@resolved.Item.Type.ToString()" State="resolved.SourceOccurrence.State" /> <span class="journal-meta">Viewed occurrence</span></p>
+        <p>Latest: <a href="/lists/@resolved.CurrentList.Id">@resolved.CurrentList.Name</a> · @JournalLabels.State(resolved.Item.Type, resolved.CurrentOccurrence.State)</p>
         <p>Planned period: @JournalLabels.Period(resolved.Item.PlannedPeriod)</p>
         @if (PeriodConflictRules.Find(resolved.Item.PlannedPeriod, resolved.CurrentList) is not null)
         {
@@ -31,7 +31,7 @@
             @foreach (var occurrence in _history)
             {
                 <li class="journal-entry">
-                    <JournalMarker State="occurrence.State" />
+                    <JournalMarker Type="@resolved.Item.Type.ToString()" State="occurrence.State" />
                     <a class="journal-entry-text @(occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/lists/@occurrence.ListId">@_listNames[occurrence.ListId]</a>
                     @if (occurrence.Id == resolved.CurrentOccurrence.Id)
                     {
@@ -47,7 +47,7 @@
                         {
                             <div class="journal-meta">Moved to: <a href="/items/@destination.Id">@_listNames[destination.ListId]</a></div>
                         }
-                        <div class="journal-meta">Latest: <a href="/items/@resolved.CurrentOccurrence.Id">@resolved.CurrentList.Name · @resolved.CurrentOccurrence.State</a></div>
+                        <div class="journal-meta">Latest: <a href="/items/@resolved.CurrentOccurrence.Id">@resolved.CurrentList.Name · @JournalLabels.State(resolved.Item.Type, resolved.CurrentOccurrence.State)</a></div>
                     }
                 </li>
             }
@@ -82,7 +82,7 @@
                     <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Done)">Complete item</button>
                     <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Abandon)">Abandon item</button>
                 }
-                else if (resolved.CurrentList.State == JournalListState.Open &&
+                else if (resolved.Item.Type == ItemType.Task && resolved.CurrentList.State == JournalListState.Open &&
                     resolved.CurrentOccurrence.State is OccurrenceState.Done or OccurrenceState.Abandoned)
                 {
                     <button type="button" disabled="@Busy" @onclick="() => TransitionAsync(OccurrenceAction.Reopen)">Reopen item</button>
@@ -95,7 +95,7 @@
                     <button type="button" disabled="@Busy" @onclick="MoveAsync">Retry same move</button>
                 </div>
             }
-            else if (CanResolve && (_destinations.Length > 0 || _destination is not null))
+            else if (CanMove && (_destinations.Length > 0 || _destination is not null))
             {
                 <form method="post" data-journal-write data-journal-form @onsubmit="MoveAsync" @onsubmit:preventDefault>
                     <fieldset class="journal-form" disabled="@Busy">
@@ -131,7 +131,8 @@
     private JournalListSnapshot[] _destinations = [];
     private Guid? _destination;
     private MoveIntent? _pendingMove;
-    private bool CanResolve => _resolved is { CurrentOccurrence.State: OccurrenceState.Open, CurrentList.State: JournalListState.Open };
+    private bool CanMove => _resolved is { CurrentOccurrence.State: OccurrenceState.Open, CurrentList.State: JournalListState.Open };
+    private bool CanResolve => CanMove && _resolved!.Item.Type == ItemType.Task;
 
     protected override void Read()
     {

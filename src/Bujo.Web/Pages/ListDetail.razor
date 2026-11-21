@@ -31,30 +31,30 @@
                 @foreach (var row in _rows)
                 {
                     <li class="journal-entry">
-                        @if (list.State == JournalListState.Open && row.Occurrence.State == OccurrenceState.Open)
+                        @if (row.Item.Type == ItemType.Task && list.State == JournalListState.Open && row.Occurrence.State == OccurrenceState.Open)
                         {
                             <button type="button" class="task-notation"
-                                    aria-label="@($"Complete {row.ItemName}")"
+                                    aria-label="@($"Complete {row.Item.Name}")"
                                     disabled="@(Busy || !Ready)"
                                     @onclick="() => CompleteOccurrenceAsync(row.Occurrence)">
-                                <JournalMarker State="row.Occurrence.State" />
+                                <JournalMarker Type="@row.Item.Type.ToString()" State="row.Occurrence.State" />
                             </button>
                         }
                         else
                         {
-                            <JournalMarker State="row.Occurrence.State" />
+                            <JournalMarker Type="@row.Item.Type.ToString()" State="row.Occurrence.State" />
                         }
                         @if (_focusOccurrence == row.Occurrence.Id)
                         {
-                            <a class="journal-entry-text" href="/items/@row.Occurrence.Id" @ref="_completedItemLink">@row.ItemName</a>
+                            <a class="journal-entry-text" href="/items/@row.Occurrence.Id" @ref="_completedItemLink">@row.Item.Name</a>
                         }
                         else
                         {
-                            <a class="journal-entry-text @(row.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@row.Occurrence.Id">@row.ItemName</a>
+                            <a class="journal-entry-text @(row.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@row.Occurrence.Id">@row.Item.Name</a>
                         }
                         @if (row.Latest is { } latest)
                         {
-                            <div>Latest: <a href="/items/@latest.CurrentOccurrence.Id">@latest.CurrentList.Name · @latest.CurrentOccurrence.State</a></div>
+                            <div>Latest: <a href="/items/@latest.CurrentOccurrence.Id">@latest.CurrentList.Name · @JournalLabels.State(row.Item.Type, latest.CurrentOccurrence.State)</a></div>
                         }
                     </li>
                 }
@@ -109,7 +109,7 @@
         var items = snapshot.Items.ToDictionary(item => item.Id);
         _rows = snapshot.Occurrences.Where(occurrence => occurrence.ListId == ListId)
             .OrderBy(occurrence => occurrence.CreatedAt).ThenBy(occurrence => occurrence.Id)
-            .Select(occurrence => new ListRow(occurrence, items[occurrence.ItemId].Name,
+            .Select(occurrence => new ListRow(occurrence, items[occurrence.ItemId],
                 occurrence.State == OccurrenceState.Moved ? snapshot.Resolve(occurrence.Id).Value : null)).ToArray();
         if (previous is null || _goalDraft == previous.GoalText) _goalDraft = list.GoalText;
         _list = list;
@@ -148,5 +148,5 @@
             ? command()
             : DomainResult<JournalListSnapshot>.Failure(new(DomainErrorCode.ConcurrencyConflict, "This list changed since it was opened."));
 
-    private sealed record ListRow(OccurrenceSnapshot Occurrence, string ItemName, ItemResolution? Latest);
+    private sealed record ListRow(OccurrenceSnapshot Occurrence, ItemSnapshot Item, ItemResolution? Latest);
 }

@@ -74,6 +74,18 @@ public sealed class ChatToolExecutor(
 
     private ChatToolResult Capture(ChatToolRequest request)
     {
+        if (request.Arguments.ValueKind == JsonValueKind.Object &&
+            request.Arguments.TryGetProperty("type", out var typeValue) &&
+            typeValue.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+        {
+            return new ChatToolResult(false, CaptureItemType.InvalidMessage, null);
+        }
+
+        if (!CaptureItemType.TryParse(GetString(request.Arguments, "type"), out var type))
+        {
+            return new ChatToolResult(false, CaptureItemType.InvalidMessage, null);
+        }
+
         var period = ParsePeriod(request.Arguments);
         if (!period.IsSuccess)
         {
@@ -86,7 +98,8 @@ public sealed class ChatToolExecutor(
             GetString(request.Arguments, "description"),
             GetTags(request.Arguments),
             period.Value,
-            listId));
+            listId,
+            type));
     }
 
     private ChatToolResult CreateList(ChatToolRequest request)

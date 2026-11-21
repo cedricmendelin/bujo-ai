@@ -27,7 +27,14 @@ captures, list commands and explicit item operations while still routing every
 supported operation through the shared typed registry. Model and mock calls
 cannot execute approval-gated tools; use journal views for moves and abandonment.
 Foundry model calls cannot execute other writes either, pending a server-side
-mechanism to bind an explicit user request to each direct edit.
+mechanism to bind an explicit user request to each direct edit. Explicit
+capture commands recognized from the current user message use the same
+server-side capture path with either provider; model output and retrieved
+journal text cannot invoke that path.
+
+An Item is either a Task to do or a Thought to keep. Learning statements are
+captured as Thoughts; mixed or ambiguous intent needs clarification before a
+write. Chat confirms a capture only when the shared service reports success.
 
 Next-week capture is resolved by the shared runtime using the journal clock,
 the caller's validated IANA time zone, and the ISO week model. One matching
@@ -37,6 +44,8 @@ is missing or invalid, chat asks for a valid IANA zone before proceeding.
 Pending choices are bounded, expire, and are scoped to the authenticated user
 and chat conversation. The destination is revalidated before capture, and chat
 confirms the task and destination only after the save succeeds.
+Next-week capture supports Tasks only; requests identifying a Thought or
+learning statement are not saved through that path.
 
 `POST /api/chat/agui` is the app-owned HTTP/SSE run adapter. It requires the
 approved-principal policy and `Chat:Enabled=true`. Thread IDs are run labels,

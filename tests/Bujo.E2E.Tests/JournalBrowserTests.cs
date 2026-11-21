@@ -169,7 +169,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         Assert.Equal(OccurrenceState.Open, journal.GetSnapshot().Occurrences.Single(x => x.Id == keyed.Occurrence.Id).State);
         Assert.Equal(JournalListState.Open, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
         await Expect(page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Clicked task") })
-            .Locator(".journal-marker-label")).ToHaveTextAsync("Item, done");
+            .Locator(".journal-marker-label")).ToHaveTextAsync("Task, done");
 
         var keyboardAction = Button(page, "Complete Keyboard task");
         await keyboardAction.FocusAsync();
@@ -340,6 +340,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await page.Keyboard.PressAsync("Tab");
         await page.Keyboard.TypeAsync("work, reading");
         await page.Keyboard.PressAsync("Tab");
+        await Expect(page.GetByLabel("Item type")).ToBeFocusedAsync();
+        await page.Keyboard.PressAsync("Tab");
         await Expect(page.GetByLabel("Destination list")).ToBeFocusedAsync();
         await page.Keyboard.PressAsync("Tab");
         await Expect(page.GetByLabel("Planned period")).ToBeFocusedAsync();
@@ -368,13 +370,13 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
 
         await page.GotoAsync(earlierListUrl!);
         var movedRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Journal journey") });
-        await Expect(movedRow.Locator(".journal-marker-label")).ToHaveTextAsync("Item, moved");
+        await Expect(movedRow.Locator(".journal-marker-label")).ToHaveTextAsync("Task, moved");
         await Link(page, "Journey custom · Done").ClickAsync();
         await Expect(page.Locator("p").Filter(new() { HasText = "Latest: Journey custom · Done" })).ToBeVisibleAsync();
         await page.GotoAsync(earlierItemUrl);
         await Expect(Link(page, "Open latest occurrence")).ToBeVisibleAsync();
         var history = page.Locator("ol li.journal-entry");
-        await Expect(history.Locator(".journal-marker-label")).ToHaveTextAsync(["Item, moved", "Item, moved", "Item, done"]);
+        await Expect(history.Locator(".journal-marker-label")).ToHaveTextAsync(["Task, moved", "Task, moved", "Task, done"]);
         await Expect(history.Locator("a.journal-entry-text")).ToHaveTextAsync(["Future Log", "Journey weekly", "Journey custom"]);
         await Expect(history.Nth(0)).ToContainTextAsync("(viewed occurrence)");
         await Expect(history.Nth(2)).ToContainTextAsync("(latest)");
@@ -405,7 +407,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
             await Expect(page.GetByRole(AriaRole.Alert))
                 .ToContainTextAsync("Could not load the journal. Refresh to try again.");
             await Expect(page.GetByText("No planned items in this window.")).ToHaveCountAsync(0);
-            await Expect(page.GetByText("Future Log: 0")).ToHaveCountAsync(0);
+            await Expect(page.GetByText("Future Log tasks: 0")).ToHaveCountAsync(0);
 
             fixture.Journal.FailReads = false;
             await Button(page, "Refresh journal").ClickAsync();
@@ -435,7 +437,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "Lifecycle list").ClickAsync();
         await goal.FillAsync("An unsaved goal");
         await Button(page, "Close list").ClickAsync();
-        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Resolve all open occurrences");
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Resolve all open tasks");
         await Expect(page.GetByText("List closed.", new() { Exact = true })).ToHaveCountAsync(0);
         await Button(page, "Refresh journal").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
@@ -444,7 +446,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Button(page, "Abandon item").ClickAsync();
         await Expect(page.GetByText("Item is now abandoned.")).ToBeVisibleAsync();
         await Expect(page.Locator("h1")).ToHaveClassAsync("is-abandoned");
-        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Item, abandoned"]);
+        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Task, abandoned"]);
         await Link(page, "Lifecycle list").First.ClickAsync();
         await Button(page, "Close list").ClickAsync();
         await Expect(page.GetByText("List closed.", new() { Exact = true })).ToBeVisibleAsync();
@@ -457,7 +459,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Link(page, "Lifecycle item").ClickAsync();
         await Button(page, "Reopen item").ClickAsync();
         await Expect(page.GetByText("Latest: Lifecycle list · Open")).ToBeVisibleAsync();
-        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Item, open"]);
+        await Expect(page.Locator("ol .journal-marker-label")).ToHaveTextAsync(["Task, open"]);
     }
 
     [Fact]
@@ -492,6 +494,124 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Applied" })).ToBeVisibleAsync();
         await Link(page, "Back to list").ClickAsync();
         await Expect(page.GetByText("Closed", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task ManualThoughtRemainsReadableAfterClosureAndTaskStillBlocksIt()
+    {
+        await using var context = await fixture.CreateContextAsync(width: 390, height: 844);
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/lists");
+        await CreateList(page, "Thought retention list");
+        await page.GotoAsync("/capture");
+
+        var type = page.GetByLabel("Item type");
+        await Expect(type).ToHaveValueAsync("Task");
+        await Expect(type.Locator("option")).ToHaveTextAsync(["Task", "Thought"]);
+        await Expect(page.GetByText("An item is either a task", new() { Exact = false })).ToBeVisibleAsync();
+        await page.GetByLabel("Item name", new() { Exact = true }).FillAsync("Learning to retain");
+        await type.SelectOptionAsync("Thought");
+        await page.GetByLabel("Destination list").SelectOptionAsync(new SelectOptionValue { Label = "Thought retention list" });
+        await Button(page, "Capture item").ClickAsync();
+        await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(type).ToHaveValueAsync("Task");
+        var thought = fixture.Journal.GetSnapshot().Items.Single(item => item.Name == "Learning to retain");
+        Assert.Equal(ItemType.Thought, thought.Type);
+        await Link(page, "View captured item").ClickAsync();
+        await Expect(page.Locator("p .journal-marker-label").First).ToHaveTextAsync("Thought, reflection");
+        await Expect(Button(page, "Complete item")).ToHaveCountAsync(0);
+        await Expect(Button(page, "Abandon item")).ToHaveCountAsync(0);
+        await Expect(Button(page, "Reopen item")).ToHaveCountAsync(0);
+        Assert.Empty((await page.RunAxe()).Violations);
+
+        await page.GotoAsync("/capture");
+        await page.GetByLabel("Item name", new() { Exact = true }).FillAsync("Task still blocks closure");
+        await page.GetByLabel("Destination list").SelectOptionAsync(new SelectOptionValue { Label = "Thought retention list" });
+        await Button(page, "Capture item").ClickAsync();
+        await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToBeVisibleAsync();
+        Assert.Equal(ItemType.Task, fixture.Journal.GetSnapshot().Items.Single(item => item.Name == "Task still blocks closure").Type);
+
+        var list = fixture.Journal.GetSnapshot().Lists.Single(item => item.Name == "Thought retention list");
+        await page.GotoAsync($"/lists/{list.Id}");
+        await Expect(page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Learning to retain") })
+            .Locator(".journal-marker-label")).ToHaveTextAsync("Thought, reflection");
+        await Expect(Button(page, "Complete Learning to retain")).ToHaveCountAsync(0);
+        await Expect(Button(page, "Complete Task still blocks closure")).ToBeVisibleAsync();
+        await Button(page, "Close list").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Resolve all open tasks");
+        await Button(page, "Refresh journal").ClickAsync();
+        await Link(page, "Start review").ClickAsync();
+        var thoughtRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Learning to retain") });
+        await Expect(thoughtRow.Locator(".journal-marker-label")).ToHaveTextAsync("Thought, reflection");
+        await Expect(thoughtRow.Locator("select")).ToHaveCountAsync(0);
+        await Expect(page.GetByLabel("Disposition", new() { Exact = true })).ToHaveCountAsync(1);
+        await page.GetByLabel("Disposition", new() { Exact = true }).SelectOptionAsync("Done");
+        await page.GetByLabel("Close this list after applying all dispositions").CheckAsync();
+        await Button(page, "Review proposal").ClickAsync();
+        await Button(page, "Approve this proposal").ClickAsync();
+        await Button(page, "Apply approved proposal").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Proposal · Applied" })).ToBeVisibleAsync();
+        await Link(page, "Back to list").ClickAsync();
+        await page.ReloadAsync();
+        await Expect(page.GetByText("Closed", new() { Exact = true })).ToBeVisibleAsync();
+        await Link(page, "Learning to retain").ClickAsync();
+        await Expect(page.Locator("p .journal-marker-label").First).ToHaveTextAsync("Thought, reflection");
+        await Expect(Button(page, "Complete item")).ToHaveCountAsync(0);
+        Assert.Equal(OccurrenceState.Open, fixture.Journal.GetSnapshot().Occurrences.Single(x => x.ItemId == thought.Id).State);
+    }
+
+    [Fact]
+    public async Task ThoughtOnlyListClosesWithoutDispositionAndRemainsReadable()
+    {
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/lists");
+        await CreateList(page, "Thought only list");
+        await page.GotoAsync("/capture");
+        await page.GetByLabel("Item name", new() { Exact = true }).FillAsync("A reflection only");
+        await page.GetByLabel("Item type").SelectOptionAsync("Thought");
+        await page.GetByLabel("Destination list").SelectOptionAsync(new SelectOptionValue { Label = "Thought only list" });
+        await Button(page, "Capture item").ClickAsync();
+        await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToBeVisibleAsync();
+        var list = fixture.Journal.GetSnapshot().Lists.Single(item => item.Name == "Thought only list");
+        await page.GotoAsync($"/lists/{list.Id}/review");
+        await Expect(Link(page, "A reflection only")).ToBeVisibleAsync();
+        await Expect(page.GetByLabel("Disposition", new() { Exact = true })).ToHaveCountAsync(0);
+        await Link(page, "Back to list").ClickAsync();
+        await Button(page, "Close list").ClickAsync();
+        await Expect(page.GetByText("List closed.", new() { Exact = true })).ToBeVisibleAsync();
+        await page.ReloadAsync();
+        await Link(page, "A reflection only").ClickAsync();
+        await Expect(page.Locator("p .journal-marker-label").First).ToHaveTextAsync("Thought, reflection");
+        await Expect(Button(page, "Complete item")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task TodayCountsTasksButUpcomingDisplaysThoughtsAsReflections()
+    {
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/today");
+        var counts = page.Locator("p").Filter(new() { HasText = "Future Log tasks:" });
+        await Expect(counts).ToBeVisibleAsync();
+        var baseline = await counts.InnerTextAsync();
+
+        await page.GotoAsync("/capture");
+        await page.GetByLabel("Item name", new() { Exact = true }).FillAsync("Planning reflection");
+        await page.GetByLabel("Item type").SelectOptionAsync("Thought");
+        await page.GetByLabel("Planned period").SelectOptionAsync("Day");
+        await page.GetByLabel("Planned date").FillAsync("2026-11-20");
+        await Button(page, "Capture item").ClickAsync();
+        await Expect(page.GetByText("Item captured.", new() { Exact = true })).ToBeVisibleAsync();
+        await page.GotoAsync("/today");
+        await Expect(counts).ToHaveTextAsync(baseline);
+        await Expect(Link(page, "Planning reflection")).ToHaveCountAsync(0);
+        await page.GotoAsync("/upcoming");
+        var row = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Planning reflection") });
+        await Expect(row.Locator(".journal-marker-label")).ToHaveTextAsync("Thought, reflection");
+        await page.GetByLabel("Future Log only").CheckAsync();
+        await Expect(row).ToContainTextAsync("Reflection in the Future Log.");
+        await Expect(row.Locator(".journal-marker-label")).ToHaveTextAsync("Thought, reflection");
     }
 
     [Fact]

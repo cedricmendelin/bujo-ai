@@ -80,6 +80,53 @@ public sealed class ChatToolRegistryTests
     }
 
     [Fact]
+    public void CaptureSchemaAndExecutionHandleTypeAndRejectInvalidInput()
+    {
+        var schema = ChatToolRegistry.ToJsonSchema(ChatToolRegistry.Get("capture_item"));
+        var typeSchema = schema.GetProperty("properties").GetProperty("type");
+        Assert.Equal("string", typeSchema.GetProperty("type").GetString());
+        Assert.Contains("Thought", typeSchema.GetProperty("description").GetString());
+        Assert.DoesNotContain("type", schema.GetProperty("required").EnumerateArray().Select(value => value.GetString()));
+
+        var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+        var journal = new JournalApplicationService(new JournalService(repository));
+        var executor = new ChatToolExecutor(journal, new ReviewApplicationService(repository));
+        ChatToolResult Capture(string json) => executor.Execute(new ChatToolRequest(
+            "capture_item", JsonDocument.Parse(json).RootElement.Clone(), Principal()));
+
+        foreach (var (json, expected) in new[]
+        {
+            ("""{"name":"Legacy"}""", ItemType.Task),
+            ("""{"name":"Null","type":null}""", ItemType.Task),
+            ("""{"name":"Task","type":"tAsK"}""", ItemType.Task),
+            ("""{"name":"Reflection","type":"tHoUgHt"}""", ItemType.Thought)
+        })
+        {
+            var result = Capture(json);
+            Assert.True(result.Succeeded, result.Summary);
+            var saved = Assert.IsType<CaptureResult>(result.Value);
+            Assert.Equal(expected, saved.Item.Type);
+            Assert.Equal(expected, journal.GetSnapshot().Items.Single(item => item.Id == saved.Item.Id).Type);
+        }
+
+        var count = journal.GetSnapshot().Items.Count;
+        foreach (var json in new[]
+        {
+            """{"name":"Bad","type":""}""",
+            """{"name":"Bad","type":"1"}""",
+            """{"name":"Bad","type":"other"}""",
+            """{"name":"Bad","type":1}""",
+            """{"name":"Bad","type":true}"""
+        })
+        {
+            var result = Capture(json);
+            Assert.False(result.Succeeded, json);
+            Assert.Equal(CaptureItemType.InvalidMessage, result.Summary);
+            Assert.Equal(count, journal.GetSnapshot().Items.Count);
+        }
+    }
+
+    [Fact]
     public void ApprovalGatedToolsCannotBeExecutedByChat()
     {
         var repository = InMemoryJournalRepository.CreateWithFutureLog(
