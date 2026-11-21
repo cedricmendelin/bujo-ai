@@ -112,6 +112,75 @@ public sealed class JournalApiAuthorizationTests : IClassFixture<JournalApiFacto
     }
 
     [Fact]
+    public async Task AgUiConversationCanConfirmNextWeekCaptureAcrossRequests()
+    {
+        using var factory = new JournalApiFactory
+        {
+            ShareInMemoryRepository = true,
+            FixedUtcNow = new DateTimeOffset(2020, 12, 27, 23, 30, 0, TimeSpan.Zero)
+        };
+        using var enabled = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Chat:Enabled", "true");
+            builder.UseSetting("Chat:Provider", "Mock");
+        });
+        using var client = enabled.CreateClient();
+
+        using var firstRequest = AuthenticatedJsonRequest(HttpMethod.Post, "/api/chat/agui", new
+        {
+            message = "Writing blog article next week",
+            timeZone = "Europe/Zurich"
+        });
+        using var firstResponse = await client.SendAsync(firstRequest);
+        var firstBody = await firstResponse.Content.ReadAsStringAsync();
+        var runStartedIndex = firstBody.IndexOf("event: run_started", StringComparison.Ordinal);
+        var runStartedDataIndex = firstBody.IndexOf("data: ", runStartedIndex, StringComparison.Ordinal);
+        var runStartedDataEnd = firstBody.IndexOf('\n', runStartedDataIndex);
+        var runStartedLine = firstBody[runStartedDataIndex..runStartedDataEnd];
+        using var runStarted = JsonDocument.Parse(runStartedLine["data: ".Length..]);
+        var threadId = runStarted.RootElement.GetProperty("threadId").GetString();
+
+        using var confirmation = AuthenticatedJsonRequest(HttpMethod.Post, "/api/chat/agui", new
+        {
+            message = "create it",
+            timeZone = "Europe/Zurich",
+            threadId
+        });
+        using var confirmationResponse = await client.SendAsync(confirmation);
+        var confirmationBody = await confirmationResponse.Content.ReadAsStringAsync();
+
+        using var journalRequest = AuthenticatedGet("/api/journal");
+        using var journalResponse = await client.SendAsync(journalRequest);
+        using var journal = JsonDocument.Parse(await journalResponse.Content.ReadAsStringAsync());
+        var assistantText = new StringBuilder();
+        foreach (var eventBlock in confirmationBody.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!eventBlock.StartsWith("event: text_message_content\n", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var dataLine = eventBlock.Split('\n')
+                .Single(line => line.StartsWith("data: ", StringComparison.Ordinal));
+            using var eventData = JsonDocument.Parse(dataLine["data: ".Length..]);
+            assistantText.Append(eventData.RootElement.GetProperty("text").GetString());
+        }
+
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        Assert.NotNull(threadId);
+        Assert.Equal(HttpStatusCode.OK, confirmationResponse.StatusCode);
+        Assert.Contains("Captured 'Writing blog article'", assistantText.ToString());
+        Assert.Equal(HttpStatusCode.OK, journalResponse.StatusCode);
+        Assert.Equal("Writing blog article", Assert.Single(
+            journal.RootElement.GetProperty("items").EnumerateArray())
+            .GetProperty("name").GetString());
+        var weeklyList = Assert.Single(
+            journal.RootElement.GetProperty("lists").EnumerateArray(),
+            list => list.GetProperty("name").GetString() == "Week 2021-W01");
+        Assert.Equal("Week 2021-W01", weeklyList.GetProperty("name").GetString());
+    }
+
+    [Fact]
     public async Task SpeechAssetUsesEnUsAndHasSingleFinalSubmissionGuard()
     {
         using var response = await _client.GetAsync("/_content/Bujo.Web/js/speech.js");

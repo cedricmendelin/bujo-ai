@@ -93,6 +93,7 @@ stripped, so do not use them):
 ### Design and decisions
 ### Completion contract
 ### Changes (files and components)
+### User documentation
 ### Tests and acceptance checks
 ### Security, privacy, and cost
 ### Rollout and operations
@@ -105,6 +106,11 @@ stripped, so do not use them):
   new, higher-numbered comment. Publication of a newer plan removes
   `plan:approved`; it must be approved again before a cloud assignment.
 - Each acceptance criterion from the issue must map to at least one check.
+- Under User documentation, name affected app usage, MCP usage, and product
+  concept/why doc paths and how their accuracy will be checked; explain N/A
+  separately for any unaffected surface. The feature delivery owner updates
+  docs in the same PR, with Architect accountable for coherence and Verifier
+  checking them during independent acceptance review.
 - State the evidence required for full completion of every acceptance criterion,
   including the code changes and relevant automated tests expected for
   implementation work.

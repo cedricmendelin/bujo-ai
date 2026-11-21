@@ -6,12 +6,16 @@
 <PageTitle>List · Bujo-AI</PageTitle>
 <div data-requires-circuit>
     <h1 tabindex="-1">@(_list?.Name ?? "List details")</h1>
+    @if (_list?.WeekKey is { } listWeek)
+    {
+        <p class="journal-meta">Week number @listWeek.Week · Week year @listWeek.Year</p>
+    }
     <NotationLegend />
     <p><a href="/lists">All lists</a></p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_list is { } list)
     {
-        <p class="journal-meta">@list.State @(list.WeekKey is { } week ? $"· {week}" : null)</p>
+        <p class="journal-meta">@list.State</p>
         @if (list.GoalText is { } goal)
         {
             <p class="journal-text">Saved goal: @goal</p>
@@ -27,8 +31,28 @@
                 @foreach (var row in _rows)
                 {
                     <li class="journal-entry">
-                        <JournalMarker Type="@row.Item.Type.ToString()" State="row.Occurrence.State" />
-                        <a class="journal-entry-text @(row.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@row.Occurrence.Id">@row.Item.Name</a>
+                        @if (list.State == JournalListState.Open && row.Item.Type == ItemType.Task &&
+                             row.Occurrence.State == OccurrenceState.Open)
+                        {
+                            <button type="button" class="task-notation"
+                                    aria-label="@($"Complete {row.Item.Name}")"
+                                    disabled="@(Busy || !Ready)"
+                                    @onclick="() => CompleteOccurrenceAsync(row.Occurrence)">
+                                <JournalMarker Type="@row.Item.Type.ToString()" State="row.Occurrence.State" />
+                            </button>
+                        }
+                        else
+                        {
+                            <JournalMarker Type="@row.Item.Type.ToString()" State="row.Occurrence.State" />
+                        }
+                        @if (_focusOccurrence == row.Occurrence.Id)
+                        {
+                            <a class="journal-entry-text" href="/items/@row.Occurrence.Id" @ref="_completedItemLink">@row.Item.Name</a>
+                        }
+                        else
+                        {
+                            <a class="journal-entry-text @(row.Occurrence.State == OccurrenceState.Abandoned ? "is-abandoned" : null)" href="/items/@row.Occurrence.Id">@row.Item.Name</a>
+                        }
                         @if (row.Latest is { } latest)
                         {
                             <div>Latest: <a href="/items/@latest.CurrentOccurrence.Id">@latest.CurrentList.Name · @JournalLabels.State(row.Item.Type, latest.CurrentOccurrence.State)</a></div>
@@ -63,6 +87,18 @@
     private JournalListSnapshot? _list;
     private ListRow[] _rows = [];
     private string? _goalDraft;
+    private Guid? _focusOccurrence;
+    private ElementReference _completedItemLink;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        if (_focusOccurrence is not null)
+        {
+            _focusOccurrence = null;
+            await _completedItemLink.FocusAsync();
+        }
+    }
 
     protected override void Read()
     {
@@ -83,6 +119,23 @@
     private Task SaveGoalAsync() => SaveAsync(
         () => WithCurrentList(() => Journal.SetListGoal(ListId, _goalDraft)),
         list => { _goalDraft = list.GoalText; _list = list; return "Goal saved."; });
+
+    private Task CompleteOccurrenceAsync(OccurrenceSnapshot displayed) => SaveAsync(
+        () =>
+        {
+            var latest = Journal.Resolve(displayed.Id);
+            if (!latest.IsSuccess)
+                return DomainResult<OccurrenceSnapshot>.Failure(latest.Error!);
+            if (latest.Value!.CurrentOccurrence != displayed)
+                return DomainResult<OccurrenceSnapshot>.Failure(
+                    new(DomainErrorCode.StaleOccurrence, "The occurrence has changed."));
+            return Journal.Transition(displayed.Id, OccurrenceAction.Done);
+        },
+        saved =>
+        {
+            _focusOccurrence = displayed.Id;
+            return $"Item is now {saved.State.ToString().ToLowerInvariant()}.";
+        });
 
     private Task ChangeStateAsync()
     {

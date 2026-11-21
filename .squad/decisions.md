@@ -557,3 +557,20 @@
   quota-approved, or cost-estimated in the subscription. The Azure apply is the
   live availability check. The existing $50 budget remains an alert-only limit,
   not a Foundry usage cap.
+
+### 2026-11-20: Simplified Squad Merge Readiness and human resume
+
+- The owner supersedes the earlier readiness gate that also validated the
+  completion declaration, acceptance checklist, tracking recovery, and
+  scope-split records. Cloud sessions cannot edit PR bodies, issue bodies, or old
+  comments, so those gates dead-ended.
+- `Squad Merge Readiness` now succeeds when `ci` is green, every selected
+  reviewer's latest current-head check is an approval, and no `needs:human`
+  label is present. Trusted human blocks and drafts still block it. The Verifier
+  owns completion and acceptance review.
+- Reviewer verdict titles are `✅ Approved` or `❌ Changes required: N blocking`.
+  Fixes are append-only: new commits and new reviewer checks per head.
+- A person removing `needs:human` resumes the PR and resets the repair-attempt
+  budget; bot removals do not.
+- The owner sets `SQUAD_REVIEW_ROUTING=enforce` (a repository variable) after
+  merge. This decision authorizes only this scope; no ruleset change is implied.

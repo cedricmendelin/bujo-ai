@@ -5,6 +5,7 @@
 | Work Type | Primary | Secondary |
 |-----------|---------|-----------|
 | Product discovery, MVP scope, goals, domain model, architecture, decisions, implementation plans | Architect | Verifier |
+| User documentation ownership: app usage, MCP usage, product concept/why | Architect | Verifier |
 | Blazor PWA, accessibility, API, persistence, application scheduling | Builder | Verifier |
 | Foundry, AG-UI, MCP tools/prompts/resources, skills, assistant interoperability | AI | Builder |
 | Acceptance criteria, regression tests, independent acceptance review | Verifier | Architect |
@@ -61,6 +62,11 @@ Every implementation issue follows `docs/workflow.md` and README → *How we wor
 
 ## Dispatch and approval rules
 
+- Architect is accountable for user-documentation coherence, not a mandatory
+  second author or extra review gate. The feature delivery owner writes affected
+  app, MCP, and concept/why updates in the feature PR; plans and PRs name those
+  updates or justify N/A per surface. Verifier independently checks them under
+  the existing acceptance review. Route standalone user-doc work to Architect.
 - The coordinator handles simple tasks directly. Invoke specialists only for
   bounded work that benefits from their context; no speculative fan-out.
 - `plan:approved` selects the latest issue plan for cloud assignment. Direct

@@ -249,15 +249,14 @@ function outstandingFixRequest(comments, sessions, cloud, owner) {
   return !repairOutcomes(comments, sessions, owner).some(item => item.request.id === latestRequest.request.id);
 }
 
-function readiness({ draft, needsHuman, completionOk, sessionOk, ci, reviewsOk, humanBlocks, rulesOk }) {
+function readiness({ draft, needsHuman, sessionOk, ci, reviewsOk, humanBlocks, rulesOk }) {
   if (draft) return { status: 'completed', conclusion: 'failure', reason: 'Draft pull requests are not merge-ready.' };
   if (needsHuman) return { status: 'completed', conclusion: 'failure', reason: 'Paused by needs:human.' };
-  if (!completionOk) return { status: 'completed', conclusion: 'failure', reason: 'Completion declaration is invalid.' };
   if (humanBlocks) return { status: 'completed', conclusion: 'failure', reason: 'Trusted human review feedback remains unresolved.' };
   if (!sessionOk) return { status: 'in_progress', reason: 'Waiting for a successful cloud session.' };
   if (!ci) return { status: 'in_progress', reason: 'Waiting for current-head CI.' };
   if (!reviewsOk) return { status: 'in_progress', reason: 'Waiting for selected current-head specialist reviews.' };
-  return { status: 'completed', conclusion: 'success', reason: 'Current CI, selected reviews, completion, and human-review checks passed.' };
+  return { status: 'completed', conclusion: 'success', reason: 'Current CI, selected reviews, and human-review checks passed with no needs:human pause.' };
 }
 
 module.exports = {

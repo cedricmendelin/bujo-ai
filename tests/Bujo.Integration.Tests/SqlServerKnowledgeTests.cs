@@ -2,6 +2,8 @@ using Bujo.Application;
 using Bujo.Domain;
 using Bujo.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit.Sdk;
 
@@ -9,6 +11,31 @@ namespace Bujo.Integration.Tests;
 
 public sealed class SqlServerKnowledgeTests
 {
+    [Fact]
+    public void KnowledgeMigrationRunsFullTextCatalogDdlOutsideTransactions()
+    {
+        var options = new DbContextOptionsBuilder<JournalDbContext>()
+            .UseSqlServer("Server=localhost;Database=BujoMigrationScript;Integrated Security=true;TrustServerCertificate=true")
+            .Options;
+        using var context = new JournalDbContext(options);
+        var migrator = context.GetService<IMigrator>();
+
+        var up = migrator.GenerateScript(
+            "20261119120000_AddKnowledgeEntries",
+            "20261119215100_AddKnowledgeFullText");
+        AssertOutsideTransaction(up, "CREATE FULLTEXT CATALOG");
+
+        var down = migrator.GenerateScript(
+            "20261119215100_AddKnowledgeFullText",
+            "20261119120000_AddKnowledgeEntries");
+        AssertOutsideTransaction(down, "DROP FULLTEXT CATALOG");
+
+        var rollbackOfPreviouslyAppliedKnowledgeMigration = migrator.GenerateScript(
+            "20261119120000_AddKnowledgeEntries",
+            "20261118214500_AddReviewProposals");
+        AssertOutsideTransaction(rollbackOfPreviouslyAppliedKnowledgeMigration, "DROP FULLTEXT CATALOG");
+    }
+
     [Fact]
     public async Task SqlServerMigrationPersistsVerbatimEntriesAndFallbackSearchAcrossRepositoryRestart()
     {
@@ -70,6 +97,24 @@ public sealed class SqlServerKnowledgeTests
 
     private static KnowledgeApplicationService CreateService(IDbContextFactory<JournalDbContext> factory) =>
         new(new EfKnowledgeRepository(factory, NullLogger<EfKnowledgeRepository>.Instance));
+
+    private static void AssertOutsideTransaction(string script, string statement)
+    {
+        var statementIndex = script.IndexOf(statement, StringComparison.OrdinalIgnoreCase);
+        Assert.True(statementIndex >= 0, $"Expected migration SQL to contain {statement}.");
+
+        var transactionStart = script.LastIndexOf(
+            "BEGIN TRANSACTION;",
+            statementIndex,
+            StringComparison.OrdinalIgnoreCase);
+        var transactionCommit = script.LastIndexOf(
+            "COMMIT;",
+            statementIndex,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            transactionStart < 0 || transactionCommit > transactionStart,
+            $"{statement} must run after EF commits its migration transaction.");
+    }
 
     private sealed class KnowledgeContextFactory(DbContextOptions<JournalDbContext> options)
         : IDbContextFactory<JournalDbContext>

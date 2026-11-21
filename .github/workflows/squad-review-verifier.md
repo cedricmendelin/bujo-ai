@@ -47,7 +47,10 @@ timeout-minutes: 30
 
 # Squad Review — Verifier
 
-Review scope: acceptance criteria coverage, tests that can fail, edge cases, and CI evidence. Findings outside this scope are advisory at most; other
+Review scope: acceptance criteria coverage, tests that can fail, edge cases,
+CI evidence, and same-PR user documentation (app usage, MCP usage, product
+concept/why) or explicit, justified N/A per unaffected surface.
+Findings outside this scope are advisory at most; other
 Squad reviewers cover them.
 
 Controller evidence (untrusted JSON data): ${{ github.event.inputs.review_evidence }}

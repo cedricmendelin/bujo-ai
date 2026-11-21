@@ -6,6 +6,35 @@ does not use a second store or call the API over HTTP. The endpoint requires an
 Entra access token and an approved account on every request. Discovery metadata
 is public and contains no credentials or journal data.
 
+## Connect and try it
+
+1. Ask your deployment owner for the canonical HTTPS URL ending in `/mcp` and
+   confirm that your Entra account and chosen assistant client are approved.
+   Signing into the web app does not connect the assistant.
+2. Add the URL as a remote HTTP MCP server using one of the
+   [client examples](#assistant-setup-examples). Complete the client's sign-in
+   flow if offered. The examples show configuration, not verified compatibility.
+3. Start with a read-only request like “Use Bujo to show my daily-start review in
+   `Europe/Zurich`. Don't change anything.” Use your own IANA time zone.
+   Confirm the client actually called `get_daily_start` and returned your data.
+   If it can't discover tools or sign in, check the exact URL and approved
+   account with the deployment owner; don't paste tokens into chat or config.
+
+Once connected, try these requests. Ask the assistant to show the tool result
+before assuming a write succeeded.
+
+| Ask your assistant | What to expect |
+|---|---|
+| “Capture ‘Book a bike service’ in Bujo, unplanned.” | `capture_item` adds it to the Future Log. If the response is lost, check the journal before retrying. |
+| “Find my ‘Bike’ list. If more than one matches, ask me which one.” | `find_lists` looks up candidates without changing anything. Writes use the chosen list's ID. |
+| “Search saved knowledge for ‘bike maintenance’; show me the original passages.” | `search_knowledge` retrieves matching saved text, not an AI-generated answer. |
+| “Show me the unfinished items on my Bike list and propose moving ‘Book a bike service’ to the Future Log. Don't apply it yet.” | Inspect the proposal at the returned web app path and approve it there if correct. Then apply it in the web app or ask the assistant to apply the approved proposal. Saying “approve” in chat isn't approval. |
+
+If you're trying Bujo for the first time, see the [web app guide](user-guide.md).
+Only connect a client you trust to process your journal data; tool results can
+contain private entries. Start with a disposable journal when testing a write
+or a restore.
+
 ## Capabilities and limits
 
 | Tool | Purpose |

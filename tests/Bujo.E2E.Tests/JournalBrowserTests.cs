@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Bujo.Application;
+using Bujo.Application.Chat;
 using Bujo.Domain;
 using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
@@ -35,6 +36,166 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Expect(card.GetByText("Approved and applied.")).ToBeVisibleAsync();
         Assert.Equal(OccurrenceState.Abandoned, journal.GetSnapshot().Occurrences.Single(x => x.Id == captured.Occurrence.Id).State);
         Assert.Equal(JournalListState.Closed, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
+    }
+
+    [Fact]
+    public async Task SpokenMessageAppearsOnceWhileRuntimeWaitsAndFailureLeavesTypedFallbackAvailable()
+    {
+        var runtime = new DelayedChatRuntime();
+        var spokenRun = runtime.Enqueue();
+        var typedRun = runtime.Enqueue();
+        await using var context = await fixture.CreateContextAsync(chatRuntime: runtime);
+        await context.AddInitScriptAsync("""
+            window.SpeechRecognition = class {
+                start() { window.__recognizer = this; }
+                stop() {}
+            };
+            """);
+        var page = await context.NewPageAsync();
+        var speechModule = page.WaitForResponseAsync(response => response.Url.Contains("/js/speech.js"));
+        await page.GotoAsync("/");
+        await speechModule.WaitAsync(TimeSpan.FromSeconds(10));
+        await Button(page, "Speak").ClickAsync();
+        await page.WaitForFunctionAsync("() => !!window.__recognizer");
+        await page.EvaluateAsync("""
+            () => {
+                const event = { resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "Final spoken message" } }] };
+                const handler = window.__recognizer.onresult;
+                handler(event);
+                handler(event);
+            }
+            """);
+
+        await spokenRun.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        var transcript = page.GetByText("Final spoken message", new() { Exact = true });
+        await Expect(transcript).ToHaveCountAsync(1);
+        await Expect(page.Locator(".chat-status")).ToHaveTextAsync("Processing spoken message.");
+        await Expect(page.Locator(".chat-thread")).ToHaveAttributeAsync("aria-busy", "true");
+        spokenRun.Fail();
+        await Expect(page.Locator(".chat-status"))
+            .ToHaveTextAsync("The response failed. Try sending your message again.");
+        await Expect(page.Locator(".chat-thread")).ToHaveAttributeAsync("aria-busy", "false");
+        await Expect(page.GetByText(
+            "The chat run could not be completed. Your journal has not been replayed or rolled back.",
+            new() { Exact = true })).ToBeVisibleAsync();
+
+        await page.GetByRole(AriaRole.Textbox, new() { Name = "Message" }).FillAsync("Typed fallback");
+        await Button(page, "Send").ClickAsync();
+        await typedRun.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        await Expect(page.GetByText("Typed fallback", new() { Exact = true })).ToHaveCountAsync(1);
+        typedRun.Complete("Typed response");
+        await Expect(page.GetByText("Typed response", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.Locator(".chat-status")).ToHaveTextAsync("Done");
+        await Expect(page.GetByRole(AriaRole.Textbox, new() { Name = "Message" })).ToBeEditableAsync();
+    }
+
+    [Fact]
+    public async Task SpokenMessagePendingIndicatorClearsAfterAssistantSuccess()
+    {
+        var runtime = new DelayedChatRuntime();
+        var run = runtime.Enqueue();
+        await using var context = await fixture.CreateContextAsync(chatRuntime: runtime);
+        await context.AddInitScriptAsync("""
+            window.SpeechRecognition = class {
+                start() { window.__recognizer = this; }
+                stop() {}
+            };
+            """);
+        var page = await context.NewPageAsync();
+        var speechModule = page.WaitForResponseAsync(response => response.Url.Contains("/js/speech.js"));
+        await page.GotoAsync("/");
+        await speechModule.WaitAsync(TimeSpan.FromSeconds(10));
+        await Button(page, "Speak").ClickAsync();
+        await page.WaitForFunctionAsync("() => !!window.__recognizer");
+        await page.EvaluateAsync("""
+            () => window.__recognizer.onresult({
+                resultIndex: 0,
+                results: [{ isFinal: true, 0: { transcript: "Spoken success" } }]
+            })
+            """);
+
+        await run.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        await Expect(page.GetByText("Spoken success", new() { Exact = true })).ToHaveCountAsync(1);
+        await Expect(page.Locator(".chat-status")).ToHaveTextAsync("Processing spoken message.");
+        run.Complete("Assistant success");
+        await Expect(page.GetByText("Assistant success", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.Locator(".chat-status")).ToHaveTextAsync("Done");
+        await Expect(page.Locator(".chat-thread")).ToHaveAttributeAsync("aria-busy", "false");
+    }
+
+    [Fact]
+    public async Task WeeklyListShowsWeek53MetadataWhileCustomListOmitsIt()
+    {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var weekly = journal.CreateList("Week 53", JournalListKind.Weekly, weekKey: new IsoWeekKey(2020, 53)).Value!;
+        var custom = journal.CreateList("Custom list", JournalListKind.Custom).Value!;
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+
+        await page.GotoAsync("/lists");
+        var weeklyRow = page.Locator("li").Filter(new() { Has = Link(page, "Week 53") });
+        await Expect(weeklyRow.Locator(".journal-meta").First).ToHaveTextAsync("Week number 53 · Week year 2020");
+        var customRow = page.Locator("li").Filter(new() { Has = Link(page, "Custom list") });
+        await Expect(customRow).Not.ToContainTextAsync("Week number");
+
+        await Link(page, "Week 53").ClickAsync();
+        await Expect(page.GetByText("Week number 53 · Week year 2020", new() { Exact = true })).ToBeVisibleAsync();
+        await Link(page, "Lists").ClickAsync();
+        await Link(page, "Custom list").ClickAsync();
+        await Expect(page.GetByText("Week number", new() { Exact = false })).ToHaveCountAsync(0);
+
+        await Link(page, "Lists").ClickAsync();
+        await page.GetByLabel("List type").SelectOptionAsync("Weekly");
+        await Expect(page.GetByLabel("Week year")).ToBeVisibleAsync();
+        await Expect(page.GetByLabel("Week number")).ToBeVisibleAsync();
+        Assert.NotEqual(Guid.Empty, weekly.Id);
+        Assert.NotEqual(Guid.Empty, custom.Id);
+    }
+
+    [Fact]
+    public async Task ListNotationCompletesOnlyItsOccurrenceByClickAndKeyboard()
+    {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var list = journal.CreateList("Interactive notation", JournalListKind.Custom).Value!;
+        var clicked = journal.Capture("Clicked task", null, null, null, list.Id).Value!;
+        var keyed = journal.Capture("Keyboard task", null, null, null, list.Id).Value!;
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync($"/lists/{list.Id}");
+
+        await Button(page, "Complete Clicked task").ClickAsync();
+        await Expect(page.GetByText("Item is now done.", new() { Exact = true })).ToBeVisibleAsync();
+        Assert.Equal(OccurrenceState.Done, journal.GetSnapshot().Occurrences.Single(x => x.Id == clicked.Occurrence.Id).State);
+        Assert.Equal(OccurrenceState.Open, journal.GetSnapshot().Occurrences.Single(x => x.Id == keyed.Occurrence.Id).State);
+        Assert.Equal(JournalListState.Open, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
+        await Expect(page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "Clicked task") })
+            .Locator(".journal-marker-label")).ToHaveTextAsync("Task, done");
+
+        var keyboardAction = Button(page, "Complete Keyboard task");
+        await keyboardAction.FocusAsync();
+        await Expect(keyboardAction).ToBeFocusedAsync();
+        await page.Keyboard.PressAsync("Enter");
+        await Expect(page.GetByText("Item is now done.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(Link(page, "Keyboard task")).ToBeFocusedAsync();
+        Assert.Equal(OccurrenceState.Done, journal.GetSnapshot().Occurrences.Single(x => x.Id == keyed.Occurrence.Id).State);
+        Assert.Equal(JournalListState.Open, journal.GetSnapshot().Lists.Single(x => x.Id == list.Id).State);
+    }
+
+    [Fact]
+    public async Task StaleListNotationTransitionShowsAnErrorInsteadOfSuccess()
+    {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var list = journal.CreateList("Stale notation", JournalListKind.Custom).Value!;
+        var captured = journal.Capture("Stale task", null, null, null, list.Id).Value!;
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync($"/lists/{list.Id}");
+        await Expect(Button(page, "Complete Stale task")).ToBeVisibleAsync();
+        Assert.True(journal.Transition(captured.Occurrence.Id, OccurrenceAction.Done).IsSuccess);
+
+        await Button(page, "Complete Stale task").ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("The occurrence has changed.");
+        await Expect(page.GetByText("Item is now done.", new() { Exact = true })).ToHaveCountAsync(0);
     }
 
     [Fact]
@@ -130,7 +291,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(null, "/auth/sign-in")]
+    [InlineData(null, "/")]
     [InlineData("deny", "/auth/denied")]
     public async Task UnapprovedSessionsSeeThePublicHomeAndCannotOpenJournalForms(string? identity, string expectedPath)
     {
@@ -159,7 +320,7 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Chat", Level = 1 })).ToBeVisibleAsync();
         await Link(page, "Today").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Today", Level = 1 })).ToBeVisibleAsync();
-        await Expect(Link(page, "Diagnostics")).ToHaveAttributeAsync("href", "/rendering-proof");
+        await Expect(Link(page, "Diagnostics")).ToHaveCountAsync(0);
         await Link(page, "Lists").ClickAsync();
         await CreateList(page, "Journey custom");
         await CreateList(page, "Journey weekly", weekly: true);
@@ -500,8 +661,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         await page.GotoAsync("/lists");
         await page.GetByLabel("List name").FillAsync("Invalid week test");
         await page.GetByLabel("List type").SelectOptionAsync("Weekly");
-        await page.GetByLabel("ISO week-year").FillAsync("2025");
-        await page.GetByLabel("ISO week number").FillAsync("53");
+        await page.GetByLabel("Week year").FillAsync("2025");
+        await page.GetByLabel("Week number").FillAsync("53");
         await Button(page, "Create list").ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToHaveTextAsync("ISO week must be between 1 and 52 for 2025.");
         Assert.Equal("solid", await page.Locator(".journal-error")
@@ -526,15 +687,15 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
 
         await page.GetByLabel("List type").SelectOptionAsync("Weekly");
         await page.GetByLabel("List name").FillAsync("Week 48");
-        await page.GetByLabel("ISO week-year").FillAsync("2026");
-        await page.GetByLabel("ISO week number").FillAsync("48");
+        await page.GetByLabel("Week year").FillAsync("2026");
+        await page.GetByLabel("Week number").FillAsync("48");
         await Button(page, "Create list").ClickAsync();
         await Expect(page.GetByText("List created.", new() { Exact = true })).ToBeVisibleAsync();
 
         await page.GetByLabel("List type").SelectOptionAsync("Weekly");
         await page.GetByLabel("List name").FillAsync("Planning week 48");
-        await page.GetByLabel("ISO week-year").FillAsync("2026");
-        await page.GetByLabel("ISO week number").FillAsync("48");
+        await page.GetByLabel("Week year").FillAsync("2026");
+        await page.GetByLabel("Week number").FillAsync("48");
         await Button(page, "Create list").ClickAsync();
         await Expect(page.GetByText("List created.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(Link(page, "Planning week 48")).ToHaveCountAsync(1);
@@ -696,8 +857,8 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
         if (weekly)
         {
             await page.GetByLabel("List type").SelectOptionAsync("Weekly");
-            await page.GetByLabel("ISO week-year").FillAsync("2026");
-            await page.GetByLabel("ISO week number").FillAsync("1");
+            await page.GetByLabel("Week year").FillAsync("2026");
+            await page.GetByLabel("Week number").FillAsync("1");
         }
         await Button(page, "Create list").ClickAsync();
         await Expect(Link(page, name)).ToBeVisibleAsync();
@@ -722,5 +883,44 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     {
         await page.GetByLabel("Move destination").SelectOptionAsync(new SelectOptionValue { Label = destination });
         await Button(page, "Move item").ClickAsync();
+    }
+
+    private sealed class DelayedChatRuntime : IChatRuntime
+    {
+        private readonly Queue<PendingRun> _runs = new();
+
+        public PendingRun Enqueue()
+        {
+            var run = new PendingRun();
+            lock (_runs)
+                _runs.Enqueue(run);
+            return run;
+        }
+
+        public Task<ChatRunResult> RunAsync(
+            ChatRunRequest request,
+            System.Security.Claims.ClaimsPrincipal principal,
+            CancellationToken cancellationToken = default)
+        {
+            PendingRun run;
+            lock (_runs)
+                run = _runs.Dequeue();
+            run.MarkStarted();
+            return run.Response;
+        }
+    }
+
+    private sealed class PendingRun
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<ChatRunResult> _response =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => _started.Task;
+        public Task<ChatRunResult> Response => _response.Task;
+
+        public void MarkStarted() => _started.TrySetResult();
+        public void Complete(string text) => _response.TrySetResult(new(text, [], []));
+        public void Fail() => _response.TrySetException(new InvalidOperationException("Synthetic runtime failure."));
     }
 }

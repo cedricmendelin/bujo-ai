@@ -12,7 +12,7 @@
 }
 else if (Draft.Kind != PlannedPeriodKind.Unplanned)
 {
-    <label for="period-year">@(Draft.Kind == PlannedPeriodKind.Week ? "ISO week-year" : "Year")</label>
+    <label for="period-year">@(Draft.Kind == PlannedPeriodKind.Week ? "Week year" : "Year")</label>
     <input id="period-year" type="number" min="1" max="9999" required @bind="Draft.Year" @bind:event="oninput" />
     @if (Draft.Kind != PlannedPeriodKind.Year)
     {

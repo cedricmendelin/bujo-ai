@@ -54,7 +54,7 @@ public static class ChatToolRegistry
         Read("get_list_review", "GET /api/lists/{id}/review", "Returns unfinished list-review entries.", ["listId"]),
         Read("get_review_proposal", "GET /api/review-proposals/{id}", "Returns an owner-bound review proposal.", ["proposalId"]),
 
-        Write("capture_item", "POST /api/items", "Captures a Task or Thought.", false,
+        Write("capture_item", "POST /api/items", "Captures a Task or Thought. Next-week chat capture dates and destinations are resolved by the host.", false,
             ["name", "description?", "tags?", "plannedPeriod?", "listId?", "type?"]),
         Write("create_list", "POST /api/lists", "Creates a journal list.", false,
             ["name", "kind", "goalText?", "weekKey?"]),

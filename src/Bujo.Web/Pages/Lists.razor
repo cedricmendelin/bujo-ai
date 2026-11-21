@@ -14,11 +14,12 @@
             @foreach (var list in _lists)
             {
                 <li>
-                    <a href="/lists/@list.Id">@list.Name</a> · @list.State
+                    <a href="/lists/@list.Id">@list.Name</a>
                     @if (list.WeekKey is { } week)
                     {
-                        <span> · @week</span>
+                        <div class="journal-meta">Week number @week.Week · Week year @week.Year</div>
                     }
+                    <div class="journal-meta">@list.State</div>
                     @if (list.GoalText is { } goal)
                     {
                         <div class="journal-text">@goal</div>
@@ -38,9 +39,9 @@
                 </select>
                 @if (_kind == JournalListKind.Weekly)
                 {
-                    <label for="week-year">ISO week-year</label>
+                    <label for="week-year">Week year</label>
                     <input id="week-year" type="number" min="1" max="9999" required @bind="_year" @bind:event="oninput" />
-                    <label for="week-number">ISO week number</label>
+                    <label for="week-number">Week number</label>
                     <input id="week-number" type="number" min="1" max="53" required @bind="_week" @bind:event="oninput" />
                 }
                 <label for="new-goal">Goal (optional)</label>

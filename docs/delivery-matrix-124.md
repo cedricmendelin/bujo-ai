@@ -72,9 +72,12 @@ interactions. Journal components call `JournalApplicationService` directly.
 They do not call the app's own HTTP API. API and MCP remain separate adapters
 over the same application operations and authorization/domain behavior.
 
-After sign-in, `/` should show **Today**. The navigation is Today, Upcoming,
-Capture, and Lists; selecting an item opens its detail/history. Keep
-`/rendering-proof` only under an explicitly labelled **Diagnostics** link.
+This earlier issue #124 design expected `/` to show **Today** and exposed
+`/rendering-proof` through a labelled **Diagnostics** link. Issue #153 v1
+supersedes those presentation choices: approved `/` now shows Chat, Today is
+available at `/today`, and the protected proof route is direct-only with no
+main-navigation link. Selecting an item opens its detail/history. The
+navigation remains Today, Upcoming, Capture, Knowledge, and Lists.
 Today uses the deterministic daily-start query; Upcoming uses the bounded
 upcoming query; both receive the browser's IANA zone from JS interop once per
 circuit. Missing or invalid zone data is a visible error, never a silent UTC
