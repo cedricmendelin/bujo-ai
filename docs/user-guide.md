@@ -24,6 +24,23 @@ so changing your mind doesn't erase the original plan. The web app and a
 - **Today** resurfaces unfinished plans, including overdue items, today's items,
   and this week's plans. **Upcoming** lets you look across a future date range.
   These are views you open, not reminders or notifications.
+- Today also offers two keyboard-accessible actions on an actionable overdue
+  row:
+  - **Plan for today · YYYY-MM-DD** changes the planned period to the local date
+    shown on Today.
+  - **Plan for this week · YYYY-Www** changes the planned period to the ISO week
+    shown on Today.
+  The target is displayed on each button before you activate it. Nothing changes
+  until you choose a button. Rescheduling changes only the planned period; it
+  doesn’t move the item or change its occurrence.
+  After a successful change, Today refreshes the row and confirms the new plan.
+  Focus returns to the item’s detail link, which remains available for other
+  edits.
+  If the item changed since Today loaded, the action is rejected as stale. Use
+  **Refresh journal** to review its current state before trying again. A new
+  planned period can also conflict with the week of the item’s destination list;
+  Today shows a conflict message without moving the item or changing the selected
+  period. Resolve that conflict with an explicit edit if needed.
 - A **planned period** is an intention, not a deadline. Choose a day, week, month,
   quarter, or year, or leave the item unplanned. The period is separate from the
   list: moving an item doesn't reschedule it, and changing its period doesn't
