@@ -5,8 +5,9 @@
 PR #108 introduced a **thin rendering proof**, not a verified Entra
 deployment. The current #124 working change uses static SSR for anonymous `/`
 and safe account states, and renders Today with Interactive Server for
-approved sessions. `/rendering-proof` remains a Diagnostics-only route; its
-synthetic text and connection check never access SQL or save journal items.
+approved sessions. The `/rendering-proof` developer route remains directly
+available to approved accounts but is not in the main navigation; its synthetic
+text and connection check never access SQL or save journal items.
 Interactive Server with static SSR where appropriate is Accepted in
 [ADR 0001](adr/0001-technology-baseline.md) as of 2026-11-17. This checkpoint
 provides implementation evidence, not live verification. A prior owner comment
@@ -40,17 +41,21 @@ issue #4 MCP/client proposal below remains provisional.
   signature/issuer/audience/lifetime remain valid.
   Revocation rejects the next request/event/reconnect; this is not continuous
   Entra revocation notification and does not erase previously rendered DOM.
-- `/auth/sign-in` and `/auth/sign-out` GETs only render forms. Their POSTs require
-  antiforgery; sign-out removes the server session immediately and clears the
-  local cookie. Upstream Entra SSO is **not** terminated; another sign-in may
-  reuse the identity provider's SSO session.
+- The anonymous Home page contains a normal antiforgery-protected POST to
+  `/auth/sign-in`, which starts the existing OIDC challenge directly. Legacy
+  GET requests to `/auth/sign-in` redirect to Home. `/auth/sign-out` GET only
+  renders a form; its POST requires antiforgery, removes the server session
+  immediately, and clears the local cookie. Upstream Entra SSO is **not**
+  terminated; another sign-in may reuse the identity provider's SSO session.
 - Anonymous `/auth/signed-out`, `/auth/denied`, `/auth/error` contain generic
   messages only. Account/protected responses are private/no-store. Static
   installation assets are anonymous; the root `/service-worker.js` serves the
   actual worker with root scope. The worker only caches allowlisted public
   assets, never HTML, authenticated responses, API responses, or tokens.
-- CSP restricts scripts, styles and connections to same origin, prohibits
-  framing and objects; anti-sniffing, referrer and permissions headers are set.
+- CSP restricts scripts, styles and connections to same origin and allows the
+  configured HTTPS identity-provider origin only on the anonymous sign-in POST
+  response, prohibits framing and objects; anti-sniffing, referrer and
+  permissions headers are set.
   Production enables HSTS. The Azure Container Apps deployment exposes the app
   port only through HTTP ingress. When the platform sets `CONTAINER_APP_NAME`,
   the host accepts one `X-Forwarded-Proto` hop because

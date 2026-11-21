@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using Bujo.Application.Chat;
+using Bujo.Host.Chat;
 using Bujo.Host.Authentication;
 using Bujo.Domain;
 using Bujo.Infrastructure.Persistence;
@@ -29,6 +32,8 @@ public sealed class BrowserFixture : IAsyncLifetime
     // Redirects must never reach Entra, even when browser request routing misses a redirect hop.
     internal const string IdentityHostDenialRule = "--host-resolver-rules=MAP login.microsoftonline.com ~NOTFOUND";
     private readonly ProofHostFactory _factory = new();
+    private readonly List<WebApplicationFactory<Program>> _additionalFactories = [];
+    private readonly List<HttpClient> _additionalClients = [];
     private IPlaywright _playwright = null!;
     private HttpClient _client = null!;
 
@@ -37,6 +42,7 @@ public sealed class BrowserFixture : IAsyncLifetime
     internal BrowserJournalRepository Journal => _factory.Journal;
     internal BrowserClock Clock => _factory.Clock;
     internal InMemoryKnowledgeRepository Knowledge => _factory.Knowledge;
+    internal ChatRuntimeProbe ChatRuntime => _factory.ChatRuntime;
 
     public async Task InitializeAsync()
     {
@@ -53,11 +59,33 @@ public sealed class BrowserFixture : IAsyncLifetime
         });
     }
 
-    public async Task<IBrowserContext> CreateContextAsync(string? identity = "allow", int width = 1280, int height = 900)
+    public async Task<IBrowserContext> CreateContextAsync(
+        string? identity = "allow",
+        int width = 1280,
+        int height = 900,
+        IChatRuntime? chatRuntime = null)
     {
+        var baseUrl = BaseUrl;
+        if (chatRuntime is not null)
+        {
+            var factory = _factory.WithWebHostBuilder(builder =>
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IChatRuntime>();
+                    services.AddSingleton(chatRuntime);
+                }));
+            factory.UseKestrel(0);
+            var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+            var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!;
+            client.BaseAddress = new Uri(addresses.Addresses.Single());
+            _additionalFactories.Add(factory);
+            _additionalClients.Add(client);
+            baseUrl = client.BaseAddress.ToString().TrimEnd('/');
+        }
+
         var context = await Browser.NewContextAsync(new()
         {
-            BaseURL = BaseUrl,
+            BaseURL = baseUrl,
             ViewportSize = new() { Width = width, Height = height },
             TimezoneId = "Europe/Zurich"
         });
@@ -80,6 +108,8 @@ public sealed class BrowserFixture : IAsyncLifetime
     {
         if (Browser is not null) await Browser.DisposeAsync();
         _playwright?.Dispose();
+        foreach (var client in _additionalClients) client.Dispose();
+        foreach (var factory in _additionalFactories) await factory.DisposeAsync();
         _client?.Dispose();
         await _factory.DisposeAsync();
     }
@@ -93,6 +123,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
     internal BrowserJournalRepository Journal { get; } = new();
     internal BrowserClock Clock { get; } = new();
     internal InMemoryKnowledgeRepository Knowledge { get; } = new();
+    internal ChatRuntimeProbe ChatRuntime { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -116,6 +147,12 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton<IJournalRepository>(Journal);
             services.RemoveAll<IKnowledgeRepository>();
             services.AddSingleton<IKnowledgeRepository>(Knowledge);
+            services.RemoveAll<IChatRuntime>();
+            services.AddScoped<ChatRuntime>();
+            services.AddScoped<IChatRuntime>(provider => new CountingChatRuntime(
+                provider.GetRequiredService<ChatRuntime>(),
+                provider.GetRequiredService<ChatRuntimeProbe>()));
+            services.AddSingleton(ChatRuntime);
             services.RemoveAll<IJournalBackupRepository>();
             services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
                 provider.GetRequiredService<IJournalRepository>(),
@@ -157,6 +194,77 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton(new ProofIdentity(_tenant, _approvedObject));
         });
     }
+}
+
+internal sealed class CountingChatRuntime(ChatRuntime runtime, ChatRuntimeProbe probe) : IChatRuntime
+{
+    public Task<ChatRunResult> RunAsync(
+        ChatRunRequest request,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken = default) =>
+        probe.RunAsync(runtime, request, principal, cancellationToken);
+}
+
+internal sealed class ChatRuntimeProbe
+{
+    private int _invocationCount;
+    private readonly ConcurrentQueue<string> _messages = new();
+    private TaskCompletionSource _nextInvocation = NewSignal();
+    private TaskCompletionSource? _nextRunRelease;
+    private TaskCompletionSource? _runStarted;
+    private TaskCompletionSource? _activeRelease;
+
+    internal int InvocationCount => Volatile.Read(ref _invocationCount);
+    internal IReadOnlyList<string> Messages => _messages.ToArray();
+
+    internal void Reset()
+    {
+        Interlocked.Exchange(ref _invocationCount, 0);
+        Interlocked.Exchange(ref _nextInvocation, NewSignal());
+        while (_messages.TryDequeue(out _))
+        {
+        }
+    }
+
+    internal Task WaitForNextInvocationAsync() =>
+        Volatile.Read(ref _nextInvocation).Task;
+
+    internal void DelayNextRun()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Volatile.Write(ref _runStarted, started);
+        Volatile.Write(ref _activeRelease, release);
+        Volatile.Write(ref _nextRunRelease, release);
+    }
+
+    internal Task WaitForDelayedRunAsync() =>
+        Volatile.Read(ref _runStarted)?.Task ?? Task.CompletedTask;
+
+    internal void ReleaseDelayedRun() =>
+        Volatile.Read(ref _activeRelease)?.TrySetResult();
+
+    internal async Task<ChatRunResult> RunAsync(
+        IChatRuntime runtime,
+        ChatRunRequest request,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _invocationCount);
+        _messages.Enqueue(request.Message);
+        Interlocked.Exchange(ref _nextInvocation, NewSignal()).TrySetResult();
+        var release = Interlocked.Exchange(ref _nextRunRelease, null);
+        if (release is not null)
+        {
+            Volatile.Read(ref _runStarted)?.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+        }
+
+        return await runtime.RunAsync(request, principal, cancellationToken);
+    }
+
+    private static TaskCompletionSource NewSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 internal sealed class BrowserClock : TimeProvider
@@ -207,7 +315,7 @@ internal sealed class ProofUiAuthentication(
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {
-        Response.Redirect("/auth/sign-in");
+        Response.Redirect("/");
         return Task.CompletedTask;
     }
 
