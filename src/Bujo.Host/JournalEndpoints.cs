@@ -122,10 +122,15 @@ public static class JournalEndpoints
         api.MapPost("/lists", (CreateListRequest request, JournalApplicationService journal) =>
         {
             var weekKey = JournalContract.ParseWeekKey(request.WeekKey);
-            return weekKey.IsSuccess
-                ? ToHttpResult(journal.CreateList(request.Name, request.Kind, request.GoalText, weekKey.Value))
-                : Error(weekKey.Error!);
+            if (!weekKey.IsSuccess) return Error(weekKey.Error!);
+            var periodKey = JournalContract.ParseJournalPeriod(request.PeriodKey);
+            return periodKey.IsSuccess
+                ? ToHttpResult(journal.CreateList(request.Name, request.Kind, request.GoalText, weekKey.Value, periodKey.Value))
+                : Error(periodKey.Error!);
         });
+        api.MapGet("/lists/period", (JournalListKind kind, int? year, int? month, int? quarter,
+            string? direction, string? timeZone, JournalApplicationService journal) =>
+            ToHttpResult(journal.NavigatePeriod(kind, year, month, quarter, direction ?? "selected", timeZone)));
         api.MapPost("/items", (CaptureRequest request, JournalApplicationService journal) =>
         {
             var period = JournalContract.ParsePeriod(request.PlannedPeriod);
@@ -222,9 +227,12 @@ public static class JournalEndpoints
             detail: "The journal query could not be completed.",
             extensions: new Dictionary<string, object?> { ["code"] = "QueryFailed" });
 
-    public sealed record CreateListRequest(string Name, JournalListKind Kind, string? GoalText, WeekKeyRequest? WeekKey);
+    public sealed record CreateListRequest(string Name, JournalListKind Kind, string? GoalText, WeekKeyRequest? WeekKey,
+        JournalPeriodKeyRequest? PeriodKey = null);
 
     public sealed record WeekKeyRequest(int Year, int Week);
+
+    public sealed record JournalPeriodKeyRequest(JournalListKind Kind, int Year, int? Month = null, int? Quarter = null);
 
     public sealed record CaptureRequest(
         string Name,

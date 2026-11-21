@@ -1,3 +1,4 @@
+using System.Text;
 using Bujo.Domain;
 
 namespace Bujo.Infrastructure.Persistence;
@@ -104,10 +105,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                     command.Name,
                     command.Kind,
                     command.GoalText,
-                    command.WeekKey);
+                    command.WeekKey,
+                    command.PeriodKey);
 
                 if (_lists.Values.Any(existing =>
-                    string.Equals(existing.Name, list.Name, StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(NormalizeListName(existing.Name), list.Name, StringComparison.OrdinalIgnoreCase)))
                 {
                     throw new DomainException(DomainErrorCode.DuplicateListName, "A list with this name already exists.");
                 }
@@ -704,7 +706,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
                 list.GoalText?.Length > DomainLimits.GoalText ||
                 list.Version < 0) ||
             snapshot.Lists.Select(list => list.Id).Distinct().Count() != snapshot.Lists.Count ||
-            snapshot.Lists.Select(list => list.Name)
+            snapshot.Lists.Select(list => NormalizeListName(list.Name))
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() != snapshot.Lists.Count ||
             snapshot.Items.Any(item =>
                 item.Id == Guid.Empty ||
@@ -757,6 +759,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             }
         }
     }
+
+    private static string NormalizeListName(string name) => name.Trim().Normalize(NormalizationForm.FormKC);
 
     private JournalEvent AddEvent(
         JournalEventKind kind,
@@ -829,7 +833,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         new(item.Id, item.Name, item.Description, item.Tags.ToArray(), item.PlannedPeriod, item.CurrentOccurrenceId, item.Version, item.Type);
 
     private static JournalListSnapshot ToSnapshot(JournalList list) =>
-        new(list.Id, list.Name, list.Kind, list.State, list.GoalText, list.WeekKey, list.Version);
+        new(list.Id, list.Name, list.Kind, list.State, list.GoalText, list.WeekKey, list.Version, list.PeriodKey);
 
     private static OccurrenceSnapshot ToSnapshot(Occurrence occurrence) =>
         new(

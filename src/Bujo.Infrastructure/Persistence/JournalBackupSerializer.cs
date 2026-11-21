@@ -29,7 +29,15 @@ public sealed class JournalBackupSerializer
             throw new JsonException("The journal backup is too large.");
         }
 
-        var value = JournalStateSerializer.DeserializeJournalBackup(backup);
+        JournalBackupSnapshot value;
+        try
+        {
+            value = JournalStateSerializer.DeserializeJournalBackup(backup);
+        }
+        catch (DomainException exception)
+        {
+            throw new JsonException("The journal backup is invalid.", exception);
+        }
         return ValidEnvelope(value)
             ? value
             : throw new JsonException("The journal backup is invalid.");

@@ -41,8 +41,9 @@ public sealed class JournalService
         string name,
         JournalListKind kind,
         string? goalText = null,
-        IsoWeekKey? weekKey = null) =>
-        _repository.CreateList(new CreateListCommand(name, kind, goalText, weekKey));
+        IsoWeekKey? weekKey = null,
+        JournalPeriodKey? periodKey = null) =>
+        _repository.CreateList(new CreateListCommand(name, kind, goalText, weekKey, periodKey));
 
     public DomainResult<CaptureResult> Capture(
         string name,

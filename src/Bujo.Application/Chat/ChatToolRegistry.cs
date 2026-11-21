@@ -57,7 +57,7 @@ public static class ChatToolRegistry
         Write("capture_item", "POST /api/items", "Captures a Task or Thought. Next-week chat capture dates and destinations are resolved by the host.", false,
             ["name", "description?", "tags?", "plannedPeriod?", "listId?", "type?"]),
         Write("create_list", "POST /api/lists", "Creates a journal list.", false,
-            ["name", "kind", "goalText?", "weekKey?"]),
+            ["name", "kind", "goalText?", "weekKey?", "periodKey?"]),
         Write("edit_item", "PUT /api/items/{id}", "Explicitly edits an item.", false,
             ["itemId", "name", "description?", "tags?"]),
         Write("set_planned_period", "PUT /api/items/{id}/planned-period", "Changes an item's planned period.", false,
@@ -159,7 +159,7 @@ public static class ChatToolRegistry
             "boolean",
         "tags" or "changes" =>
             "array",
-        "plannedPeriod" or "weekKey" =>
+        "plannedPeriod" or "weekKey" or "periodKey" =>
             "object",
         _ => "string"
     };

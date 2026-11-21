@@ -7,6 +7,30 @@ namespace Bujo.Application.Tests;
 public sealed class JournalApplicationServiceTests
 {
     [Fact]
+    public void PeriodNavigationGroupsListsAndUsesExplicitLocalZone()
+    {
+        var clock = new FrozenTimeProvider(new DateTimeOffset(2027, 1, 1, 0, 30, 0, TimeSpan.Zero));
+        var service = new JournalApplicationService(new JournalService(new InMemoryJournalRepository()), clock);
+        var key = new JournalPeriodKey(JournalListKind.Monthly, 2026, 12);
+        Assert.True(service.CreateList("One", JournalListKind.Monthly, periodKey: key).IsSuccess);
+        Assert.True(service.CreateList("Two", JournalListKind.Monthly, periodKey: key).IsSuccess);
+        var before = service.GetSnapshot();
+        var current = service.NavigatePeriod(JournalListKind.Monthly, null, null, null, "current", "America/Los_Angeles");
+        Assert.True(current.IsSuccess);
+        Assert.Equal(key, current.Value!.Key);
+        Assert.Equal(2, current.Value.Lists.Count);
+        var next = service.NavigatePeriod(JournalListKind.Monthly, 2026, 12, null, "next", null);
+        Assert.Equal(new JournalPeriodKey(JournalListKind.Monthly, 2027, 1), next.Value!.Key);
+        Assert.Empty(next.Value.Lists);
+        Assert.Equal(DomainErrorCode.InvalidInput,
+            service.NavigatePeriod(JournalListKind.Monthly, 2026, 12, null, null, null).Error!.Code);
+        Assert.Equal(DomainErrorCode.InvalidTimeZone,
+            service.NavigatePeriod(JournalListKind.Monthly, null, null, null, "current", null).Error!.Code);
+        Assert.Equal(before.Lists, service.GetSnapshot().Lists);
+        Assert.Equal(before.History, service.GetSnapshot().History);
+    }
+
+    [Fact]
     public void CaptureTypeIsValidatedAndReturnedByApplicationService()
     {
         var service = CreateService();

@@ -4,7 +4,8 @@ public sealed record CreateListCommand(
     string Name,
     JournalListKind Kind,
     string? GoalText = null,
-    IsoWeekKey? WeekKey = null);
+    IsoWeekKey? WeekKey = null,
+    JournalPeriodKey? PeriodKey = null);
 
 public sealed record CaptureCommand(
     string Name,

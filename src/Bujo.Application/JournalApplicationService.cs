@@ -70,8 +70,45 @@ public sealed class JournalApplicationService
         string name,
         JournalListKind kind,
         string? goalText = null,
-        IsoWeekKey? weekKey = null) =>
-        _journal.CreateList(name, kind, goalText, weekKey);
+        IsoWeekKey? weekKey = null,
+        JournalPeriodKey? periodKey = null) =>
+        _journal.CreateList(name, kind, goalText, weekKey, periodKey);
+
+    public DomainResult<JournalPeriodNavigation> NavigatePeriod(
+        JournalListKind kind, int? year, int? month, int? quarter, string? direction, string? timeZone)
+    {
+        try
+        {
+            JournalPeriodKey key;
+            if (string.Equals(direction, "current", StringComparison.OrdinalIgnoreCase))
+            {
+                var zone = FindTimeZone(timeZone);
+                if (!zone.IsSuccess)
+                    return DomainResult<JournalPeriodNavigation>.Failure(zone.Error!);
+                var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(_clock.GetUtcNow(), zone.Value!).DateTime);
+                key = JournalPeriodKey.FromDate(kind, today);
+            }
+            else
+            {
+                key = new JournalPeriodKey(kind, year ?? 0, month, quarter);
+                key = direction?.ToLowerInvariant() switch
+                {
+                    "previous" => key.Previous() ?? throw new DomainException(DomainErrorCode.InvalidInput, "No previous period is in the supported calendar."),
+                    "next" => key.Next() ?? throw new DomainException(DomainErrorCode.InvalidInput, "No next period is in the supported calendar."),
+                    "selected" => key,
+                    _ => throw new DomainException(DomainErrorCode.InvalidInput, "Direction must be selected, previous, next, or current.")
+                };
+            }
+
+            var lists = _journal.GetSnapshot().Lists.Where(list => list.PeriodKey == key)
+                .OrderBy(list => list.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+            return DomainResult<JournalPeriodNavigation>.Success(new(key, key.Label, key.Range, lists));
+        }
+        catch (DomainException exception)
+        {
+            return DomainResult<JournalPeriodNavigation>.Failure(exception.ToError());
+        }
+    }
 
     public DomainResult<CaptureResult> Capture(
         string name,
@@ -122,6 +159,7 @@ public sealed class JournalApplicationService
         {
             return DomainResult<TimeZoneInfo>.Success(TimeZoneInfo.FindSystemTimeZoneById(timeZoneId));
         }
+
         catch (TimeZoneNotFoundException)
         {
             return InvalidTimeZone(timeZoneId);
@@ -143,3 +181,9 @@ public sealed class JournalApplicationService
                 ? "An IANA time zone is required."
                 : $"Unknown or invalid IANA time zone: {timeZoneId}."));
 }
+
+public sealed record JournalPeriodNavigation(
+    JournalPeriodKey Key,
+    string Label,
+    CalendarDateRange Range,
+    IReadOnlyList<JournalListSnapshot> Lists);

@@ -17,7 +17,8 @@ public sealed record JournalListSnapshot(
     JournalListState State,
     string? GoalText,
     IsoWeekKey? WeekKey,
-    long Version);
+    long Version,
+    JournalPeriodKey? PeriodKey = null);
 
 public sealed record OccurrenceSnapshot(
     Guid Id,

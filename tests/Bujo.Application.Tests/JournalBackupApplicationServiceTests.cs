@@ -5,6 +5,72 @@ namespace Bujo.Application.Tests;
 
 public sealed class JournalBackupApplicationServiceTests
 {
+    [Theory]
+    [InlineData(" Focus")]
+    [InlineData("Ｆｏｃｕｓ")]
+    public void RestoreRejectsNormalizedDuplicateListNamesWithoutReplacingEitherStore(string duplicate)
+    {
+        var (backupService, journal, knowledge) = CreateService();
+        Assert.True(journal.CreateList("Existing", JournalListKind.Custom).IsSuccess);
+        Assert.True(knowledge.Create("Existing knowledge").IsSuccess);
+        var before = backupService.ExportBackup();
+        var template = before.Lists.Single(list => list.Name == "Existing");
+        var invalid = before with
+        {
+            Lists = [.. before.Lists, template with { Id = Guid.NewGuid(), Name = "Focus" },
+                template with { Id = Guid.NewGuid(), Name = duplicate }],
+            Knowledge = before.Knowledge! with { Entries = [] }
+        };
+
+        var result = backupService.RestoreBackup(invalid);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(DomainErrorCode.InvalidInput, result.Error!.Code);
+        var after = backupService.ExportBackup();
+        Assert.Equal(before.Lists.OrderBy(list => list.Id), after.Lists.OrderBy(list => list.Id));
+        Assert.Equal(before.Knowledge!.Entries, after.Knowledge!.Entries);
+    }
+
+    [Fact]
+    public void RestorePreservesVerbatimLegacyListNameAndPreventsNormalizedDuplicateCreation()
+    {
+        var (backupService, journal, _) = CreateService();
+        Assert.True(journal.CreateList("Legacy", JournalListKind.Weekly).IsSuccess);
+        var backup = backupService.ExportBackup();
+        var legacy = backup.Lists.Single(list => list.Name == "Legacy");
+        backup = backup with { SchemaVersion = 0, Knowledge = null, Lists = backup.Lists.Select(list =>
+            list.Id == legacy.Id ? list with { Name = " Legacy " } : list).ToArray() };
+
+        Assert.True(backupService.RestoreBackup(backup).IsSuccess);
+        Assert.Equal(" Legacy ", journal.GetSnapshot().Lists.Single(list => list.Id == legacy.Id).Name);
+        Assert.Equal(DomainErrorCode.DuplicateListName, journal.CreateList("Legacy", JournalListKind.Custom).Error!.Code);
+    }
+
+    [Fact]
+    public void CalendarKeysRoundTripAndInvalidKeyKindDoesNotReplaceExistingData()
+    {
+        var (service, journal, _) = CreateService();
+        var key = new JournalPeriodKey(JournalListKind.Monthly, 2024, 2);
+        var list = journal.CreateList("February", JournalListKind.Monthly, periodKey: key);
+        Assert.True(list.IsSuccess, list.Error?.Message);
+        var weekly = journal.CreateList("Weekly", JournalListKind.Weekly, weekKey: new IsoWeekKey(2020, 53));
+        Assert.True(weekly.IsSuccess);
+        var serializer = new JournalBackupSerializer();
+        var backup = serializer.Deserialize(serializer.Serialize(service.ExportBackup()));
+        Assert.Equal(key, backup.Lists.Single(item => item.Id == list.Value!.Id).PeriodKey);
+        Assert.Equal(new IsoWeekKey(2020, 53), backup.Lists.Single(item => item.Id == weekly.Value!.Id).WeekKey);
+        Assert.True(service.RestoreBackup(backup).IsSuccess);
+        Assert.Equal(key, journal.GetSnapshot().Lists.Single(item => item.Id == list.Value!.Id).PeriodKey);
+        var invalidWeek = backup with { Lists = backup.Lists.Select(item =>
+            item.Id == weekly.Value!.Id ? item with { Kind = JournalListKind.Custom } : item).ToArray() };
+        Assert.False(service.RestoreBackup(invalidWeek).IsSuccess);
+
+        var invalid = backup with { Lists = backup.Lists.Select(item =>
+            item.Id == list.Value!.Id ? item with { Kind = JournalListKind.Custom } : item).ToArray() };
+        Assert.False(service.RestoreBackup(invalid).IsSuccess);
+        Assert.Equal(key, journal.GetSnapshot().Lists.Single(item => item.Id == list.Value!.Id).PeriodKey);
+    }
+
     [Fact]
     public void BackupRestoreAtomicallyPreservesJournalAndKnowledgeIdentityAndText()
     {

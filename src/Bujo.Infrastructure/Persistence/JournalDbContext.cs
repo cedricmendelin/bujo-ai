@@ -176,6 +176,12 @@ public sealed class JournalListEntity
 
     public int? WeekNumber { get; set; }
 
+    public int? PeriodYear { get; set; }
+
+    public int? PeriodMonth { get; set; }
+
+    public int? PeriodQuarter { get; set; }
+
     public long Version { get; set; }
 
     public byte[] RowVersion { get; set; } = [];

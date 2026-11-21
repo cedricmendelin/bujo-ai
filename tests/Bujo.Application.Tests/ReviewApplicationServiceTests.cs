@@ -8,6 +8,43 @@ public sealed class ReviewApplicationServiceTests
 {
     private static readonly string UserId = $"{Guid.Parse("d1f218cc-a2c7-43ce-8a8b-925393263fc5"):D}:{Guid.Parse("10c0963d-0a47-4a2d-b1ef-81109b4ceec7"):D}";
 
+    [Theory]
+    [InlineData(JournalListKind.Monthly)]
+    [InlineData(JournalListKind.Quarterly)]
+    [InlineData(JournalListKind.Yearly)]
+    public void CalendarReviewRequiresExactApprovalAndPreservesReplayStaleAndExpiry(JournalListKind kind)
+    {
+        var setup = CreateSetup(kind);
+        var task = setup.Journal.Capture("Task", listId: setup.List.Id).Value!;
+        var proposal = CreateProposal(setup, [Change(task.Item, task.Occurrence, ReviewDisposition.Done)], true);
+        Assert.Equal(64, proposal.Digest.Length);
+        Assert.Equal(DomainErrorCode.ApprovalDenied, setup.Reviews.ApproveProposal(proposal.Id, proposal.Digest, McpActor()).Error!.Code);
+        Assert.Equal(DomainErrorCode.ProposalDigestMismatch, setup.Reviews.ApproveProposal(proposal.Id, new string('0', 64), PwaActor()).Error!.Code);
+        Assert.True(setup.Reviews.ApproveProposal(proposal.Id, proposal.Digest, PwaActor()).IsSuccess);
+        var applied = setup.Reviews.ApplyProposal(proposal.Id, McpActor());
+        var after = setup.Repository.GetSnapshot();
+        Assert.True(applied.IsSuccess, applied.Error?.Message);
+        Assert.Equal(JournalListState.Closed, after.Lists.Single().State);
+        Assert.Equal(OccurrenceState.Done, after.Occurrences.Single().State);
+        Assert.Equal(applied.Value, setup.Reviews.ApplyProposal(proposal.Id, PwaActor()).Value);
+        AssertJournalUnchanged(after, setup.Repository.GetSnapshot());
+
+        var staleSetup = CreateSetup(kind);
+        var staleItem = staleSetup.Journal.Capture("Stale", listId: staleSetup.List.Id).Value!;
+        var stale = CreateProposal(staleSetup, [Change(staleItem.Item, staleItem.Occurrence, ReviewDisposition.Done)]);
+        Assert.True(staleSetup.Reviews.ApproveProposal(stale.Id, stale.Digest, PwaActor()).IsSuccess);
+        Assert.True(staleSetup.Journal.Capture("Concurrent", listId: staleSetup.List.Id).IsSuccess);
+        var before = staleSetup.Repository.GetSnapshot();
+        Assert.Equal(DomainErrorCode.ConcurrencyConflict, staleSetup.Reviews.ApplyProposal(stale.Id, McpActor()).Error!.Code);
+        AssertJournalUnchanged(before, staleSetup.Repository.GetSnapshot());
+
+        var expirySetup = CreateSetup(kind);
+        var expiryItem = expirySetup.Journal.Capture("Expiry", listId: expirySetup.List.Id).Value!;
+        var expiry = CreateProposal(expirySetup, [Change(expiryItem.Item, expiryItem.Occurrence, ReviewDisposition.Done)]);
+        expirySetup.Clock.SetUtcNow(expiry.ExpiresAt.AddTicks(1));
+        Assert.Equal(DomainErrorCode.ProposalExpired, expirySetup.Reviews.ApproveProposal(expiry.Id, expiry.Digest, PwaActor()).Error!.Code);
+    }
+
     [Fact]
     public void ReviewClosureKeepsThoughtWithoutDispositionButStillRequiresTask()
     {
@@ -329,12 +366,14 @@ public sealed class ReviewApplicationServiceTests
         Assert.Equal(OccurrenceState.Open, setup.Repository.GetSnapshot().Occurrences.Single().State);
     }
 
-    private static Setup CreateSetup()
+    private static Setup CreateSetup(JournalListKind kind = JournalListKind.Custom)
     {
         var repository = new InMemoryJournalRepository();
         var clock = new FrozenTimeProvider(new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero));
         var journal = new JournalService(repository, clock);
-        var list = journal.CreateList("Review list", JournalListKind.Custom).Value!;
+        var key = kind == JournalListKind.Custom ? (JournalPeriodKey?)null :
+            JournalPeriodKey.FromDate(kind, new DateOnly(2026, 11, 18));
+        var list = journal.CreateList("Review list", kind, periodKey: key).Value!;
         return new Setup(repository, journal, new ReviewApplicationService(repository, clock), list, clock);
     }
 

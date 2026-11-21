@@ -44,6 +44,7 @@ or a restore.
 | `get_daily_start` | Read daily-start results for an explicit IANA time zone. |
 | `get_upcoming` | Read the upcoming view for an explicit IANA time zone. |
 | `find_lists` | Find matching lists and return candidate IDs. |
+| `navigate_list_period` | Read all lists in a selected, previous, next, or current calendar period. |
 | `capture_item`, `create_list` | Capture an unplanned Future Log item or create a list. |
 | `resolve_occurrence` | Resolve an occurrence to its current destination and history. |
 | `edit_item`, `set_planned_period`, `set_list_goal` | Make explicit single-item or list-goal edits. |
@@ -95,6 +96,20 @@ creator can load, inspect, and approve the persisted proposal after leaving MCP.
 List names are unique case-insensitively across list kinds, following the
 owner's direction. Multiple weekly lists may share the same ISO year/week key.
 The uniqueness rule applies to names, not week keys.
+
+`create_list` accepts `Monthly`, `Quarterly`, and `Yearly` kinds with a
+`periodKey` object containing a matching `kind`, `year`, and respectively
+`month`, `quarter`, or neither. For example, a monthly key is
+`{"kind":"Monthly","year":2026,"month":11}`. Weekly `weekKey` remains
+optional for legacy clients. `navigate_list_period` takes `kind`, `year`, and
+the relevant `month` or `quarter`, with direction `selected`, `previous`, or
+`next`; `current` instead requires `timeZone` (an IANA zone). Its response
+includes the label, inclusive range, key, and every list in that period. The
+same operations are available through `POST /api/lists` and
+`GET /api/lists/period`. Period reviews use `get_list_review` and the existing
+proposal tools; approval remains PWA-only. No period is created or rolled over
+automatically. Retain a period-aware backup before rolling back to an older
+binary, which cannot interpret the new kinds.
 
 Bulk and ceremony-generated changes use review proposals. Do not interpret a
 prompt or tool description as authorization: only the listed tools are exposed,

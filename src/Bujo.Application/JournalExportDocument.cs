@@ -17,7 +17,10 @@ public sealed record JournalListExport(
     string? GoalText,
     int? WeekYear,
     int? WeekNumber,
-    long Version);
+    long Version,
+    int? PeriodYear = null,
+    int? PeriodMonth = null,
+    int? PeriodQuarter = null);
 
 public sealed record JournalItemExport(
     Guid Id,

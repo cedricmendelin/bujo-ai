@@ -10,6 +10,10 @@
     {
         <p class="journal-meta">Week number @listWeek.Week · Week year @listWeek.Year</p>
     }
+    @if (_list?.PeriodKey is { } period)
+    {
+        <p class="journal-meta">@period.Label · @period.Range.Start.ToString("yyyy-MM-dd") – @period.Range.End.ToString("yyyy-MM-dd")</p>
+    }
     <NotationLegend />
     <p><a href="/lists">All lists</a></p>
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />

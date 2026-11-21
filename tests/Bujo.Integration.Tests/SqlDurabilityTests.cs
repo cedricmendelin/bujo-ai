@@ -25,6 +25,131 @@ namespace Bujo.Integration.Tests;
 public sealed class SqlDurabilityTests
 {
     [SqlDurabilityFact]
+    public async Task CalendarMigrationPreservesLegacyWeeklyRowsAndPeriodKeysSurviveRestart()
+    {
+        var adminConnectionString = Environment.GetEnvironmentVariable("BUJO_SQL_DURABILITY_CONNECTION")!;
+        var databaseName = $"BujoPeriod_{Guid.NewGuid():N}";
+        var created = false;
+        try
+        {
+            var connectionString = await CreateDatabaseAsync(adminConnectionString, databaseName);
+            created = true;
+            var options = new DbContextOptionsBuilder<JournalDbContext>().UseSqlServer(connectionString).Options;
+            var weeklyId = Guid.NewGuid();
+            await using (var context = new JournalDbContext(options))
+            {
+                var migrator = context.GetService<IMigrator>();
+                await migrator.MigrateAsync("20261119215100_AddKnowledgeFullText");
+                await context.Database.ExecuteSqlAsync($"""
+                    INSERT INTO [JournalLists] ([Id], [Name], [NormalizedName], [Kind], [State], [WeekYear], [WeekNumber], [Version])
+                    VALUES ({Guid.NewGuid()}, {"Future Log"}, {"Future Log"}, {0}, {0}, {null}, {null}, {0L}),
+                           ({weeklyId}, {"Legacy week"}, {"Legacy week"}, {1}, {0}, {2020}, {53}, {0L})
+                    """);
+                await migrator.MigrateAsync();
+            }
+            var factory = new TestContextFactory(options);
+            var repository = new EfJournalRepository(factory);
+            var legacy = repository.GetSnapshot().Lists.Single(list => list.Id == weeklyId);
+            Assert.Equal(new IsoWeekKey(2020, 53), legacy.WeekKey);
+            Assert.Null(legacy.PeriodKey);
+            foreach (var kind in new[] { JournalListKind.Monthly, JournalListKind.Quarterly, JournalListKind.Yearly })
+            {
+                var key = JournalPeriodKey.FromDate(kind, new DateOnly(2026, 12, 31));
+                Assert.True(repository.CreateList(new CreateListCommand(kind.ToString(), kind, PeriodKey: key)).IsSuccess);
+            }
+            var restarted = new EfJournalRepository(factory).GetSnapshot();
+            Assert.Equal(new IsoWeekKey(2020, 53), restarted.Lists.Single(list => list.Id == weeklyId).WeekKey);
+            Assert.All(new[] { JournalListKind.Monthly, JournalListKind.Quarterly, JournalListKind.Yearly },
+                kind => Assert.Equal(JournalPeriodKey.FromDate(kind, new DateOnly(2026, 12, 31)),
+                    restarted.Lists.Single(list => list.Kind == kind).PeriodKey));
+            var backup = new EfJournalBackupRepository(factory);
+            var knowledge = new KnowledgeApplicationService(new EfKnowledgeRepository(factory, NullLogger<EfKnowledgeRepository>.Instance), TimeProvider.System);
+            Assert.True(knowledge.Create("Existing knowledge").IsSuccess);
+            var serializer = new JournalBackupSerializer();
+            var roundTrip = serializer.Deserialize(serializer.Serialize(backup.ExportBackup()));
+            var memory = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+            var memoryBackup = new InMemoryJournalBackupRepository(memory, new InMemoryKnowledgeRepository());
+            Assert.True(memoryBackup.RestoreBackup(roundTrip).IsSuccess);
+            Assert.Equal(restarted.Lists.OrderBy(list => list.Id), memory.GetSnapshot().Lists.OrderBy(list => list.Id));
+
+            foreach (var duplicate in new[] { " Focus", "Ｆｏｃｕｓ" })
+            {
+                var template = roundTrip.Lists.Single(list => list.Id == weeklyId);
+                var duplicateBackup = roundTrip with
+                {
+                    Lists = [.. roundTrip.Lists, template with { Id = Guid.NewGuid(), Name = "Focus" },
+                        template with { Id = Guid.NewGuid(), Name = duplicate }],
+                    Knowledge = roundTrip.Knowledge! with { Entries = [] }
+                };
+                Assert.Equal(DomainErrorCode.InvalidInput, backup.RestoreBackup(duplicateBackup).Error!.Code);
+                Assert.Equal(DomainErrorCode.InvalidInput, memoryBackup.RestoreBackup(duplicateBackup).Error!.Code);
+                var after = backup.ExportBackup();
+                var memoryAfter = memoryBackup.ExportBackup();
+                Assert.Equal(roundTrip.Lists.OrderBy(list => list.Id), after.Lists.OrderBy(list => list.Id));
+                Assert.Equal(roundTrip.Lists.OrderBy(list => list.Id), memoryAfter.Lists.OrderBy(list => list.Id));
+                Assert.Equal("Existing knowledge", Assert.Single(after.Knowledge!.Entries).Content);
+                Assert.Equal("Existing knowledge", Assert.Single(memoryAfter.Knowledge!.Entries).Content);
+            }
+
+            var legacyName = roundTrip with
+            {
+                SchemaVersion = 0,
+                Knowledge = null,
+                Lists = roundTrip.Lists.Select(list => list.Id == weeklyId ? list with { Name = " Legacy week " } : list).ToArray()
+            };
+            Assert.True(backup.RestoreBackup(legacyName).IsSuccess);
+            Assert.True(memoryBackup.RestoreBackup(legacyName).IsSuccess);
+            Assert.Equal(" Legacy week ", backup.ExportBackup().Lists.Single(list => list.Id == weeklyId).Name);
+            Assert.Equal(" Legacy week ", memoryBackup.ExportBackup().Lists.Single(list => list.Id == weeklyId).Name);
+            Assert.Equal(DomainErrorCode.DuplicateListName, repository.CreateList(new CreateListCommand("Legacy week", JournalListKind.Custom)).Error!.Code);
+            Assert.Equal(DomainErrorCode.DuplicateListName, memory.CreateList(new CreateListCommand("Legacy week", JournalListKind.Custom)).Error!.Code);
+            Assert.True(backup.RestoreBackup(roundTrip).IsSuccess);
+            Assert.True(memoryBackup.RestoreBackup(roundTrip).IsSuccess);
+
+            var invalid = roundTrip with
+            {
+                Lists = roundTrip.Lists.Select(list =>
+                    list.Id == weeklyId ? list with { Kind = JournalListKind.Custom } : list).ToArray()
+            };
+            Assert.Equal(DomainErrorCode.InvalidInput, backup.RestoreBackup(invalid).Error!.Code);
+            Assert.Equal(DomainErrorCode.InvalidInput, memoryBackup.RestoreBackup(invalid).Error!.Code);
+            Assert.Equal(restarted.Lists, new EfJournalRepository(factory).GetSnapshot().Lists);
+            Assert.Equal(restarted.Lists.OrderBy(list => list.Id), memory.GetSnapshot().Lists.OrderBy(list => list.Id));
+
+            Assert.True(backup.RestoreBackup(roundTrip).IsSuccess);
+            Assert.Equal(restarted.Lists, new EfJournalRepository(factory).GetSnapshot().Lists);
+
+            // Older binaries cannot interpret calendar list kinds: preserve the
+            // type-aware backup, remove those rows, then roll back the schema.
+            await using (var context = new JournalDbContext(options))
+            {
+                await context.Lists.Where(list => list.Kind == JournalListKind.Monthly ||
+                    list.Kind == JournalListKind.Quarterly || list.Kind == JournalListKind.Yearly).ExecuteDeleteAsync();
+                await context.GetService<IMigrator>().MigrateAsync("20261119215100_AddKnowledgeFullText");
+                await context.Database.OpenConnectionAsync();
+                await using var command = context.Database.GetDbConnection().CreateCommand();
+                command.CommandText = "SELECT [WeekYear], [WeekNumber] FROM [JournalLists] WHERE [Id] = @id";
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = "@id";
+                parameter.Value = weeklyId;
+                command.Parameters.Add(parameter);
+                await using var reader = await command.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(2020, reader.GetInt32(0));
+                Assert.Equal(53, reader.GetInt32(1));
+            }
+            await using (var context = new JournalDbContext(options))
+                await context.Database.MigrateAsync();
+            Assert.True(backup.RestoreBackup(roundTrip).IsSuccess);
+            Assert.Equal(restarted.Lists, new EfJournalRepository(factory).GetSnapshot().Lists);
+        }
+        finally
+        {
+            if (created) await DropDatabaseAsync(adminConnectionString, databaseName);
+        }
+    }
+
+    [SqlDurabilityFact]
     public async Task ItemTypeMigrationPreservesLegacyRowsAndOldWritesAndThoughtRoundTrips()
     {
         var adminConnectionString = Environment.GetEnvironmentVariable("BUJO_SQL_DURABILITY_CONNECTION")!;
@@ -519,6 +644,9 @@ public sealed class SqlDurabilityTests
             GoalText = list.GoalText,
             WeekYear = list.WeekYear,
             WeekNumber = list.WeekNumber,
+            PeriodYear = list.PeriodYear,
+            PeriodMonth = list.PeriodMonth,
+            PeriodQuarter = list.PeriodQuarter,
             Version = list.Version
         }));
         context.Items.AddRange(document.Items.Select(item =>

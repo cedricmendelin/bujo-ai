@@ -141,13 +141,22 @@ public sealed class JournalMcpTools
         string name,
         JournalListKind kind,
         string? goalText = null,
-        JournalEndpoints.WeekKeyRequest? weekKey = null)
+        JournalEndpoints.WeekKeyRequest? weekKey = null,
+        JournalEndpoints.JournalPeriodKeyRequest? periodKey = null)
     {
         var parsedWeekKey = JournalContract.ParseWeekKey(weekKey);
-        return parsedWeekKey.IsSuccess
-            ? McpErrors.From(journal.CreateList(name, kind, goalText, parsedWeekKey.Value))
-            : McpErrors.Error(parsedWeekKey.Error!);
+        if (!parsedWeekKey.IsSuccess) return McpErrors.Error(parsedWeekKey.Error!);
+        var parsedPeriodKey = JournalContract.ParseJournalPeriod(periodKey);
+        return parsedPeriodKey.IsSuccess
+            ? McpErrors.From(journal.CreateList(name, kind, goalText, parsedWeekKey.Value, parsedPeriodKey.Value))
+            : McpErrors.Error(parsedPeriodKey.Error!);
     }
+
+    [McpServerTool(Name = "navigate_list_period", ReadOnly = true, Destructive = false),
+     Description("Returns all lists in a selected, previous, next, or current calendar period. Current requires an IANA time zone.")]
+    public static CallToolResult NavigateListPeriod(JournalApplicationService journal, JournalListKind kind,
+        int? year = null, int? month = null, int? quarter = null, string direction = "selected", string? timeZone = null) =>
+        McpErrors.From(journal.NavigatePeriod(kind, year, month, quarter, direction, timeZone));
 
     [McpServerTool(Name = ChatToolNames.ResolveOccurrence, ReadOnly = true, Destructive = false), Description("Returns the selected occurrence's full chain and current destination/state.")]
     public static CallToolResult ResolveOccurrence(JournalApplicationService journal, Guid occurrenceId) =>

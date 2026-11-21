@@ -9,6 +9,48 @@ namespace Bujo.Application.Tests;
 public sealed class ChatToolRegistryTests
 {
     [Fact]
+    public void CreateListRejectsNonObjectWeekKeysWithoutCreatingLists()
+    {
+        var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+        var executor = new ChatToolExecutor(new JournalApplicationService(new JournalService(repository)),
+            new ReviewApplicationService(repository));
+        ChatToolResult Create(string json) => executor.Execute(new ChatToolRequest(
+            "create_list", JsonDocument.Parse(json).RootElement.Clone(), Principal()));
+
+        foreach (var malformed in new[] { "\"not a week\"", "[]", "123", "true" })
+        {
+            var result = Create("""{"name":"Bad","kind":"Monthly","weekKey":""" + malformed +
+                ""","periodKey":{"kind":"Monthly","year":2026,"month":1}}""");
+            Assert.False(result.Succeeded);
+            Assert.Contains("week key", result.Summary, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Single(repository.GetSnapshot().Lists);
+        Assert.True(Create("""{"name":"Monthly null","kind":"Monthly","weekKey":null,"periodKey":{"kind":"Monthly","year":2026,"month":1}}""").Succeeded);
+        Assert.True(Create("""{"name":"Monthly absent","kind":"Monthly","periodKey":{"kind":"Monthly","year":2026,"month":1}}""").Succeeded);
+        Assert.True(Create("""{"name":"Week","kind":"Weekly","weekKey":{"year":2020,"week":53}}""").Succeeded);
+        Assert.Equal(new IsoWeekKey(2020, 53), repository.GetSnapshot().Lists.Single(list => list.Name == "Week").WeekKey);
+    }
+
+    [Fact]
+    public void CreateListChatToolValidatesCalendarKeys()
+    {
+        var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+        var executor = new ChatToolExecutor(new JournalApplicationService(new JournalService(repository)),
+            new ReviewApplicationService(repository));
+        ChatToolResult Create(string json) => executor.Execute(new ChatToolRequest(
+            "create_list", JsonDocument.Parse(json).RootElement.Clone(), Principal()));
+        var schema = ChatToolRegistry.ToJsonSchema(ChatToolRegistry.Get("create_list"));
+        Assert.Equal("object", schema.GetProperty("properties").GetProperty("periodKey").GetProperty("type").GetString());
+        var result = Create("""{"name":"Q4","kind":"Quarterly","periodKey":{"kind":"Quarterly","year":2026,"quarter":4}}""");
+        Assert.True(result.Succeeded, result.Summary);
+        Assert.Equal(new JournalPeriodKey(JournalListKind.Quarterly, 2026, quarter: 4),
+            Assert.IsType<JournalListSnapshot>(result.Value).PeriodKey);
+        Assert.False(Create("""{"name":"Bad","kind":"Custom","periodKey":{"kind":"Yearly","year":2026}}""").Succeeded);
+        Assert.False(Create("""{"name":"Bad","kind":"Yearly","periodKey":{"kind":"Yearly","year":2026,"month":"bad"}}""").Succeeded);
+        Assert.Single(repository.GetSnapshot().Lists, list => list.Kind == JournalListKind.Quarterly);
+    }
+
+    [Fact]
     public void RegistryContainsThe22CurrentJournalTools()
     {
         var expected = new[]

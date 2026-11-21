@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 
 namespace Bujo.Domain;
 
 public readonly record struct IsoWeekKey
 {
+    [JsonConstructor]
     public IsoWeekKey(int year, int week)
     {
         if (year is < 1 or > 9999)

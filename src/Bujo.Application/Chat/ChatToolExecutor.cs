@@ -66,7 +66,7 @@ public sealed class ChatToolExecutor(
                 _ => new ChatToolResult(false, $"Unknown chat tool: {request.Name}", null)
             };
         }
-        catch (Exception exception) when (exception is ArgumentException or JsonException or InvalidOperationException)
+        catch (Exception exception) when (exception is ArgumentException or JsonException or InvalidOperationException or DomainException)
         {
             return new ChatToolResult(false, exception.Message, null);
         }
@@ -108,24 +108,37 @@ public sealed class ChatToolExecutor(
         var kindText = GetRequiredString(request.Arguments, "kind");
         if (!Enum.TryParse<JournalListKind>(kindText, ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
         {
-            return new ChatToolResult(false, "The list kind must be FutureLog, Weekly, or Custom.", null);
+            return new ChatToolResult(false, "The list kind must be FutureLog, Weekly, Custom, Monthly, Quarterly, or Yearly.", null);
         }
 
-        IsoWeekKey? weekKey = null;
+        var weekKey = TryWeekKey(request.Arguments);
         if (kind == JournalListKind.Weekly)
         {
-            weekKey = TryWeekKey(request.Arguments);
             if (weekKey is null)
             {
                 return new ChatToolResult(false, "A weekly list requires a valid ISO year and week.", null);
             }
         }
 
+        JournalPeriodKey? periodKey = null;
+        if (request.Arguments.TryGetProperty("periodKey", out var rawPeriod) &&
+            rawPeriod.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
+            throw new ArgumentException("The journal period key is invalid.");
+        if (TryGetObject(request.Arguments, "periodKey", out var period))
+        {
+            var periodKindText = GetRequiredString(period, "kind");
+            if (!Enum.TryParse<JournalListKind>(periodKindText, true, out var periodKind))
+                return new ChatToolResult(false, "The journal period kind is invalid.", null);
+            periodKey = new JournalPeriodKey(periodKind, GetInt(period, "year", 0),
+                TryInt(period, "month"), TryInt(period, "quarter"));
+        }
+
         return Success(journal.CreateList(
             name,
             kind,
             GetString(request.Arguments, "goalText"),
-            weekKey));
+            weekKey,
+            periodKey));
     }
 
     private ChatToolResult SetPlannedPeriod(ChatToolRequest request)
@@ -232,6 +245,11 @@ public sealed class ChatToolExecutor(
 
     private IsoWeekKey? TryWeekKey(JsonElement arguments)
     {
+        if (arguments.ValueKind == JsonValueKind.Object &&
+            arguments.TryGetProperty("weekKey", out var rawWeek) &&
+            rawWeek.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
+            throw new ArgumentException("The ISO week key is invalid.");
+
         if (!TryGetObject(arguments, "weekKey", out var weekKey))
         {
             return null;
@@ -291,6 +309,13 @@ public sealed class ChatToolExecutor(
                value.TryGetInt32(out var number)
             ? number
             : fallback;
+    }
+
+    private static int? TryInt(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)) return number;
+        throw new ArgumentException($"A valid '{name}' integer is required.");
     }
 
     private static long GetLong(JsonElement element, string name)

@@ -19,7 +19,10 @@ public sealed class JournalExport(TimeProvider clock) : IJournalExport
                     list.GoalText,
                     list.WeekKey?.Year,
                     list.WeekKey?.Week,
-                    list.Version))
+                    list.Version,
+                    list.PeriodKey?.Year,
+                    list.PeriodKey?.Month,
+                    list.PeriodKey?.Quarter))
                 .ToArray(),
             snapshot.Items
                 .OrderBy(item => item.Id)
