@@ -68,6 +68,19 @@ knowledge as a JSON file containing private data. Keep it somewhere secure.
 Restoring from a backup replaces current data; export a fresh backup before
 restoring an older one.
 
+## Plan a family weekend with saved ideas
+
+Save places, activities, or other reference material as **Knowledge** entries,
+with useful tags such as `family`, `weekend`, or `activity`. In a connected
+remote MCP assistant, ask it to suggest family-weekend activities from your
+saved ideas; the `family_weekend_ideas` prompt asks about relevant missing
+constraints and returns a few options with their saved-entry sources. If no
+saved idea matches, it says so rather than inventing one. The prompt does not
+read journal items or access your calendar, and it never books, messages, or
+silently saves a plan. Public search is only considered when you explicitly ask
+and your client already provides it; the in-app chat does not yet read
+Knowledge.
+
 ## Choose how to interact
 
 Use the web app for direct edits and review approval. If **Chat** is enabled,
