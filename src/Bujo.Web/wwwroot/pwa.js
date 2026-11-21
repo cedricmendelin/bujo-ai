@@ -104,6 +104,7 @@
     window.bujoPwa = Object.freeze({
         getTimeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
         writesAvailable,
+        focusItemLink: id => document.getElementById(id)?.focus(),
         confirmKnowledgeRestore: () => window.confirm("Restoring this backup replaces the journal and saved knowledge. Continue?"),
         downloadText: (fileName, content) => {
             const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));

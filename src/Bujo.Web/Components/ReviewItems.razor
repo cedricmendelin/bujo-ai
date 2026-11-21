@@ -9,7 +9,7 @@ else
         {
             <li class="journal-entry">
                 <JournalMarker Type="@item.Type.ToString()" State="@(Enum.Parse<OccurrenceState>(item.Destination.State))" />
-                <a class="journal-entry-text" href="/items/@item.Destination.OccurrenceId">@item.Text</a>
+                <a id="review-item-@item.ItemId" class="journal-entry-text" href="/items/@item.Destination.OccurrenceId">@item.Text</a>
                 <span class="journal-meta"> · @JournalLabels.Period(item.PlannedPeriod)</span>
                 <div>@(item.Type == ItemType.Thought && item.ReasonCode == "FutureLog" ? "Reflection in the Future Log." : item.Reason) <a href="/lists/@item.Destination.ListId">@item.Destination.ListName</a></div>
                 @if (item.Conflict)
@@ -20,6 +20,22 @@ else
                 {
                     <div class="journal-meta">Tags: @string.Join(", ", item.Tags)</div>
                 }
+                @if (ShowOverdueActions && ReviewDate is { } today && IsOverdue(item))
+                {
+                    var week = IsoWeekKey.FromDate(today);
+                    <div class="journal-actions">
+                        <button type="button" disabled="@Busy"
+                                aria-label="Plan for today · @today.ToString("yyyy-MM-dd") for @item.Text"
+                                @onclick="() => PlanForToday.InvokeAsync(item)">
+                            Plan for today · @today.ToString("yyyy-MM-dd")
+                        </button>
+                        <button type="button" disabled="@Busy"
+                                aria-label="Plan for this week · @week for @item.Text"
+                                @onclick="() => PlanForThisWeek.InvokeAsync(item)">
+                            Plan for this week · @week
+                        </button>
+                    </div>
+                }
             </li>
         }
     </ul>
@@ -27,4 +43,12 @@ else
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<PlannedReviewItem> Items { get; set; } = [];
+    [Parameter] public bool ShowOverdueActions { get; set; }
+    [Parameter] public DateOnly? ReviewDate { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<PlannedReviewItem> PlanForToday { get; set; }
+    [Parameter] public EventCallback<PlannedReviewItem> PlanForThisWeek { get; set; }
+
+    private static bool IsOverdue(PlannedReviewItem item) =>
+        item.ReasonCode is "MissedDay" or "MissedWeek" or "MissedMonth" or "MissedQuarter" or "MissedYear";
 }

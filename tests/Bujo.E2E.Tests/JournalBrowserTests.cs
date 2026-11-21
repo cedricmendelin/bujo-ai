@@ -589,11 +589,17 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     [Fact]
     public async Task TodayCountsTasksButUpcomingDisplaysThoughtsAsReflections()
     {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var overdueThought = journal.Capture("Past reflection", null, null,
+            PlannedPeriod.ForDay(new DateOnly(2026, 11, 18)), null, ItemType.Thought);
+        Assert.True(overdueThought.IsSuccess);
         await using var context = await fixture.CreateContextAsync();
         var page = await context.NewPageAsync();
         await page.GotoAsync("/today");
         var counts = page.Locator("p").Filter(new() { HasText = "Future Log tasks:" });
         await Expect(counts).ToBeVisibleAsync();
+        await Expect(Link(page, "Past reflection")).ToHaveCountAsync(0);
+        await Expect(Button(page, "Plan for today · 2026-11-19 for Past reflection")).ToHaveCountAsync(0);
         var baseline = await counts.InnerTextAsync();
 
         await page.GotoAsync("/capture");
@@ -763,6 +769,145 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
     }
 
     [Theory]
+    [InlineData("today")]
+    [InlineData("week")]
+    public async Task OverdueShortcutReschedulesOnlyAfterKeyboardActivationAndRefreshesRow(string target)
+    {
+        var itemName = $"Quick reschedule {target} task";
+        var (journal, list, capture) = CreateOverdueWeeklyItem(itemName, new IsoWeekKey(2026, 46));
+        var before = fixture.Journal.GetSnapshot();
+        var beforeOccurrence = before.Occurrences.Single(item => item.Id == capture.Occurrence.Id);
+        var beforeList = before.Lists.Single(item => item.Id == list.Id);
+        var expectedPeriod = target == "today"
+            ? PlannedPeriod.ForDay(new DateOnly(2026, 11, 19))
+            : PlannedPeriod.ForWeek(new IsoWeekKey(2026, 47));
+        var expectedButtonName = target == "today"
+            ? $"Plan for today · 2026-11-19 for {itemName}"
+            : $"Plan for this week · 2026-W47 for {itemName}";
+        var expectedConfirmation = target == "today"
+            ? "Planned for today (2026-11-19)."
+            : "Planned for this week (2026-W47).";
+
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/today");
+
+        var row = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, itemName) });
+        var shortcut = row.GetByRole(AriaRole.Button, new() { Name = expectedButtonName, Exact = true });
+        await Expect(shortcut).ToBeVisibleAsync();
+        var axe = await page.RunAxe();
+        Assert.True(axe.Violations.Length == 0, JsonSerializer.Serialize(axe.Violations));
+        Assert.Equal(PlannedPeriod.ForWeek(new IsoWeekKey(2026, 46)), before.Items.Single(item => item.Id == capture.Item.Id).PlannedPeriod);
+        Assert.Equal(beforeOccurrence, fixture.Journal.GetSnapshot().Occurrences.Single(item => item.Id == capture.Occurrence.Id));
+
+        await shortcut.FocusAsync();
+        await page.Keyboard.PressAsync("Enter");
+        await Expect(page.GetByText(expectedConfirmation, new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(row).ToContainTextAsync(expectedPeriod.Kind == PlannedPeriodKind.Day ? "2026-11-19" : "2026-W47");
+        await Expect(Link(page, itemName)).ToBeVisibleAsync();
+        await Expect(Link(page, itemName)).ToBeFocusedAsync();
+
+        var after = fixture.Journal.GetSnapshot();
+        Assert.Equal(expectedPeriod, after.Items.Single(item => item.Id == capture.Item.Id).PlannedPeriod);
+        Assert.Equal(beforeOccurrence, after.Occurrences.Single(item => item.Id == capture.Occurrence.Id));
+        Assert.Equal(beforeList, after.Lists.Single(item => item.Id == list.Id));
+        Assert.Equal(before.MoveHistory, after.MoveHistory);
+        await Expect(row.GetByText("Planned period conflicts with the destination week.", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task ThisWeekShortcutUsesIsoWeekYearAcrossCalendarYearRollover()
+    {
+        var originalTime = fixture.Clock.UtcNow;
+        fixture.Clock.UtcNow = new DateTimeOffset(2027, 1, 3, 23, 30, 0, TimeSpan.Zero);
+        try
+        {
+            const string itemName = "Rollover reschedule task";
+            var (journal, list, capture) = CreateOverdueWeeklyItem(itemName, new IsoWeekKey(2026, 53));
+            await using var context = await fixture.CreateContextAsync();
+            var page = await context.NewPageAsync();
+            await page.GotoAsync("/today");
+
+            var row = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, itemName) });
+            await Expect(page.GetByText("Local date: 2027-01-04 (Europe/Zurich)")).ToBeVisibleAsync();
+            await row.GetByRole(AriaRole.Button, new()
+            {
+                Name = "Plan for this week · 2027-W01 for Rollover reschedule task",
+                Exact = true
+            }).FocusAsync();
+            await page.Keyboard.PressAsync("Enter");
+            await Expect(page.GetByText("Planned for this week (2027-W01).", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(row).ToContainTextAsync("2027-W01");
+
+            var after = fixture.Journal.GetSnapshot();
+            Assert.Equal(PlannedPeriod.ForWeek(new IsoWeekKey(2027, 1)), after.Items.Single(item => item.Id == capture.Item.Id).PlannedPeriod);
+            Assert.Equal(list.Id, after.Resolve(capture.Occurrence.Id).Value!.CurrentList.Id);
+            Assert.Equal(OccurrenceState.Open, after.Resolve(capture.Occurrence.Id).Value!.CurrentOccurrence.State);
+        }
+        finally
+        {
+            fixture.Clock.UtcNow = originalTime;
+        }
+    }
+
+    [Fact]
+    public async Task OverdueShortcutsAreLimitedToOverdueTodayRowsAndStayOutOfUpcoming()
+    {
+        const string overdueName = "Only overdue shortcuts";
+        var (journal, _, _) = CreateOverdueWeeklyItem(overdueName, new IsoWeekKey(2026, 46));
+        var today = journal.Capture("No shortcut today", null, null, PlannedPeriod.ForDay(new DateOnly(2026, 11, 19)), null).Value!;
+        var thisWeek = journal.Capture("No shortcut this week", null, null, PlannedPeriod.ForWeek(new IsoWeekKey(2026, 47)), null).Value!;
+        var done = journal.Capture("Historical closed item", null, null, PlannedPeriod.ForWeek(new IsoWeekKey(2026, 46)), null).Value!;
+        Assert.True(journal.Transition(done.Occurrence.Id, OccurrenceAction.Done).IsSuccess);
+
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/today");
+
+        var overdueRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, overdueName) });
+        var todayRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "No shortcut today") });
+        var weekRow = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, "No shortcut this week") });
+        await Expect(overdueRow.GetByRole(AriaRole.Button)).ToHaveCountAsync(2);
+        await Expect(todayRow.GetByRole(AriaRole.Button)).ToHaveCountAsync(0);
+        await Expect(weekRow.GetByRole(AriaRole.Button)).ToHaveCountAsync(0);
+        await Expect(Link(page, "Historical closed item")).ToHaveCountAsync(0);
+
+        await page.GotoAsync("/upcoming");
+        await Expect(page.Locator("li.journal-entry button")).ToHaveCountAsync(0);
+        Assert.Equal(PlannedPeriod.ForWeek(new IsoWeekKey(2026, 46)), fixture.Journal.GetSnapshot().Items.Single(item => item.Id == done.Item.Id).PlannedPeriod);
+    }
+
+    [Fact]
+    public async Task StaleOverdueRowRejectsQuickRescheduling()
+    {
+        const string itemName = "Stale reschedule task";
+        var (journal, list, capture) = CreateOverdueWeeklyItem(itemName, new IsoWeekKey(2026, 46));
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        await page.GotoAsync("/today");
+
+        var row = page.Locator("li.journal-entry").Filter(new() { Has = Link(page, itemName) });
+        var shortcut = row.GetByRole(AriaRole.Button, new()
+        {
+            Name = "Plan for today · 2026-11-19 for Stale reschedule task",
+            Exact = true
+        });
+        await Expect(shortcut).ToBeVisibleAsync();
+        var changedPeriod = PlannedPeriod.ForDay(new DateOnly(2026, 11, 17));
+        Assert.True(journal.ChangePlannedPeriod(capture.Item.Id, changedPeriod).IsSuccess);
+
+        await shortcut.FocusAsync();
+        await page.Keyboard.PressAsync("Enter");
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("This overdue row changed before it could be rescheduled.");
+        await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Refresh the journal");
+
+        var after = fixture.Journal.GetSnapshot();
+        Assert.Equal(changedPeriod, after.Items.Single(item => item.Id == capture.Item.Id).PlannedPeriod);
+        Assert.Equal(list.Id, after.Resolve(capture.Occurrence.Id).Value!.CurrentList.Id);
+        Assert.Equal(OccurrenceState.Open, after.Resolve(capture.Occurrence.Id).Value!.CurrentOccurrence.State);
+    }
+
+    [Theory]
     [InlineData("/today", "Invalid/Browser", "Unknown or invalid IANA time zone: Invalid/Browser.")]
     [InlineData("/upcoming", "", "An IANA time zone is required.")]
     public async Task InvalidBrowserZoneIsVisibleWithoutUtcFallback(string path, string zone, string error)
@@ -852,6 +997,16 @@ public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<
 
     private static ILocator Link(IPage page, string name) => page.GetByRole(AriaRole.Link, new() { Name = name, Exact = true });
     private static ILocator Button(IPage page, string name) => page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true });
+
+    private (JournalApplicationService Journal, JournalListSnapshot List, CaptureResult Capture) CreateOverdueWeeklyItem(
+        string name,
+        IsoWeekKey week)
+    {
+        var journal = new JournalApplicationService(new JournalService(fixture.Journal));
+        var list = journal.CreateList($"Quick reschedule {name}", JournalListKind.Weekly, weekKey: week).Value!;
+        var capture = journal.Capture(name, null, null, PlannedPeriod.ForWeek(week), list.Id).Value!;
+        return (journal, list, capture);
+    }
 
     private static async Task CreateList(IPage page, string name, bool weekly = false)
     {

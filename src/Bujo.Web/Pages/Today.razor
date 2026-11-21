@@ -7,7 +7,7 @@
 <div data-requires-circuit>
     <h1 tabindex="-1">Today</h1>
     <NotationLegend />
-    <JournalFeedback Error="@Error" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (_review is { } review)
     {
         <p class="journal-meta">Local date: @review.Today.ToString("yyyy-MM-dd") (@Zone)</p>
@@ -16,7 +16,12 @@
         {
             <section>
                 <h2>@group.Label</h2>
-                <ReviewItems Items="group.Items" />
+                <ReviewItems Items="group.Items"
+                             ShowOverdueActions="@(group.Code == "Overdue")"
+                             ReviewDate="review.Today"
+                             Busy="Busy"
+                             PlanForToday="PlanForTodayAsync"
+                             PlanForThisWeek="PlanForThisWeekAsync" />
             </section>
         }
         <p>Future Log tasks: @review.FutureLogCount · Unplanned tasks: @review.UnplannedCount</p>
@@ -26,6 +31,7 @@
 
 @code {
     private DailyStartReview? _review;
+    private Guid? _focusItemId;
 
     protected override void Read()
     {
@@ -34,4 +40,77 @@
         if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
         _review = result.Value;
     }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        if (_focusItemId is not { } itemId ||
+            _review is null ||
+            !_review.Groups.SelectMany(group => group.Items).Any(item => item.ItemId == itemId))
+        {
+            return;
+        }
+
+        _focusItemId = null;
+        try { await JS.InvokeVoidAsync("bujoPwa.focusItemLink", $"review-item-{itemId:D}"); }
+        catch (JSException) { }
+    }
+
+    private Task PlanForTodayAsync(PlannedReviewItem item)
+    {
+        if (_review is not { } review) return Task.CompletedTask;
+        var target = PlannedPeriod.ForDay(review.Today);
+        return SaveAsync(
+            () => ChangePeriodIfCurrent(item, review.Today, target),
+            saved =>
+            {
+                _focusItemId = saved.Id;
+                return $"Planned for today ({review.Today:yyyy-MM-dd}).";
+            });
+    }
+
+    private Task PlanForThisWeekAsync(PlannedReviewItem item)
+    {
+        if (_review is not { } review) return Task.CompletedTask;
+        var week = IsoWeekKey.FromDate(review.Today);
+        var target = PlannedPeriod.ForWeek(week);
+        return SaveAsync(
+            () => ChangePeriodIfCurrent(item, review.Today, target),
+            saved =>
+            {
+                _focusItemId = saved.Id;
+                return $"Planned for this week ({week}).";
+            });
+    }
+
+    private DomainResult<ItemSnapshot> ChangePeriodIfCurrent(
+        PlannedReviewItem displayed,
+        DateOnly displayedDate,
+        PlannedPeriod target)
+    {
+        var latest = Journal.GetDailyStart(Zone);
+        if (!latest.IsSuccess) return DomainResult<ItemSnapshot>.Failure(latest.Error!);
+
+        var current = latest.Value!;
+        var currentOverdue = current.Groups.FirstOrDefault(group => group.Code == "Overdue")?
+            .Items.SingleOrDefault(item => item.ItemId == displayed.ItemId);
+        if (current.Today != displayedDate || currentOverdue is null || !Matches(currentOverdue, displayed))
+        {
+            return DomainResult<ItemSnapshot>.Failure(new(
+                DomainErrorCode.StaleOccurrence,
+                "This overdue row changed before it could be rescheduled."));
+        }
+
+        return Journal.ChangePlannedPeriod(displayed.ItemId, target);
+    }
+
+    private static bool Matches(PlannedReviewItem current, PlannedReviewItem displayed) =>
+        current.ItemId == displayed.ItemId &&
+        current.Text == displayed.Text &&
+        current.Tags.SequenceEqual(displayed.Tags) &&
+        current.PlannedPeriod == displayed.PlannedPeriod &&
+        current.ReasonCode == displayed.ReasonCode &&
+        current.Reason == displayed.Reason &&
+        current.Destination == displayed.Destination &&
+        current.Conflict == displayed.Conflict;
 }
