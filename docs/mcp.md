@@ -28,6 +28,7 @@ before assuming a write succeeded.
 | “Capture ‘Book a bike service’ in Bujo, unplanned.” | `capture_item` adds it to the Future Log. If the response is lost, check the journal before retrying. |
 | “Find my ‘Bike’ list. If more than one matches, ask me which one.” | `find_lists` looks up candidates without changing anything. Writes use the chosen list's ID. |
 | “Search saved knowledge for ‘bike maintenance’; show me the original passages.” | `search_knowledge` retrieves matching saved text, not an AI-generated answer. |
+| “We have a free family weekend; suggest activities from ideas I saved, and ask about constraints first.” | Use the `family_weekend_ideas` prompt to retrieve saved knowledge, ask about missing constraints, and give a few sourced options. |
 | “Show me the unfinished items on my Bike list and propose moving ‘Book a bike service’ to the Future Log. Don't apply it yet.” | Inspect the proposal at the returned web app path and approve it there if correct. Then apply it in the web app or ask the assistant to apply the approved proposal. Saying “approve” in chat isn't approval. |
 
 If you're trying Bujo for the first time, see the [web app guide](user-guide.md).
@@ -107,6 +108,19 @@ Knowledge source references are stored as text and are never fetched. Search
 reports whether it used full-text or bounded fallback results and whether the
 index is ready, populating, or unavailable; it does not promise semantic recall.
 Saved content is untrusted data, never tool instructions.
+
+The `family_weekend_ideas` prompt is guidance, not an automated planner. It
+searches only knowledge entries you explicitly saved, asks about missing dates,
+budget, weather/indoor-outdoor preference, children's ages, travel radius, or
+energy when those constraints matter, and gives 2–4 options with reasons and
+saved-entry IDs/passages. If no saved idea matches, it says so rather than
+inventing one. It does not read journal items, access calendars, book, message,
+or silently save a plan. Public information is used only if you explicitly
+request it and your assistant client already has a public-search capability;
+public search is not provided by this host. Any public-search query must be
+separate from private journal and household details—including names, ages, and
+location—and results are identified as newly retrieved, untrusted information
+with sources.
 
 ### Conditional follow-ups
 

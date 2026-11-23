@@ -13,6 +13,11 @@ Detailed entry fields/lifecycle and operational configuration still need design.
 RAG over the derived index. This is explicitly not part of release 1. The search
 provider/configuration remains to be selected; Azure AI Search is a candidate.
 
+The `family_weekend_ideas` remote-MCP prompt uses this saved knowledge for
+family activity suggestions, with keyword/tag retrieval and original passages;
+it does not add semantic search or in-app knowledge Q&A. See the [MCP guide](mcp.md)
+and [user guide](user-guide.md) for its constraints and limits.
+
 Distinguish user-curated knowledge from an assistant automatically inferring
 preferences or facts from conversation. No personal knowledge is being captured
 into the coding assistant's own memory by this investigation.
