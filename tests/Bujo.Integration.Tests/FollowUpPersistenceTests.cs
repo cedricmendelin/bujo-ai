@@ -8,6 +8,12 @@ using Xunit.Sdk;
 
 namespace Bujo.Integration.Tests;
 
+[CollectionDefinition("Shared SQL Server database", DisableParallelization = true)]
+public sealed class SharedSqlServerDatabaseCollection
+{
+}
+
+[Collection("Shared SQL Server database")]
 public sealed class FollowUpPersistenceTests
 {
     [Fact]

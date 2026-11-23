@@ -9,6 +9,7 @@ using Xunit.Sdk;
 
 namespace Bujo.Integration.Tests;
 
+[Collection("Shared SQL Server database")]
 public sealed class SqlServerKnowledgeTests
 {
     [Fact]
