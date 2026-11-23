@@ -259,7 +259,7 @@ function humanReview(state = 'CHANGES_REQUESTED', id = 1, body = 'Fix the missin
   return { id, state, body, user: { login: owner, type: 'User' }, author_association: 'OWNER', html_url: 'https://example.test/review/1' };
 }
 
-test('observation preserves all reviewers; enforcement dispatches Verifier with one bounded evidence bundle', async () => {
+test('observation and enforcement route only applicable reviewers with one bounded evidence bundle', async () => {
   for (const mode of [undefined, 'enforce']) {
     const state = fixture();
     state.reviewRouting = mode;
@@ -271,7 +271,7 @@ test('observation preserves all reviewers; enforcement dispatches Verifier with 
     ];
     const result = await execute(state);
     const dispatches = result.calls.filter(call => call.name === 'dispatch');
-    assert.deepEqual(dispatches.map(call => call.args.workflow_id), mode ? ['Verifier'] : ROLES);
+    assert.deepEqual(dispatches.map(call => call.args.workflow_id), ['Verifier']);
     assert.equal(result.calls.filter(call => call.name === 'issue').length, 1);
     assert.equal(new Set(dispatches.map(call => call.args.inputs.review_evidence)).size, 1);
     const packet = JSON.parse(dispatches[0].args.inputs.review_evidence);
@@ -285,39 +285,31 @@ test('observation preserves all reviewers; enforcement dispatches Verifier with 
   }
 });
 
-test('routing counts both rename paths and caps all-domain PRs until current owner approval', async () => {
-  const state = fixture();
-  state.reviewRouting = 'enforce';
-  state.files = [{ filename: 'docs/retired.txt', previous_filename: 'infra/identity.tf', status: 'renamed' },
-    { filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' }];
-  state.pr.changed_files = 2;
-  state.runs.Architect = [];
-  let result = await execute(state);
-  const marker = readinessFrom(state).output.summary.match(/Squad coverage: Architect [a-f0-9]{64}/)?.[0];
-  assert.ok(marker, 'missing revision-bound overflow marker');
-  assert.equal(readinessFrom(state).conclusion, 'failure');
-  assert.deepEqual(result.calls.filter(call => call.name === 'runs').map(call => call.args.workflow_id),
-    ['ci', 'Security', 'Verifier', 'DevOps']);
-  assert.equal(enables(result).length, 0);
-  state.reviews = [{ ...humanReview('APPROVED', 1, marker), commit_id: sha,
-    user: { login: 'contributor', type: 'User' } }];
-  assert.equal(enables(await execute(state)).length, 0);
-  state.reviews[0].user.login = owner;
-  result = await execute(state);
-  assert.equal(enables(result).length, 1);
-  state.pr.body = 'Completion: full\n\nSubstantive edit';
-  result = await execute(state);
-  assert.equal(enables(result).length, 0);
-  assert.match(readinessFrom(state).output.summary, /Reviewer cap reached/);
+test('all-domain PRs automatically select at most three reviewers without an omitted-role gate', async () => {
+  for (const mode of [undefined, 'enforce']) {
+    const state = fixture();
+    state.reviewRouting = mode;
+    state.files = [{ filename: 'docs/retired.txt', previous_filename: 'infra/identity.tf', status: 'renamed' },
+      { filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' }];
+    state.pr.changed_files = 2;
+    state.checks.find(check => check.name === 'Squad Review / Architect').conclusion = 'failure';
+    const result = await execute(state);
+    const selected = result.logs.find(line => line.includes('reviewer routing'));
+    assert.match(selected, /"selected":\["Verifier","Security","DevOps"\]/);
+    assert.deepEqual([...new Set(result.calls.filter(call => call.name === 'runs').map(call => call.args.workflow_id))],
+      ['ci', 'Security', 'Verifier', 'DevOps']);
+    assert.equal(readinessFrom(state).conclusion, 'success');
+    assert.doesNotMatch(readinessFrom(state).output.summary, /Reviewer cap reached|Squad coverage/);
+    assert.equal(enables(result).length, 1);
+  }
 });
 
-test('enforcement fails closed on incomplete or raced inventory and an excluded failing check', async () => {
-  for (const kind of ['incomplete', 'raced', 'excluded', 'unknown']) {
+test('enforcement fails closed on incomplete or raced inventory', async () => {
+  for (const kind of ['incomplete', 'raced', 'unknown']) {
     const state = fixture();
     state.reviewRouting = 'enforce';
     if (kind === 'incomplete') state.pr.changed_files = 2;
     if (kind === 'unknown') state.files[0].filename = 'unmapped/handler.cs';
-    if (kind === 'excluded') state.checks.find(check => check.name === 'Squad Review / Architect').conclusion = 'failure';
     if (kind === 'raced') state.before = (name, _args, calls) => {
       if (name === 'files' && calls.filter(call => call.name === 'files').length === 2) state.files = [];
     };
@@ -476,6 +468,7 @@ test('re-evaluation creates a new pending readiness check instead of reopening a
 
 test('reviewer infrastructure failures pause once rather than starting an automatic retry loop', async () => {
   const state = fixture();
+  state.files = [{ filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' }];
   state.runs.Architect[0].conclusion = 'failure';
   const first = await execute(state);
   assert.equal(first.calls.some(call => call.name === 'dispatch'), false);
@@ -661,6 +654,11 @@ test('final readiness re-read invalidates raced review:none, CI, or review resul
 test('final readiness re-read rejects a newly active review run or failed check without a label change', async () => {
   for (const mutation of ['active run', 'failed check']) {
     const state = fixture();
+    state.files = [
+      { filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' },
+      { filename: 'src/Bujo.Host/Authentication/Authentication.cs', status: 'modified' },
+    ];
+    state.pr.changed_files = 2;
     state.pr.auto_merge = { merge_method: 'squash' };
     let reads = 0;
     state.before = async name => {
@@ -683,7 +681,7 @@ test('review:none removal starts fresh reviews, ignores bypassed failures, and d
   state.context.payload.label = { name: 'review:none' };
   state.checks.filter(check => check.name.startsWith('Squad Review /')).forEach(check => { check.conclusion = 'failure'; });
   const first = await execute(state);
-  assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 4);
+  assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 1);
   assert.equal(commentsFrom(first).length, 0);
   const duplicate = await execute(state);
   assert.equal(duplicate.calls.filter(call => call.name === 'dispatch').length, 0);
@@ -748,7 +746,7 @@ test('hourly fallback recovers a completed cloud draft without bypassing partial
   const resumed = await execute(state);
   assert.equal(state.pr.draft, false);
   assert.match(state.pr.body, /- Refs #11$/);
-  assert.deepEqual(resumed.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ROLES);
+  assert.deepEqual(resumed.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['Verifier']);
   assert.equal(enables(resumed).length, 0, 'reviews still need to pass');
 });
 
@@ -844,7 +842,7 @@ test('completion preflight repairs the observed suffix once and refreshes review
   const first = await execute(state);
   assert.match(state.pr.body, /- Refs #11$/);
   assert.equal(first.calls.filter(call => call.name === 'updatePr').length, 1);
-  assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 4);
+  assert.equal(first.calls.filter(call => call.name === 'dispatch').length, 1);
   for (const call of first.calls.filter(call => call.name === 'dispatch')) {
     assert.equal(call.args.inputs.review_input, reviewRunInput(call.args.workflow_id, reviewInputKey(state.pr.body)));
   }
@@ -961,7 +959,7 @@ test('meaningful body-only edits refresh even passing reviews; whitespace does n
   const changed = fixture();
   changed.pr.body = 'Completion: full\nNew acceptance evidence.';
   const result = await execute(changed);
-  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4);
+  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 1);
   assert.equal(enables(result).length, 0);
 });
 
@@ -1141,7 +1139,7 @@ test('production-source mutations expose missing review-input and completion-pre
   bypass.pr.body = 'Completion: partial\nFixes #11';
   bypass.mutateSource = code => code.replace('if (!completion.ok || referenceFinding || split?.reason) {', 'if (false) {');
   const result = await execute(bypass);
-  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 4,
+  assert.equal(result.calls.filter(call => call.name === 'dispatch').length, 1,
     'removing preflight incorrectly spends reviews; the preflight regression test asserts zero');
 });
 
@@ -1214,6 +1212,7 @@ test('a closing scope split needs live reciprocal records and cannot opt out of 
 
 test('transient reviewer failures get one retry then escalate if still failing', async () => {
  const state = fixture();
+ state.files = [{ filename: 'src/Bujo.Domain/Items/Item.cs', status: 'modified' }];
  state.runs.Architect[0].conclusion = 'timed_out';
  const first = await execute(state);
  assert.deepEqual(first.calls.filter(call => call.name === 'dispatch').map(call => call.args.workflow_id), ['Architect']);
@@ -1227,6 +1226,7 @@ test('transient reviewer failures get one retry then escalate if still failing',
 
 test('a green DevOps run without its current-head check retries once, then pauses', async () => {
   const state = fixture();
+  state.files = [{ filename: 'infra/app.tf', status: 'modified' }];
   state.checks = state.checks.filter(check => check.name !== 'Squad Review / DevOps');
   const dispatches = result => result.calls.filter(call => call.name === 'dispatch');
   const first = await execute(state);
@@ -1244,6 +1244,7 @@ test('a green DevOps run without its current-head check retries once, then pause
   assert.equal(dispatches(await execute(state)).length, 0);
 
   const bypass = fixture();
+  bypass.files = [{ filename: 'infra/app.tf', status: 'modified' }];
   bypass.checks = bypass.checks.filter(check => check.name !== 'Squad Review / DevOps');
   bypass.mutateSource = code => code.replace("const missingCheck = item.role === 'DevOps'", 'const missingCheck = false');
   await execute(bypass);
@@ -1254,6 +1255,7 @@ test('a green DevOps run without its current-head check retries once, then pause
 
 test('a DevOps retry with an actual current-head check restores readiness', async () => {
   const state = fixture();
+  state.files = [{ filename: 'infra/app.tf', status: 'modified' }];
   const check = state.checks.find(item => item.name === 'Squad Review / DevOps');
   state.checks = state.checks.filter(item => item !== check);
   await execute(state);
@@ -1265,6 +1267,7 @@ test('a DevOps retry with an actual current-head check restores readiness', asyn
 
 test('an old-head DevOps run does not consume the current head retry', async () => {
   const state = fixture();
+  state.files = [{ filename: 'infra/app.tf', status: 'modified' }];
   state.checks = state.checks.filter(check => check.name !== 'Squad Review / DevOps');
   state.runs.DevOps[0].display_title =
     `Squad Review DevOps · PR #81 · input ${reviewRunInput('DevOps', reviewInputKey(''), 'c'.repeat(40))}`;
