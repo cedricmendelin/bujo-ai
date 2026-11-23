@@ -25,8 +25,9 @@ gate; merging alone is not evidence that production is ready.
 
 - [Use the web app](docs/user-guide.md): capture ideas, plan your time, review
   lists, and save reference material.
-- [Use an assistant via MCP](docs/mcp.md): connect to your journal, try a
-  read-only query, and learn what requires approval in the web app.
+- [Use an assistant via MCP](docs/mcp.md): connect to your journal, use the
+  versioned [assistant skills](assistants/README.md), and learn what requires
+  approval in the web app.
 - [Why Bujo-AI?](docs/concept.md#why-bujo-ai): the thinking behind the journal.
 
 ## Product and design

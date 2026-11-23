@@ -160,8 +160,8 @@ PRs remain required.
 |---|---|
 | Approved issue scope | Human-approved versioned plan and the PR's ordinary plan reference |
 | Mechanical completion/linking errors | Trusted controller for recognized generated suffixes; explicit maintainer feedback otherwise |
-| CI failures and target-branch conflicts (cloud) | GitHub.com Copilot **Watch and fix**, when enabled; a maintainer can ask the cloud agent directly for conflict repair |
-| CI failures and conflicts (local) | Desktop-app Agent merge, if explicitly enabled |
+| CI failures and target-branch conflicts | GitHub.com Copilot **Watch and fix**, when enabled; a maintainer can ask the cloud agent directly for conflict repair |
+| CI failures and conflicts (local takeover) | Desktop-app Agent merge, if explicitly enabled after disabling Watch and fix |
 | Specialist reviews and aggregate decision | Architect, Security, Verifier, DevOps; one `Squad PR Lifecycle` controller |
 | Actual merge | GitHub auto-merge under branch protections; never a direct REST merge |
 
@@ -174,6 +174,17 @@ prevented CI from starting, starts selected reviews, forwards actionable review
 findings, publishes `Squad Merge Readiness`, and enables native GitHub squash
 auto-merge only when eligible. `workflow_dispatch` with a PR number remains the
 manual recovery/re-evaluation entry point.
+
+For an eligible ready PR, the controller uses GitHub's Agent Merge API to enroll
+native **Watch and fix** with both failed Actions workflow and merge-conflict
+repair. It waits for the cloud implementation session to finish successfully,
+and skips forks, drafts, `needs:human`, `handoff:local`, and PRs with a formal
+rejection until an independent revision is admitted. GitHub does not support
+enrollment for stacked PRs. Existing enrollments are not overwritten;
+incomplete settings or API failures produce a
+deduplicated owner notice. Once enrollment is recorded on the PR, a later
+maintainer unassignment is respected rather than automatically undone.
+Enrollment is separate from auto-merge and does not change merge protections.
 
 PR and workflow events are the primary triggers. An hourly GitHub Actions
 fallback lists open PRs to recover missed handoffs, including a cloud draft
@@ -232,12 +243,15 @@ does not claim to stop or cancel native running work.
 ### Reviews and `review:none`
 
 Architect, Security, Verifier, and DevOps remain independent. The repository
-Actions variable `SQUAD_REVIEW_ROUTING` starts unset: the controller logs its
-proposed roles and reasons but still requires all four. Compare those proposals
-against actual blocking findings on routine, sensitive, and cross-cutting PRs
-before setting the variable to `enforce`. Unset it to roll back.
+Actions variable `SQUAD_REVIEW_ROUTING` starts unset. In both observation and
+enforcement modes, the controller automatically selects Verifier plus at most
+two specialists; observation logs the selection and reasons. Compare those
+selections against actual findings on routine, sensitive, and cross-cutting PRs
+before setting the variable to `enforce`. Enforcement additionally blocks an
+incomplete or unmapped changed-file inventory; observation reports it without
+gating readiness. Unset the variable to return to observation mode.
 
-In enforcement mode, Verifier reviews every ready PR unless `review:none` is set.
+In both modes, Verifier reviews every ready PR unless `review:none` is set.
 Changed paths can add Security (application identity, authorization, sensitive
 data access, MCP permissions, or supply-chain risk), DevOps (infrastructure, CI
 and runtime configuration), or Architect (domain model and contracts). Routine
@@ -246,13 +260,11 @@ category; escalate when they affect an application trust boundary. A
 repository-owner review on the current head can
 add a specialist with the exact line `Squad review: Architect` (or `Security`
 or `DevOps`). If all three specialists apply, Security and DevOps take the two
-slots and readiness fails until the PR is split or the repository owner posts
-an approving review with the exact `Squad coverage:` line from the readiness
-check after personally reviewing the omitted scope. The line is specific to
-the head, base, substantive description, and selected roles. On an owner-authored
-PR, split the PR if GitHub won't allow that approval. An incomplete or unmapped
-inventory blocks readiness, as does a current-head failure from an excluded
-reviewer. Neither the cap nor observation mode changes CI or human blockers.
+slots, and Architect is omitted automatically. An omitted specialist, including
+an existing failing check from that specialist on the current head, does not
+block readiness; no owner coverage approval is required. An incomplete or
+unmapped inventory blocks readiness only in enforcement mode. CI, trusted human
+blocks, drafts, `needs:human`, and the `review:none` opt-out are unchanged.
 
 For new reviewer dispatches the controller shares a bounded, untrusted evidence
 bundle with the pinned head, changed-file inventory, available CI status, and
@@ -582,10 +594,13 @@ as completed until the owner performs it and the checks are observed live.
 ## One-time setup and secrets
 
 The owner configures the GitHub auto-merge/squash settings, Copilot cloud agent,
-and native Watch and fix policy outside this PR. Enable **Fix failed Actions
-workflows** and **Resolve merge conflicts** on each applicable cloud PR or use a
-supported account default; do not assume the account default covers PRs created
-by Copilot. Keep workflow approvals and protections as configured by the owner.
+and repository Copilot automations. The controller enrolls eligible PRs in
+Watch and fix; the `GH_AW_AGENT_TOKEN` identity must have an eligible paid
+Copilot subscription, repository write access and Agent tasks write permission.
+If enrollment fails, inspect the owner notice and enable **Fix failed Actions
+workflows** and **Resolve merge conflicts** manually when eligible. An account
+default covers PRs the user creates, not necessarily Copilot-created PRs.
+Keep workflow approvals and protections as configured by the owner.
 No Azure credentials are stored in Actions; Azure deployment uses OIDC only.
 
 The existing gh-aw workflows use two repository secrets:
@@ -593,7 +608,7 @@ The existing gh-aw workflows use two repository secrets:
 | Secret | Purpose |
 |---|---|
 | `COPILOT_GITHUB_TOKEN` | Copilot inference for `/plan` and specialist reviews |
-| `GH_AW_AGENT_TOKEN` | Cloud issue assignment, owner-authorized comments, dispatch, ready state, and GitHub auto-merge |
+| `GH_AW_AGENT_TOKEN` | Cloud issue assignment, owner-authorized comments, dispatch, ready state, Watch and fix enrollment, and GitHub auto-merge |
 
 The owner creates and rotates these fine-grained PATs in GitHub Settings and
 stores them as repository Actions secrets. Never print, paste into PRs, or

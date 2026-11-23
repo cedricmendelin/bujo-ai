@@ -309,6 +309,17 @@
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
 
+### 2026-11-23: Automatic Watch and fix enrollment
+
+- Owner decision superseding the manual per-PR enablement requirement in the
+  2026-11-16 PR finalization ownership redesign: enroll eligible process PRs
+  automatically in GitHub.com Watch and fix for failed Actions workflows and
+  merge conflicts. Preserve the existing human-pause, formal-rejection and local
+  takeover safeguards; do not undo a maintainer's later unassignment.
+- The trusted controller, API permissions, eligibility limitations and
+  operational recovery are recorded in `.github/workflows/squad-pr-lifecycle.yml`
+  and `docs/workflow.md`. GitHub auto-merge remains the only merge executor.
+
 ### 2026-11-16: PR finalization ownership redesign
 
 - This supersedes only the PR lifecycle ownership and merge-authority portions
@@ -574,3 +585,15 @@
   budget; bot removals do not.
 - The owner sets `SQUAD_REVIEW_ROUTING=enforce` (a repository variable) after
   merge. This decision authorizes only this scope; no ruleset change is implied.
+
+### 2026-11-23: Automatic three-agent PR review limit
+
+- Supersede the 2026-11-18 overflow gate. Every PR not using `review:none`
+  automatically routes to Verifier plus at most two applicable specialists in
+  both observation and enforcement modes.
+- Resolve overflow by the existing deterministic priority: Security, DevOps,
+  then Architect. An omitted specialist and that role's current-head check do
+  not block readiness; no owner `Squad coverage:` approval is required.
+- Enforcement still blocks incomplete or unmapped changed-file inventories.
+  CI, trusted human blockers, drafts, `needs:human`, and `review:none` remain
+  unchanged.

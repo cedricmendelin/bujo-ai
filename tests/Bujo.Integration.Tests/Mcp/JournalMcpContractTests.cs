@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 using Bujo.Application;
 using Bujo.Application.Chat;
 using Bujo.Domain;
@@ -246,6 +247,75 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["occurrenceId"] = item.GetProperty("currentOccurrenceId").GetGuid()
         });
         Assert.True(complete.IsError);
+    }
+
+    [Fact]
+    public async Task PublishedAssistantSkillsUseOnlyAvailableToolsAndAvoidUnsafeActions()
+    {
+        var root = FindRepositoryRoot();
+        var skillTools = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["bujo-daily-review"] = ["get_daily_start"],
+            ["bujo-capture"] = ["find_lists", "capture_item"],
+            ["bujo-weekly-draft-review"] =
+                ["find_lists", "get_list_review", "get_upcoming", "create_review_proposal"]
+        };
+        var skillTexts = skillTools.ToDictionary(
+            pair => pair.Key,
+            pair => File.ReadAllText(Path.Combine(
+                root, "assistants", "skills", pair.Key, "SKILL.md")),
+            StringComparer.Ordinal);
+        var scheduledPrompt = File.ReadAllText(Path.Combine(
+            root, "assistants", "scheduled", "daily-review-readonly.md"));
+
+        foreach (var (skillName, expectedTools) in skillTools)
+        {
+            var content = skillTexts[skillName];
+            Assert.StartsWith("---\n", content, StringComparison.Ordinal);
+            Assert.Contains("\nversion: 1.0.0\n", content, StringComparison.Ordinal);
+            Assert.Equal(
+                expectedTools,
+                Regex.Matches(content, "`([a-z][a-z0-9_]+)`")
+                    .Select(match => match.Groups[1].Value)
+                    .Distinct(StringComparer.Ordinal));
+            Assert.DoesNotContain("apply_review_proposal", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("approve_review_proposal", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("https://", content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Bearer ", content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotMatch(@"(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,})", content);
+        }
+
+        Assert.Contains("UNVERIFIED", scheduledPrompt, StringComparison.Ordinal);
+        Assert.Contains("get_daily_start", scheduledPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("apply_review_proposal", scheduledPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", scheduledPrompt, StringComparison.OrdinalIgnoreCase);
+
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            }, httpClient, NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+        var availableTools = (await mcp.ListToolsAsync())
+            .Select(tool => tool.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var availablePrompts = (await mcp.ListPromptsAsync())
+            .Select(prompt => prompt.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var content in skillTexts.Values.Append(scheduledPrompt))
+        {
+            var referencedTools = Regex.Matches(content, "`([a-z][a-z0-9_]+)`")
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+            Assert.All(referencedTools, name =>
+                Assert.True(
+                    availableTools.Contains(name) || availablePrompts.Contains(name),
+                    $"'{name}' is not an available MCP tool or prompt."));
+        }
     }
 
     [Fact]
@@ -635,8 +705,22 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             Assert.False(string.IsNullOrWhiteSpace(lifecycleTool.Description));
         }
         Assert.Equal(
-            ["capture_item", "daily_start", "explicit_edit", "family_weekend_ideas"],
+            ["capture_item", "daily_start", "explicit_edit", "family_weekend_ideas", "weekly_review"],
             (await mcp.ListPromptsAsync()).Select(prompt => prompt.Name).Order());
+        var weeklyPrompt = JournalMcpPrompts.WeeklyReview("Europe/Zurich", "Week 47");
+        Assert.Contains("get_upcoming", weeklyPrompt);
+        Assert.Contains("horizon 7", weeklyPrompt);
+        Assert.Contains("find_lists", weeklyPrompt);
+        Assert.Contains("get_list_review", weeklyPrompt);
+        Assert.Contains("create_review_proposal", weeklyPrompt);
+        Assert.Contains($"kind is {(int)JournalListKind.Weekly} (Weekly)", weeklyPrompt);
+        Assert.Contains("Never review a Future Log or custom list", weeklyPrompt);
+        Assert.Contains("authenticated PWA", weeklyPrompt);
+        Assert.DoesNotContain("apply_review_proposal", weeklyPrompt);
+        Assert.Contains(
+            $"numeric kind `{(int)JournalListKind.Weekly}` (Weekly",
+            File.ReadAllText(Path.Combine(
+                FindRepositoryRoot(), "assistants", "skills", "bujo-weekly-draft-review", "SKILL.md")));
         Assert.Contains(
             (await mcp.ListResourcesAsync()),
             resource => resource.Uri.ToString() == "bujo://journal/capabilities");
@@ -678,6 +762,14 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["kind"] = JournalListKind.Custom
         });
         Assert.False(destination.IsError);
+        var nonWeeklyMatch = await mcp.CallToolAsync(
+            "find_lists",
+            new Dictionary<string, object?> { ["name"] = "MCP destination" });
+        Assert.False(nonWeeklyMatch.IsError);
+        Assert.Equal(
+            (int)JournalListKind.Custom,
+            nonWeeklyMatch.StructuredContent!.Value.EnumerateArray().Single()
+                .GetProperty("kind").GetInt32());
         var duplicateName = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
         {
             ["name"] = "mcp DESTINATION",
@@ -1015,6 +1107,18 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         state.ValueKind == JsonValueKind.String
             ? state.GetString()!
             : Enum.GetName(typeof(JournalListState), state.GetInt32())!;
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Bujo.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName
+            ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
+    }
 
     private static HttpRequestMessage McpPost(string body)
     {
