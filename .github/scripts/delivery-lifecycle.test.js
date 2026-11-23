@@ -23,8 +23,8 @@ const outcome = (request, session, result = 'attempted', login = 'copilot-swe-ag
   body: `<!-- squad-repair-outcome:${request.body.match(/squad-repair-request:([a-f0-9-]+)/)[1]}:${session.id}:${result} -->\nInvestigated the acceptance case.`,
 });
 
-test('all four specialists are selected by default; review:none is PR-only opt-out', () => {
-  assert.deepEqual(lifecycle.reviewSelection([]), ['Architect', 'Security', 'Verifier', 'DevOps']);
+test('Verifier is the default reviewer; review:none is a PR-only opt-out', () => {
+  assert.deepEqual(lifecycle.reviewSelection([]), ['Verifier']);
   assert.deepEqual(lifecycle.reviewSelection(['review:none']), []);
   assert.deepEqual(lifecycle.reviewFailures([
     check('Squad Review / Architect', sha(1), 'failure'),

@@ -232,12 +232,15 @@ does not claim to stop or cancel native running work.
 ### Reviews and `review:none`
 
 Architect, Security, Verifier, and DevOps remain independent. The repository
-Actions variable `SQUAD_REVIEW_ROUTING` starts unset: the controller logs its
-proposed roles and reasons but still requires all four. Compare those proposals
-against actual blocking findings on routine, sensitive, and cross-cutting PRs
-before setting the variable to `enforce`. Unset it to roll back.
+Actions variable `SQUAD_REVIEW_ROUTING` starts unset. In both observation and
+enforcement modes, the controller automatically selects Verifier plus at most
+two specialists; observation logs the selection and reasons. Compare those
+selections against actual findings on routine, sensitive, and cross-cutting PRs
+before setting the variable to `enforce`. Enforcement additionally blocks an
+incomplete or unmapped changed-file inventory; observation reports it without
+gating readiness. Unset the variable to return to observation mode.
 
-In enforcement mode, Verifier reviews every ready PR unless `review:none` is set.
+In both modes, Verifier reviews every ready PR unless `review:none` is set.
 Changed paths can add Security (application identity, authorization, sensitive
 data access, MCP permissions, or supply-chain risk), DevOps (infrastructure, CI
 and runtime configuration), or Architect (domain model and contracts). Routine
@@ -246,13 +249,11 @@ category; escalate when they affect an application trust boundary. A
 repository-owner review on the current head can
 add a specialist with the exact line `Squad review: Architect` (or `Security`
 or `DevOps`). If all three specialists apply, Security and DevOps take the two
-slots and readiness fails until the PR is split or the repository owner posts
-an approving review with the exact `Squad coverage:` line from the readiness
-check after personally reviewing the omitted scope. The line is specific to
-the head, base, substantive description, and selected roles. On an owner-authored
-PR, split the PR if GitHub won't allow that approval. An incomplete or unmapped
-inventory blocks readiness, as does a current-head failure from an excluded
-reviewer. Neither the cap nor observation mode changes CI or human blockers.
+slots, and Architect is omitted automatically. An omitted specialist, including
+an existing failing check from that specialist on the current head, does not
+block readiness; no owner coverage approval is required. An incomplete or
+unmapped inventory blocks readiness only in enforcement mode. CI, trusted human
+blocks, drafts, `needs:human`, and the `review:none` opt-out are unchanged.
 
 For new reviewer dispatches the controller shares a bounded, untrusted evidence
 bundle with the pinned head, changed-file inventory, available CI status, and
