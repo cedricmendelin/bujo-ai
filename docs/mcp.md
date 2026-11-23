@@ -1,8 +1,8 @@
 # Remote MCP
 
 Bujo.Host exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. MCP tools
-are adapters over the same `JournalApplicationService` used by the API; MCP
-does not use a second store or call the API over HTTP. The endpoint requires an
+are adapters over the same application services used by the API; MCP does not
+use a second store or call the API over HTTP. The endpoint requires an
 Entra access token and an approved account on every request. Discovery metadata
 is public and contains no credentials or journal data.
 
@@ -41,7 +41,7 @@ or a restore.
 | Tool | Purpose |
 |---|---|
 | `get_journal` | Read the journal snapshot and move history. |
-| `export_journal` | Read a versioned JSON export of lists, items, occurrences, and history. |
+| `export_journal` | Read a versioned JSON export of lists, items, occurrences, history, and follow-ups. |
 | `get_daily_start` | Read daily-start results for an explicit IANA time zone. |
 | `get_upcoming` | Read the upcoming view for an explicit IANA time zone. |
 | `find_lists` | Find matching lists and return candidate IDs. |
@@ -54,7 +54,7 @@ or a restore.
 | `cancel_review_proposal`, `reject_review_proposal`, `apply_review_proposal` | Cancel/reject without data changes, or apply after approval in the PWA. |
 | `move_item` | Move one item using a client operation ID and expected occurrence ID. |
 | `complete_occurrence`, `abandon_occurrence`, `reopen_occurrence` | Change one occurrence's state. |
-| `export_journal_backup`, `restore_journal_backup` | Export or atomically replace the complete journal and, when present in the snapshot, saved knowledge. |
+| `export_journal_backup`, `restore_journal_backup` | Export or atomically restore the journal and, when present in the snapshot, saved knowledge and follow-ups. |
 | `capture_knowledge`, `get_knowledge_entry`, `update_knowledge_entry` | Save verbatim content, read by stable ID, or update with an expected version. |
 | `set_knowledge_archived`, `delete_knowledge_entry` | Reversibly archive one entry or explicitly and permanently delete one entry. |
 | `search_knowledge`, `list_knowledge_tags`, `get_knowledge_search_status` | Search original passages by English full-text terms and AND tag filters, list tags, or inspect index readiness. |
@@ -122,10 +122,70 @@ separate from private journal and household details—including names, ages, and
 location—and results are identified as newly retrieved, untrusted information
 with sources.
 
-Whole-journal export and restore are available through the authenticated
-`/api/journal/export` and `/api/journal/restore` endpoints, the PWA, and MCP.
-Version 1 includes the knowledge collection. Legacy snapshots without that
-section remain readable and leave current knowledge unchanged on restore.
+### Conditional follow-ups
+
+| MCP tool | API endpoint | Purpose |
+|---|---|---|
+| `capture_followup` | `POST /api/followups` | Capture a title, condition, due time, explicit evidence source, and optional item link. |
+| `list_due_followups` | `GET /api/followups?due=true` | Pull pending follow-ups due now, using the server clock. |
+| `get_followup` | `GET /api/followups/{id}` | Review one follow-up and its outcome. |
+| `record_followup_evidence` | `POST /api/followups/{id}/evidence` | Record or correct manual evidence; corrections append history. |
+| `dismiss_followup` | `POST /api/followups/{id}/dismiss` | Dismiss explicitly. |
+| `defer_followup` | `POST /api/followups/{id}/defer` | Explicitly set a new due time. |
+| `set_followup_draft` | `PUT /api/followups/{id}/draft` | Store or clear user-authored text for review or copying, if the expected current draft matches. |
+
+For example, ask an assistant to capture a follow-up for a specific due time
+with `Manual` evidence, then later ask it to list due follow-ups. When reviewing,
+provide what you actually checked: “no reply seen in inbox and spam on 3 Dec”
+is scoped evidence, not proof that no reply exists anywhere. No evidence or a
+no-reply observation without a checked scope produces `EvidenceUnavailable`.
+New evidence corrects the outcome without erasing prior entries. Capture
+requires an explicit source and due instant and an IANA `timeZoneId`; only
+`Manual` is supported. A provided item ID must identify an existing journal
+item. The API due query requires `due=true`; these endpoints use the
+approved-principal policy. For API JSON calls, the tested enum values are
+`source: 1` for `Manual` and `observation: 1` for `ReplySeen` or `2` for
+`NoReplySeen`. Capture uses `dueAtUtc`; evidence uses `checkedScope`, when
+provided. The tools do not generate draft text.
+
+To update a draft, first read it with `get_followup` (or the matching API
+endpoint). Both `set_followup_draft` and `PUT /api/followups/{id}/draft`
+require explicit `draft` and `expectedDraft` fields. Provide the exact current
+draft string as `expectedDraft`, or the literal JSON `null` if there is no
+current draft. Do not substitute the string `"null"` to mean no draft. For
+example, MCP tool arguments for a first draft are:
+
+```json
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "draft": "A message for review",
+  "expectedDraft": null
+}
+```
+
+For the API, put both fields in the request body and use the follow-up ID in
+the URL. For either surface, explicitly set `draft` to JSON `null` to clear
+it; omitting either field is rejected without changing the saved draft. Invalid
+MCP value types also produce a tool error. A stale expected value returns
+`ConcurrencyConflict` without changing the saved draft. Read the latest
+follow-up and review it before trying again. Draft text is for review or
+copying only; nothing is sent.
+
+There is no live mailbox or calendar integration, background scheduler,
+closed-app notification, external sending, or AI-generated follow-up draft in
+this scope. Asking an assistant pulls the due view; it does not schedule a job.
+There is no follow-up send tool or endpoint. Live mailbox evidence requires a
+separate approved scoped integration and privacy/reliability verification.
+
+Portable journal backup and restore are available through the authenticated
+`/api/journal/backup/export` and `/api/journal/restore` endpoints, the PWA, and
+MCP. The backup includes knowledge and follow-ups. Legacy backups without
+either section leave that current collection unchanged; if retaining follow-ups
+would leave an item link dangling after journal replacement, restore is
+rejected without applying the backup. See the
+[backup warning](operations.md#follow-up-backup-and-rollback-warning). The
+separate logical export at `/api/journal/export` is not the portable restore
+backup.
 
 ## Versioned assistant skills
 

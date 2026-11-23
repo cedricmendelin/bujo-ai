@@ -36,6 +36,11 @@ deletes and reinserts items without their type, defaulting Thoughts to Tasks.
 Do not use the older application's restore or other writes that replace Thought
 rows after rollback; retain a type-aware backup and restore with a type-aware
 version.
+The follow-up tables introduce a separate rollback risk: an older-binary
+restore can fail on linked items or fail to restore follow-up data omitted from
+its schema. See the
+[follow-up backup warning](operations.md#follow-up-backup-and-rollback-warning);
+do not assume an older version can recover follow-ups.
 Unless a planned period is supplied, the item is `Unplanned`. Item text and
 tags remain canonical: historical views show their current values, not snapshots.
 Auditing text edits is outside the MVP.
@@ -129,7 +134,7 @@ occurrences may be created only after the list is reopened.
 
 An item has one planned period: `Day`, `Week`, `Month`, `Quarter`, `Year`, or
 `Unplanned`. A planned period uses a calendar anchor appropriate to its
-granularity, not an instant; `Unplanned` has no anchor. There are no separate
+granularity, not an instant; `Unplanned` has no anchor. Items have no separate
 deadline or reminder fields. Changing the period never changes the list,
 occurrence state, links, or move history.
 
@@ -187,6 +192,39 @@ items. Daily start may report Future Log/unplanned counts, but does not expand
 the backlog into actionable entries. All query ordering and group ordering are
 deterministic. Invalid or missing time zones are explicit errors, not an empty
 successful result.
+
+## Conditional follow-ups
+
+A Follow-up is a separate aggregate, not an item type or occurrence state. It
+has a title, condition text, UTC due instant, captured IANA time zone,
+optional journal item link, explicit evidence source, and status `Pending`
+or `Dismissed`; the `Resolved` enum value has no exposed transition in this
+implementation. The link does not change item identity,
+list-local state, the one-active-destination invariant, or planned periods.
+Due checks use the server clock; the due view is pulled when the app is opened
+or an assistant asks. The web app displays times in the browser's current time
+zone.
+
+The only selectable source is `Manual`. Evidence entries
+record source, observation, checked scope, and UTC recording time. The
+derived review outcome uses the latest evidence entry:
+
+| Latest evidence | Review outcome |
+| --- | --- |
+| No evidence | `EvidenceUnavailable` |
+| Manual `ReplySeen` | `ReplySeen` |
+| Manual `NoReplySeen` with a recorded checked scope | `NoReplySeenInCheckedScope` |
+| Manual `NoReplySeen` without a recorded checked scope | `EvidenceUnavailable` |
+| Unrecognized or unavailable source | `EvidenceUnavailable` |
+
+Other sources are rejected for new evidence until an integration is approved;
+unrecognized or unavailable sources must not become a no-reply outcome.
+Correcting evidence appends an entry rather than rewriting the past; the latest
+entry wins. Dismissal and deferral are explicit and preserve action
+history; deferral sets a new due time without silent rescheduling. Optional
+text written or pasted by the user is stored for review or copying only.
+There is no automatic sending, AI draft generation, live mailbox, scheduler,
+or closed-app notification in this scope.
 
 ## Implementation acceptance
 

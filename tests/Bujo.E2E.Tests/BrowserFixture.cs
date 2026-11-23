@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Components.Server;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -42,7 +44,9 @@ public sealed class BrowserFixture : IAsyncLifetime
     internal BrowserJournalRepository Journal => _factory.Journal;
     internal BrowserClock Clock => _factory.Clock;
     internal InMemoryKnowledgeRepository Knowledge => _factory.Knowledge;
+    internal InMemoryFollowUpRepository FollowUps => _factory.FollowUps;
     internal ChatRuntimeProbe ChatRuntime => _factory.ChatRuntime;
+    internal BrowserAuthenticationProbe Authentication => _factory.Authentication;
 
     public async Task InitializeAsync()
     {
@@ -63,17 +67,33 @@ public sealed class BrowserFixture : IAsyncLifetime
         string? identity = "allow",
         int width = 1280,
         int height = 900,
-        IChatRuntime? chatRuntime = null)
+        IChatRuntime? chatRuntime = null,
+        bool? chatEnabled = null,
+        bool observeAuthentication = false)
     {
         var baseUrl = BaseUrl;
-        if (chatRuntime is not null)
+        if (chatRuntime is not null || chatEnabled is not null || observeAuthentication)
         {
             var factory = _factory.WithWebHostBuilder(builder =>
+            {
+                if (chatEnabled is not null)
+                    builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                        new Dictionary<string, string?> { ["Chat:Enabled"] = chatEnabled.Value.ToString() }));
                 builder.ConfigureTestServices(services =>
                 {
-                    services.RemoveAll<IChatRuntime>();
-                    services.AddSingleton(chatRuntime);
-                }));
+                    if (chatRuntime is not null)
+                    {
+                        services.RemoveAll<IChatRuntime>();
+                        services.AddSingleton(chatRuntime);
+                    }
+                    if (observeAuthentication)
+                    {
+                        services.RemoveAll<AuthenticationStateProvider>();
+                        services.AddScoped<AuthenticationStateProvider>(_ =>
+                            _factory.Authentication.Create());
+                    }
+                });
+            });
             factory.UseKestrel(0);
             var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
             var addresses = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!;
@@ -124,6 +144,9 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
     internal BrowserClock Clock { get; } = new();
     internal InMemoryKnowledgeRepository Knowledge { get; } = new();
     internal ChatRuntimeProbe ChatRuntime { get; } = new();
+    internal BrowserAuthenticationProbe Authentication { get; } = new();
+    internal InMemoryFollowUpRepository FollowUps => _followUps ??= new(Journal.Inner);
+    private InMemoryFollowUpRepository? _followUps;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -145,6 +168,8 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<IJournalRepository>();
             services.AddSingleton<IJournalRepository>(Journal);
+            services.RemoveAll<IFollowUpRepository>();
+            services.AddSingleton<IFollowUpRepository>(FollowUps);
             services.RemoveAll<IKnowledgeRepository>();
             services.AddSingleton<IKnowledgeRepository>(Knowledge);
             services.RemoveAll<IChatRuntime>();
@@ -155,7 +180,7 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton(ChatRuntime);
             services.RemoveAll<IJournalBackupRepository>();
             services.AddScoped<IJournalBackupRepository>(provider => new InMemoryJournalBackupRepository(
-                provider.GetRequiredService<IJournalRepository>(),
+                Journal.Inner,
                 provider.GetRequiredService<IKnowledgeRepository>()));
             services.AddSingleton<TimeProvider>(Clock);
             services.PostConfigure<OpenIdConnectOptions>(BffAuthentication.OidcScheme, options =>
@@ -193,6 +218,25 @@ internal sealed class ProofHostFactory : WebApplicationFactory<Program>
             services.AddSingleton<IBffSessionValidator, SyntheticSessionValidator>();
             services.AddSingleton(new ProofIdentity(_tenant, _approvedObject));
         });
+    }
+}
+
+internal sealed class BrowserAuthenticationProbe
+{
+    private readonly ConcurrentBag<ServerAuthenticationStateProvider> _providers = [];
+
+    internal ServerAuthenticationStateProvider Create()
+    {
+        var provider = new ServerAuthenticationStateProvider();
+        _providers.Add(provider);
+        return provider;
+    }
+
+    internal void Revoke()
+    {
+        foreach (var provider in _providers)
+            provider.SetAuthenticationState(Task.FromResult(
+                new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity()))));
     }
 }
 

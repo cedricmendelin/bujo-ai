@@ -44,5 +44,8 @@ public sealed class JournalBackupSerializer
         backup.History is not null &&
         (backup.Knowledge is null ||
          backup.Knowledge.Entries is not null &&
-         backup.Knowledge.Entries.Count <= DomainLimits.KnowledgeBackupEntries);
+         backup.Knowledge.Entries.Count <= DomainLimits.KnowledgeBackupEntries) &&
+        (backup.FollowUps is null ||
+         backup.FollowUps.FollowUps is not null &&
+         backup.FollowUps.FollowUps.Count <= DomainLimits.FollowUpBackupEntries);
 }

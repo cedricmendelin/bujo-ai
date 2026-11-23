@@ -56,7 +56,14 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["DELETE /api/knowledge/{id:guid}"] = ["delete_knowledge_entry"],
             ["GET /api/knowledge/search"] = ["search_knowledge"],
             ["GET /api/knowledge/tags"] = ["list_knowledge_tags"],
-            ["GET /api/knowledge/search-status"] = ["get_knowledge_search_status"]
+            ["GET /api/knowledge/search-status"] = ["get_knowledge_search_status"],
+            ["POST /api/followups/"] = ["capture_followup"],
+            ["GET /api/followups/"] = ["list_due_followups"],
+            ["GET /api/followups/{id:guid}"] = ["get_followup"],
+            ["POST /api/followups/{id:guid}/evidence"] = ["record_followup_evidence"],
+            ["POST /api/followups/{id:guid}/dismiss"] = ["dismiss_followup"],
+            ["POST /api/followups/{id:guid}/defer"] = ["defer_followup"],
+            ["PUT /api/followups/{id:guid}/draft"] = ["set_followup_draft"]
         };
 
     private static readonly string[] ExpectedTools =
@@ -95,7 +102,14 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         "list_knowledge_tags",
         "get_knowledge_search_status",
         "export_knowledge_backup",
-        "restore_knowledge_backup"
+        "restore_knowledge_backup",
+        "capture_followup",
+        "list_due_followups",
+        "get_followup",
+        "record_followup_evidence",
+        "dismiss_followup",
+        "defer_followup",
+        "set_followup_draft"
     ];
 
     private readonly JournalApiFactory _factory;
@@ -653,6 +667,9 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
 
         var tools = await mcp.ListToolsAsync();
         Assert.Equal(ExpectedTools.Order(), tools.Select(tool => tool.Name).Order());
+        Assert.DoesNotContain(tools, tool => tool.Name.Contains("send", StringComparison.OrdinalIgnoreCase));
+        Assert.All(tools.Where(tool => tool.Name.Contains("followup", StringComparison.Ordinal)),
+            tool => Assert.Contains("Nothing is ever sent", tool.Description));
         var mcpNames = tools.Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal);
         Assert.All(
             ChatToolRegistry.All.Select(tool => tool.Name),

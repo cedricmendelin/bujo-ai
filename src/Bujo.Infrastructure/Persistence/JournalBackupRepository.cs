@@ -7,13 +7,21 @@ namespace Bujo.Infrastructure.Persistence;
 public sealed class EfJournalBackupRepository(IDbContextFactory<JournalDbContext> contextFactory)
     : IJournalBackupRepository
 {
-    public JournalBackupSnapshot ExportBackup()
+    public JournalBackupSnapshot ExportBackup() => ExportWithTransaction(includeKnowledge: true);
+
+    public JournalBackupSnapshot ExportJournalWithFollowUps() => ExportWithTransaction(includeKnowledge: false);
+
+    private JournalBackupSnapshot ExportWithTransaction(bool includeKnowledge)
     {
-        using var context = contextFactory.CreateDbContext();
-        using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
-        var backup = Export(context);
-        transaction.Commit();
-        return backup;
+        using var strategyContext = contextFactory.CreateDbContext();
+        return strategyContext.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var context = contextFactory.CreateDbContext();
+            using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
+            var backup = Export(context, includeKnowledge);
+            transaction.Commit();
+            return backup;
+        });
     }
 
     public DomainResult<JournalBackupSnapshot> RestoreBackup(JournalBackupSnapshot backup)
@@ -32,7 +40,8 @@ public sealed class EfJournalBackupRepository(IDbContextFactory<JournalDbContext
             {
                 using var context = contextFactory.CreateDbContext();
                 using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
-                EfJournalRepository.ReplaceJournal(context, validated.Value!.Journal);
+                var followUps = validated.Value!.FollowUps ?? LoadFollowUps(context);
+                ReplaceJournalAndFollowUps(context, validated.Value.Journal, followUps);
                 if (validated.Value.Knowledge is not null)
                 {
                     context.KnowledgeEntries.ExecuteDelete();
@@ -52,12 +61,16 @@ public sealed class EfJournalBackupRepository(IDbContextFactory<JournalDbContext
                 DomainErrorCode.InvariantViolation,
                 "The journal backup could not be restored."));
         }
+        catch (DomainException exception)
+        {
+            return DomainResult<JournalBackupSnapshot>.Failure(exception.ToError());
+        }
     }
 
-    private static JournalBackupSnapshot Export(JournalDbContext context)
+    private static JournalBackupSnapshot Export(JournalDbContext context, bool includeKnowledge = true)
     {
         var snapshot = EfJournalRepository.LoadSnapshot(context, tracked: false);
-        return From(snapshot, LoadKnowledge(context));
+        return From(snapshot, includeKnowledge ? LoadKnowledge(context) : null, LoadFollowUps(context));
     }
 
     private static KnowledgeBackupSnapshot LoadKnowledge(JournalDbContext context) =>
@@ -69,8 +82,26 @@ public sealed class EfJournalBackupRepository(IDbContextFactory<JournalDbContext
             .Select(ToBackupEntry)
             .ToArray());
 
-    private static JournalBackupSnapshot From(JournalSnapshot journal, KnowledgeBackupSnapshot knowledge) =>
-        new(1, journal.Items, journal.Lists, journal.Occurrences, journal.History, knowledge);
+    internal static FollowUpBackupSnapshot LoadFollowUps(JournalDbContext context) =>
+        new(1, context.FollowUps.AsNoTracking().Include(item => item.Evidence).Include(item => item.Changes)
+            .AsSplitQuery().OrderBy(item => item.Id).ToArray().Select(EfFollowUpRepository.ToSnapshot).ToArray());
+
+    internal static void ReplaceJournalAndFollowUps(JournalDbContext context, JournalSnapshot journal,
+        FollowUpBackupSnapshot followUps)
+    {
+        JournalBackupValidator.ValidateFollowUps(followUps, journal);
+        // SQL Server cannot defer the item FK. Retain the validated records in
+        // memory while replacing items, then reinsert in the same transaction.
+        context.FollowUps.ExecuteDelete();
+        EfJournalRepository.ReplaceJournal(context, journal);
+        context.SaveChanges();
+        context.FollowUps.AddRange(followUps.FollowUps.Select(EfFollowUpRepository.ToEntity));
+        context.SaveChanges();
+    }
+
+    private static JournalBackupSnapshot From(JournalSnapshot journal, KnowledgeBackupSnapshot? knowledge,
+        FollowUpBackupSnapshot followUps) =>
+        new(1, journal.Items, journal.Lists, journal.Occurrences, journal.History, knowledge, followUps);
 
     private static KnowledgeBackupEntry ToBackupEntry(KnowledgeEntrySnapshot entry) =>
         new(
@@ -90,8 +121,24 @@ public sealed class InMemoryJournalBackupRepository(
     IJournalRepository journal,
     IKnowledgeRepository knowledge) : IJournalBackupRepository
 {
-    public JournalBackupSnapshot ExportBackup()
+    public JournalBackupSnapshot ExportBackup() => Export(includeKnowledge: true);
+
+    public JournalBackupSnapshot ExportJournalWithFollowUps() => Export(includeKnowledge: false);
+
+    private JournalBackupSnapshot Export(bool includeKnowledge)
     {
+        if (journal is InMemoryJournalRepository inMemory)
+        {
+            lock (inMemory.SyncRoot)
+            {
+                var journalSnapshot = journal.GetSnapshot();
+                return new JournalBackupSnapshot(1, journalSnapshot.Items, journalSnapshot.Lists,
+                    journalSnapshot.Occurrences, journalSnapshot.History, includeKnowledge ? knowledge.ExportBackup() : null,
+                    new FollowUpBackupSnapshot(1, inMemory.FollowUps.Values.OrderBy(item => item.Id)
+                        .Select(item => item.ToSnapshot()).ToArray()));
+            }
+        }
+
         var snapshot = journal.GetSnapshot();
         return new JournalBackupSnapshot(
             1,
@@ -99,7 +146,7 @@ public sealed class InMemoryJournalBackupRepository(
             snapshot.Lists,
             snapshot.Occurrences,
             snapshot.History,
-            knowledge.ExportBackup());
+            includeKnowledge ? knowledge.ExportBackup() : null);
     }
 
     public DomainResult<JournalBackupSnapshot> RestoreBackup(JournalBackupSnapshot backup)
@@ -110,7 +157,43 @@ public sealed class InMemoryJournalBackupRepository(
             return DomainResult<JournalBackupSnapshot>.Failure(validated.Error!);
         }
 
-        var journalResult = journal.RestoreSnapshot(validated.Value!.Journal);
+        if (journal is InMemoryJournalRepository inMemory)
+        {
+            lock (inMemory.SyncRoot)
+            {
+                var retained = inMemory.FollowUps.Values.Select(item => item.ToSnapshot()).ToArray();
+                var desired = validated.Value!.FollowUps ?? new FollowUpBackupSnapshot(1, retained);
+                try
+                {
+                    JournalBackupValidator.ValidateFollowUps(desired, validated.Value.Journal);
+                }
+                catch (DomainException exception)
+                {
+                    return DomainResult<JournalBackupSnapshot>.Failure(exception.ToError());
+                }
+
+                inMemory.FollowUps.Clear();
+                var result = journal.RestoreSnapshot(validated.Value.Journal);
+                if (!result.IsSuccess)
+                {
+                    foreach (var item in retained) inMemory.FollowUps.Add(item.Id, FollowUp.FromSnapshot(item));
+                    return DomainResult<JournalBackupSnapshot>.Failure(result.Error!);
+                }
+                foreach (var item in desired.FollowUps) inMemory.FollowUps.Add(item.Id, FollowUp.FromSnapshot(item));
+                if (validated.Value.Knowledge is not null)
+                {
+                    var knowledgeResult = knowledge.RestoreBackup(validated.Value.Knowledge);
+                    if (!knowledgeResult.IsSuccess)
+                        throw new InvalidOperationException("Validated knowledge backup unexpectedly failed.");
+                }
+                return DomainResult<JournalBackupSnapshot>.Success(ExportBackup());
+            }
+        }
+
+        if (validated.Value!.FollowUps is not null)
+            return DomainResult<JournalBackupSnapshot>.Failure(new DomainError(
+                DomainErrorCode.InvariantViolation, "This repository cannot restore follow-ups."));
+        var journalResult = journal.RestoreSnapshot(validated.Value.Journal);
         if (!journalResult.IsSuccess)
         {
             return DomainResult<JournalBackupSnapshot>.Failure(journalResult.Error!);
@@ -155,13 +238,33 @@ internal static class JournalBackupValidator
                 }
             }
 
+            if (backup.FollowUps is not null)
+            {
+                ValidateFollowUps(backup.FollowUps, snapshot);
+            }
             return DomainResult<ValidatedJournalBackup>.Success(
-                new ValidatedJournalBackup(snapshot, backup.Knowledge));
+                new ValidatedJournalBackup(snapshot, backup.Knowledge, backup.FollowUps));
         }
         catch (Exception exception) when (
             exception is ArgumentException or DomainException or InvalidOperationException)
         {
             return Invalid();
+        }
+    }
+
+    internal static void ValidateFollowUps(FollowUpBackupSnapshot backup, JournalSnapshot journal)
+    {
+        if (backup.SchemaVersion != 1 || backup.FollowUps is null ||
+            backup.FollowUps.Count > DomainLimits.FollowUpBackupEntries)
+            throw DomainLimits.Invalid("The follow-up backup is invalid.");
+        var ids = journal.Items.Select(item => item.Id).ToHashSet();
+        var followUpIds = new HashSet<Guid>();
+        foreach (var item in backup.FollowUps)
+        {
+            var aggregate = FollowUp.FromSnapshot(item);
+            if (!followUpIds.Add(aggregate.Id) ||
+                aggregate.ItemId is { } itemId && !ids.Contains(itemId))
+                throw DomainLimits.Invalid("The follow-up backup contains invalid item references or duplicate IDs.");
         }
     }
 
@@ -173,4 +276,5 @@ internal static class JournalBackupValidator
 
 internal sealed record ValidatedJournalBackup(
     JournalSnapshot Journal,
-    KnowledgeBackupSnapshot? Knowledge);
+    KnowledgeBackupSnapshot? Knowledge,
+    FollowUpBackupSnapshot? FollowUps);

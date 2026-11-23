@@ -1,0 +1,182 @@
+@page "/followups/{Id:guid}"
+@attribute [Authorize(Policy = "ApprovedUi")]
+@rendermode InteractiveServer
+@inherits FollowUpPage
+
+<PageTitle>Review follow-up · Bujo-AI</PageTitle>
+<div data-requires-circuit>
+    <h1 tabindex="-1">Review follow-up</h1>
+    <p><a href="/">Follow-ups due</a></p>
+    <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
+    @if (Ready && _entry is { } entry)
+    {
+        <h2>@entry.Title</h2>
+        <p class="journal-text">Condition: @entry.Condition</p>
+        <p>Due @DisplayDue(entry.DueAtUtc) · Status: @entry.Status</p>
+        @if (entry.ItemId is { } itemId)
+        {
+            <p>Linked journal item ID: @itemId</p>
+        }
+        <p>Evidence source: @(entry.Source == EvidenceSource.Manual ? "Manual" : "Unavailable"). No mailbox is checked.</p>
+        <h2>Evidence outcome</h2>
+        <p>@OutcomeText(entry.Outcome)</p>
+        @if (entry.Evidence.Count > 0)
+        {
+            <h3>Evidence history</h3>
+            <ol>
+                @foreach (var evidence in entry.Evidence.OrderBy(e => e.Sequence))
+                {
+                    <li>
+                        @ObservationText(evidence.Observation)
+                        @if (!string.IsNullOrWhiteSpace(evidence.CheckedScope))
+                        {
+                            <span> · Checked scope: @evidence.CheckedScope</span>
+                        }
+                        <span> · Recorded @DisplayDue(evidence.RecordedAtUtc)</span>
+                    </li>
+                }
+            </ol>
+        }
+        @if (entry.Status == FollowUpStatus.Pending)
+        {
+            <form method="post" data-journal-write data-journal-form @onsubmit="RecordAsync" @onsubmit:preventDefault>
+                <fieldset class="journal-form" disabled="@Busy">
+                    <legend>Record or correct manual evidence</legend>
+                    <label for="followup-observation">What did you observe?</label>
+                    <select id="followup-observation" @bind="_observation" required>
+                        <option value="">Select an observation</option>
+                        <option value="ReplySeen">Reply seen</option>
+                        <option value="NoReplySeen">No reply seen</option>
+                    </select>
+                    <label for="followup-scope">Checked scope (required for a no-reply outcome)</label>
+                    <input id="followup-scope" @bind="_scope" maxlength="@DomainLimits.FollowUpCheckedScope" />
+                    <button type="submit">Record evidence</button>
+                </fieldset>
+            </form>
+            <form method="post" data-journal-write data-journal-form @onsubmit="DeferAsync" @onsubmit:preventDefault>
+                <fieldset class="journal-form" disabled="@Busy">
+                    <legend>Defer follow-up</legend>
+                    <label for="followup-defer">New due date and time (@Zone)</label>
+                    <input id="followup-defer" type="datetime-local" value="@_defer" @onchange="e => _defer = e.Value?.ToString() ?? string.Empty" required />
+                    <button type="submit">Defer</button>
+                </fieldset>
+            </form>
+            <form method="post" data-journal-write data-journal-form @onsubmit="DraftAsync" @onsubmit:preventDefault>
+                <fieldset class="journal-form" disabled="@Busy">
+                    <legend>Draft for review</legend>
+                    <p>Draft text is saved for you to review or copy. It is never sent.</p>
+                    @if (_draftConflict)
+                    {
+                        <p role="alert">The saved draft changed elsewhere. Your unsaved text is preserved below; copy it before loading the latest draft. Saving is disabled until you load the latest draft.</p>
+                        <p>Latest saved draft:</p>
+                        <p class="journal-text">@(string.IsNullOrEmpty(_latestDraft) ? "(empty)" : _latestDraft)</p>
+                        <button type="button" @onclick="UseLatestDraft">Load latest draft and discard my edit</button>
+                    }
+                    <label for="followup-draft">Draft text</label>
+                    <textarea id="followup-draft" @bind="_draft" @bind:event="oninput" maxlength="@DomainLimits.FollowUpDraft"></textarea>
+                    <button type="submit" disabled="@_draftConflict">Save draft</button>
+                </fieldset>
+            </form>
+            <div data-journal-write data-journal-form>
+                <button type="button" disabled="@Busy" @onclick="DismissAsync">Dismiss follow-up</button>
+            </div>
+        }
+        else
+        {
+            @if (DraftIsDirty())
+            {
+                <section aria-labelledby="unsaved-draft-heading">
+                    <h2 id="unsaved-draft-heading">Unsaved draft</h2>
+                    <p role="alert">This follow-up is no longer pending. Your unsaved draft was not saved and cannot be saved after dismissal. Copy it if you want to keep it.</p>
+                    <label for="unsaved-followup-draft">Your unsaved draft (read-only)</label>
+                    <textarea id="unsaved-followup-draft" readonly value="@_draft"></textarea>
+                </section>
+            }
+            @if (entry.Draft is not null)
+            {
+                <h2>Saved draft (not sent)</h2>
+                <p class="journal-text">@entry.Draft</p>
+            }
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private FollowUpSnapshot? _entry;
+    private string _observation = "";
+    private string _scope = "";
+    private string _defer = "";
+    private string? _draft;
+    private string? _draftBaseline;
+    private string? _latestDraft;
+    private bool _draftInitialized;
+    private bool _draftConflict;
+
+    protected override void Read()
+    {
+        _ = UserZone();
+        var result = FollowUps.Get(Id);
+        if (!result.IsSuccess) throw new DomainException(result.Error!.Code, result.Error.Message);
+        _entry = result.Value!;
+        _latestDraft = _entry.Draft;
+        if (!_draftInitialized || !DraftIsDirty())
+        {
+            _draft = _entry.Draft;
+            _draftBaseline = _entry.Draft;
+            _draftInitialized = true;
+            _draftConflict = false;
+        }
+        else
+            _draftConflict = _entry.Draft != _draftBaseline;
+    }
+
+    private Task RecordAsync() => SaveAsync(() =>
+    {
+        if (!Enum.TryParse<FollowUpObservation>(_observation, out var observation) ||
+            observation is not (FollowUpObservation.ReplySeen or FollowUpObservation.NoReplySeen))
+            throw new DomainException(DomainErrorCode.InvariantViolation, "Select an observation.");
+        return FollowUps.RecordEvidence(Id, EvidenceSource.Manual, observation, _scope);
+    }, _ => "Evidence recorded.");
+
+    private Task DeferAsync() => SaveAsync(() => FollowUps.Defer(Id, ToUtc(_defer)),
+        _ => "Follow-up deferred.");
+    private Task DraftAsync()
+    {
+        if (_draftConflict) return Task.CompletedTask;
+        return SaveAsync(() => FollowUps.SetDraftIfCurrent(Id, _draftBaseline, _draft),
+            saved =>
+            {
+                _draft = _draftBaseline = _latestDraft = saved.Draft;
+                _draftConflict = false;
+                return "Draft saved. Nothing was sent.";
+            },
+            error =>
+            {
+                if (error.Code == DomainErrorCode.ConcurrencyConflict) Read();
+            });
+    }
+
+    private bool DraftIsDirty() => (_draft ?? "") != (_draftBaseline ?? "");
+    private void UseLatestDraft()
+    {
+        _draft = _draftBaseline = _latestDraft;
+        _draftConflict = false;
+    }
+    private Task DismissAsync() => SaveAsync(() => FollowUps.Dismiss(Id),
+        _ => "Follow-up dismissed.");
+
+    private static string OutcomeText(FollowUpOutcome outcome) => outcome switch
+    {
+        FollowUpOutcome.ReplySeen => "Reply seen",
+        FollowUpOutcome.NoReplySeenInCheckedScope => "No reply seen in the checked scope",
+        _ => "Evidence unavailable"
+    };
+
+    private static string ObservationText(FollowUpObservation observation) => observation switch
+    {
+        FollowUpObservation.ReplySeen => "Reply seen",
+        FollowUpObservation.NoReplySeen => "No reply seen",
+        _ => "Evidence unavailable"
+    };
+}

@@ -4,6 +4,7 @@
 
 <AuthorizeView Policy="ApprovedUi">
     <Authorized>
+        <FollowUpsDue @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
         @if (Configuration.GetValue<bool>("Chat:Enabled"))
         {
             <PageTitle>Chat · Bujo-AI</PageTitle>

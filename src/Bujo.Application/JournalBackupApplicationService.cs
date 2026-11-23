@@ -6,6 +6,8 @@ public sealed class JournalBackupApplicationService(IJournalBackupRepository rep
 {
     public JournalBackupSnapshot ExportBackup() => repository.ExportBackup();
 
+    public JournalBackupSnapshot ExportJournalWithFollowUps() => repository.ExportJournalWithFollowUps();
+
     public DomainResult<JournalBackupSnapshot> RestoreBackup(JournalBackupSnapshot backup) =>
         repository.RestoreBackup(backup);
 }

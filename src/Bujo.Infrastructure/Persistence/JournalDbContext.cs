@@ -23,6 +23,10 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
 
     public DbSet<KnowledgeEntryTagEntity> KnowledgeEntryTags => Set<KnowledgeEntryTagEntity>();
 
+    public DbSet<FollowUpEntity> FollowUps => Set<FollowUpEntity>();
+    public DbSet<FollowUpEvidenceEntity> FollowUpEvidence => Set<FollowUpEvidenceEntity>();
+    public DbSet<FollowUpChangeEntity> FollowUpChanges => Set<FollowUpChangeEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<JournalListEntity>(entity =>
@@ -155,7 +159,69 @@ public sealed class JournalDbContext(DbContextOptions<JournalDbContext> options)
             entity.Property(tag => tag.NormalizedValue).HasMaxLength(DomainLimits.TagName).IsRequired();
             entity.HasIndex(tag => tag.NormalizedValue);
         });
+
+        modelBuilder.Entity<FollowUpEntity>(entity =>
+        {
+            entity.ToTable("FollowUps");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Title).HasMaxLength(DomainLimits.FollowUpTitle).IsRequired();
+            entity.Property(item => item.Condition).HasMaxLength(DomainLimits.FollowUpCondition).IsRequired();
+            entity.Property(item => item.TimeZoneId).HasMaxLength(DomainLimits.FollowUpTimeZone).IsRequired();
+            entity.Property(item => item.Draft).HasMaxLength(DomainLimits.FollowUpDraft);
+            entity.Property(item => item.Version).IsConcurrencyToken();
+            entity.HasOne<ItemEntity>().WithMany().HasForeignKey(item => item.ItemId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasMany(item => item.Evidence).WithOne().HasForeignKey(item => item.FollowUpId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(item => item.Changes).WithOne().HasForeignKey(item => item.FollowUpId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(item => new { item.Status, item.DueAtUtc, item.Id });
+        });
+        modelBuilder.Entity<FollowUpEvidenceEntity>(entity =>
+        {
+            entity.ToTable("FollowUpEvidence");
+            entity.HasKey(item => new { item.FollowUpId, item.Sequence });
+            entity.Property(item => item.CheckedScope).HasMaxLength(DomainLimits.FollowUpCheckedScope);
+        });
+        modelBuilder.Entity<FollowUpChangeEntity>(entity =>
+        {
+            entity.ToTable("FollowUpChanges");
+            entity.HasKey(item => new { item.FollowUpId, item.Sequence });
+        });
     }
+}
+
+public sealed class FollowUpEntity
+{
+    public Guid Id { get; set; }
+    public required string Title { get; set; }
+    public required string Condition { get; set; }
+    public DateTimeOffset DueAtUtc { get; set; }
+    public required string TimeZoneId { get; set; }
+    public Guid? ItemId { get; set; }
+    public EvidenceSource Source { get; set; }
+    public FollowUpStatus Status { get; set; }
+    public string? Draft { get; set; }
+    public long Version { get; set; }
+    public ICollection<FollowUpEvidenceEntity> Evidence { get; } = new List<FollowUpEvidenceEntity>();
+    public ICollection<FollowUpChangeEntity> Changes { get; } = new List<FollowUpChangeEntity>();
+}
+
+public sealed class FollowUpEvidenceEntity
+{
+    public Guid FollowUpId { get; set; }
+    public long Sequence { get; set; }
+    public EvidenceSource Source { get; set; }
+    public FollowUpObservation Observation { get; set; }
+    public string? CheckedScope { get; set; }
+    public DateTimeOffset RecordedAtUtc { get; set; }
+}
+
+public sealed class FollowUpChangeEntity
+{
+    public Guid FollowUpId { get; set; }
+    public long Sequence { get; set; }
+    public FollowUpChangeKind Kind { get; set; }
+    public DateTimeOffset OccurredAtUtc { get; set; }
+    public DateTimeOffset? PreviousDueAtUtc { get; set; }
+    public DateTimeOffset? NewDueAtUtc { get; set; }
 }
 
 public sealed class JournalListEntity

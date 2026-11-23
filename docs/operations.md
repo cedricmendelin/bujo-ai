@@ -36,6 +36,9 @@ exception text. Use resource names, operation IDs, status codes, and sanitized
 counts for correlation. Never attach raw logs, exports, backups, Terraform
 state/plans, or database content to issues or pull requests.
 
+Follow-up titles, conditions, evidence and checked scopes, and drafts are also
+personal data; do not include them in diagnostics or public evidence.
+
 ## Portable journal export
 
 The owner-authorized, read-only export is available at `GET
@@ -54,16 +57,38 @@ Schema version 1 is UTF-8 JSON with these top-level fields:
 | `items` | Stable IDs, canonical name/description, tag strings, planned-period fields, current occurrence ID, and version. |
 | `occurrences` | Stable IDs, item/list IDs, sequence, local state, timestamps, links, and version. |
 | `history` | Ordered journal events with operation and occurrence IDs. |
-| `knowledgeEntries` | Reserved empty array until the knowledge domain is delivered. |
+| `knowledgeEntries` | Empty array in this logical export. |
+| `followUps` | Follow-up records, evidence and change history, draft, status, and optional item links. |
 
 The export is a logical portable representation, not a SQL backup, restore
 loader, or guarantee that a complete production recovery has been rehearsed.
 The opt-in SQL durability test includes a test-only loader that restores a
 synthetic export to an empty database and compares the canonical snapshot; it
-is not an operational import command. Knowledge entries remain absent until
-the knowledge domain is delivered. Do not edit exported IDs or duplicate list
-names before restoration. A future schema version must define migration
-behavior before it replaces version 1.
+is not an operational import command. Knowledge entries are absent from this
+logical export; use the portable backup below to include them. Do not edit
+exported IDs or duplicate list names before restoration. A future schema
+version must define migration behavior before it replaces version 1.
+
+### Follow-up backup and rollback warning
+
+The portable journal backup (`GET /api/journal/backup/export`, the PWA, or
+`export_journal_backup`) includes follow-ups, evidence and change history,
+drafts, and item links. A follow-up-aware restore replaces that collection
+when the backup contains it. If the section is absent, current follow-ups are
+retained; the restore is rejected without applying the backup if a retained
+follow-up links to an item absent from the restored journal. An included
+follow-up section with invalid item links is also rejected. Export a fresh
+backup and keep it securely before attempting a restore.
+
+The migration adds follow-up tables with a restrictive item foreign key. An
+older binary does not understand follow-up data: its delete-and-reinsert
+restore can fail when an item is linked, or it can fail to restore follow-up
+data omitted from the older schema. Do not rely on an older application's
+restore to recover follow-ups. Preserve a verified follow-up-aware backup,
+restore with a compatible follow-up-aware version, and verify the result.
+This is separate from the Thought-type rollback caveat in
+[domain semantics](domain.md#identity-and-lists); a type-aware binary alone
+is not necessarily follow-up-aware.
 
 ## SQL backup and restore
 
@@ -138,7 +163,8 @@ estimate, and a cost-control/monitoring plan. See
 
 | Area | Evidence in this repository | Limitation |
 | --- | --- | --- |
-| API/MCP export | Integration contract tests exercise both adapters over the shared journal service. | Export schema v1 has an empty knowledge section; no public import tool exists. |
+| API/MCP export | Integration contract tests exercise both adapters over shared services. | Logical export has an empty knowledge section and is not the portable restore backup. |
+| Follow-up backup | Application and browser tests cover backup round-trip; SQL migration/restore coverage is opt-in. | Production recovery and any particular SQL test run remain unverified here. |
 | PWA | Browser tests use a synthetic identity and in-memory repository; the worker's asset allowlist is covered. | Does not establish SQL durability, live sign-in, target-browser installation, or deployed sign-out behavior. |
 | SQL | Run the opt-in `SqlDurability` tests described in [development.md](development.md). | Results are local evidence only; Azure SQL parity and production restore remain unverified. |
 | Authentication | Automated tests cover endpoint fallback authorization and approved-principal policies. | No live Entra or unrelated-tenant production check is claimed. |

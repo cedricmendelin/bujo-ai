@@ -21,6 +21,12 @@ public static class DomainLimits
     public const int KnowledgeBackupEntries = 10_000;
     public const int KnowledgeBackupBytes = 25_000_000;
     public const int JournalBackupBytes = 50_000_000;
+    public const int FollowUpTitle = 200;
+    public const int FollowUpCondition = 2_000;
+    public const int FollowUpCheckedScope = 2_000;
+    public const int FollowUpDraft = 10_000;
+    public const int FollowUpTimeZone = 128;
+    public const int FollowUpBackupEntries = 10_000;
 
     internal static string RequiredVerbatimText(string? value, int maxLength, string field)
     {
