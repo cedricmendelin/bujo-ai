@@ -180,6 +180,85 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Enroll native Watch and fix
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          HUMAN: cedricmendelin
+          PR_NUMBER: ${{ matrix.pr_number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { classifySession } = await import(require('node:url').pathToFileURL(
+              require('node:path').resolve('.github/scripts/session-state.mjs')).href);
+            const { isControllerComment, isReviewNone } = require('./.github/scripts/delivery-lifecycle');
+            const { owner, repo } = context.repo;
+            const number = Number(process.env.PR_NUMBER);
+            const human = process.env.HUMAN;
+            const agent = getOctokit(process.env.AGENT_TOKEN);
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            const labels = pr.labels.map(label => label.name);
+            if (pr.state !== 'open' || pr.draft || pr.head.repo?.full_name !== `${owner}/${repo}`
+                || labels.includes('needs:human') || labels.includes('handoff:local')) return;
+            const cloud = pr.head.ref.startsWith('copilot/');
+            if (cloud) {
+              const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, { owner, repo, per_page: 100 });
+              const workflow = workflows.find(item => (item.path || '').startsWith('dynamic/copilot-swe-agent'));
+              if (!workflow) return core.warning(`#${number}: cannot verify the cloud session before Watch and fix enrollment.`);
+              const runs = (await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: workflow.id, branch: pr.head.ref, per_page: 100,
+              })).data.workflow_runs;
+              if (classifySession(runs).state !== 'ok') return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: number, per_page: 100,
+            });
+            const trusted = comment => isControllerComment(comment, owner);
+            const marker = '<!-- squad-watch-and-fix-enrolled -->';
+            if (comments.some(comment => trusted(comment) && (comment.body || '').includes(marker))) return;
+            const rejection = comments.filter(comment => trusted(comment)
+              && /^<!-- squad-independent-revision:[a-f0-9]{40}:[a-f0-9]{64} -->/m.test(comment.body || ''))
+              .sort((a, b) => b.id - a.id)[0];
+            if (rejection) {
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner, repo, pull_number: number, per_page: 100,
+              });
+              const admitted = !rejection.body.startsWith(`<!-- squad-independent-revision:${pr.head.sha}:`)
+                && !isReviewNone(labels) && reviews.some(review => review.user?.login === owner
+                  && review.user?.type === 'User' && review.state === 'COMMENTED'
+                  && review.commit_id === pr.head.sha && (review.body || '').split(/\r?\n/).some(line =>
+                    new RegExp(`^Independent revision: ${rejection.id} by [A-Za-z0-9][A-Za-z0-9._/-]*$`).test(line)));
+              if (!admitted) return;
+            }
+            const route = '/agents/repos/{owner}/{repo}/pulls/{pull_number}/agent-merge';
+            const params = { owner, repo, pull_number: number, headers: { 'X-GitHub-Api-Version': '2026-03-10' } };
+            const required = ['fix_ci', 'resolve_merge_conflicts'];
+            try {
+              let configuration;
+              try {
+                configuration = (await agent.request(`GET ${route}`, params)).data;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                const live = (await github.rest.pulls.get({ owner, repo, pull_number: number })).data;
+                if (live.state !== 'open' || live.head.sha !== pr.head.sha
+                    || live.head.repo?.full_name !== `${owner}/${repo}`
+                    || live.draft || live.labels.some(label => ['needs:human', 'handoff:local'].includes(label.name))) return;
+                configuration = (await agent.request(`PUT ${route}`, { ...params, allowed_actions: required })).data;
+              }
+              if (!required.every(action => configuration?.allowed_actions?.includes(action))) {
+                throw new Error('Existing enrollment does not allow both required actions.');
+              }
+              await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                body: `${marker}\nNative Watch and fix is enabled for failed Actions workflows and merge conflicts. If a maintainer later unassigns it, the controller will not re-enable it automatically.` });
+            } catch (error) {
+              const detail = Number.isInteger(error.status) ? `HTTP ${error.status}` : 'configuration or API error';
+              const notice = `<!-- squad-watch-and-fix-error:${detail} -->`;
+              core.warning(`#${number}: Watch and fix enrollment failed (${detail}).`);
+              if (!comments.some(comment => trusted(comment) && (comment.body || '').includes(notice))) {
+                await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                  body: `${notice}\n## 🙋 Needs human\n@${human} Watch and fix could not be verified or enabled (${detail}). Check Agent Merge eligibility, repository automations, the agent token's Agent tasks permission, and the PR's existing action settings. Enable both actions on the PR if eligible; stacked and fork PRs are unsupported.` });
+              }
+            }
       - name: Evaluate readiness and bridge review findings
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:

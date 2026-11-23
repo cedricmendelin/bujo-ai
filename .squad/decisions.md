@@ -309,6 +309,17 @@
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
 
+### 2026-11-23: Automatic Watch and fix enrollment
+
+- Owner decision superseding the manual per-PR enablement requirement in the
+  2026-11-16 PR finalization ownership redesign: enroll eligible process PRs
+  automatically in GitHub.com Watch and fix for failed Actions workflows and
+  merge conflicts. Preserve the existing human-pause, formal-rejection and local
+  takeover safeguards; do not undo a maintainer's later unassignment.
+- The trusted controller, API permissions, eligibility limitations and
+  operational recovery are recorded in `.github/workflows/squad-pr-lifecycle.yml`
+  and `docs/workflow.md`. GitHub auto-merge remains the only merge executor.
+
 ### 2026-11-16: PR finalization ownership redesign
 
 - This supersedes only the PR lifecycle ownership and merge-authority portions
