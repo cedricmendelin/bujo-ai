@@ -30,6 +30,7 @@ function source(workflow, step) {
 
 const steps = {
   evaluate: ['squad-pr-lifecycle.yml', 'Evaluate readiness and bridge review findings'],
+  enroll: ['squad-pr-lifecycle.yml', 'Enroll native Watch and fix'],
   route: ['squad-pr-lifecycle.yml', 'Route the event to pull request numbers (read only)'],
   closure: ['squad-pr-lifecycle.yml', 'Warn when a completed issue retains unchecked criteria'],
   plan: ['squad-plan-approved.yml', 'Remove approval when a newer plan is published'],
@@ -222,7 +223,21 @@ async function execute(state, step = 'evaluate') {
       else throw new Error(`Unexpected mutation ${query}`);
       return {};
     },
-    request: async (route, args) => { calls.push({ name: 'agentRequest', route, args }); },
+    request: async (route, args) => {
+      calls.push({ name: 'agentRequest', route, args });
+      if (state.before) await state.before('agentRequest', args, calls);
+      if (!route.includes('/agent-merge')) return {};
+      if (state.watchError) throw Object.assign(new Error('Agent Merge API failure'), { status: state.watchError });
+      if (route.startsWith('GET ')) {
+        if (!state.watchConfig) throw Object.assign(new Error('Not found'), { status: 404 });
+        return { data: state.watchConfig };
+      }
+      if (route.startsWith('PUT ')) {
+        state.watchConfig = { allowed_actions: [...args.allowed_actions] };
+        return { data: state.watchConfig };
+      }
+      throw new Error(`Unexpected request ${route}`);
+    },
   };
   const core = {
     info: message => logs.push(message),
@@ -258,6 +273,96 @@ function report(state, request, session, outcome = 'attempted') {
 function humanReview(state = 'CHANGES_REQUESTED', id = 1, body = 'Fix the missing acceptance test') {
   return { id, state, body, user: { login: owner, type: 'User' }, author_association: 'OWNER', html_url: 'https://example.test/review/1' };
 }
+
+test('Watch and fix enrolls eligible PRs once with both actions and respects a later unassignment', async () => {
+  for (const cloud of [false, true]) {
+    const state = fixture();
+    if (cloud) state.pr.head.ref = 'copilot/example';
+    const result = await execute(state, 'enroll');
+    const put = result.calls.find(call => call.route?.startsWith('PUT /agents/'));
+    assert.deepEqual(put.args.allowed_actions, ['fix_ci', 'resolve_merge_conflicts']);
+    assert.match(commentsFrom(result)[0], /squad-watch-and-fix-enrolled/);
+    state.watchConfig = null;
+    const later = await execute(state, 'enroll');
+    assert.equal(later.calls.some(call => call.route?.includes('/agent-merge')), false);
+  }
+});
+
+test('Watch and fix preserves existing enrollment and reports an incomplete configuration', async () => {
+  const enabled = fixture();
+  enabled.watchConfig = { allowed_actions: ['fix_ci', 'resolve_merge_conflicts'] };
+  const observed = await execute(enabled, 'enroll');
+  assert.equal(observed.calls.some(call => call.route?.startsWith('PUT /agents/')), false);
+  assert.match(commentsFrom(observed)[0], /squad-watch-and-fix-enrolled/);
+  const state = fixture();
+  state.watchConfig = { allowed_actions: ['resolve_merge_conflicts'] };
+  const result = await execute(state, 'enroll');
+  assert.equal(result.calls.some(call => call.route?.startsWith('PUT /agents/')), false);
+  assert.match(commentsFrom(result)[0], /Needs human[\s\S]*existing action settings/);
+  assert.doesNotMatch(commentsFrom(result)[0], /squad-watch-and-fix-enrolled/);
+});
+
+test('Watch and fix pause guard rejects a realistic source mutation', async () => {
+  const state = fixture();
+  state.pr.labels.push({ name: 'handoff:local' });
+  state.mutateSource = code => code.replace(" || labels.includes('handoff:local')", '')
+    .replace("['needs:human', 'handoff:local'].includes(label.name)", "['needs:human'].includes(label.name)");
+  const result = await execute(state, 'enroll');
+  assert.ok(result.calls.some(call => call.route?.startsWith('PUT /agents/')),
+    'removing both handoff guards must expose the unwanted enrollment');
+});
+
+test('Watch and fix leaves paused, handed-off, active and rejected work alone', async () => {
+  for (const mode of ['paused', 'handoff', 'active', 'draft', 'cloud-draft', 'rejected', 'fork']) {
+    const state = fixture();
+    if (mode === 'paused') state.pr.labels.push({ name: 'needs:human' });
+    if (mode === 'handoff') state.pr.labels.push({ name: 'handoff:local' });
+    if (mode === 'active') {
+      state.pr.head.ref = 'copilot/example';
+      state.runs.copilot[0].status = 'in_progress';
+    }
+    if (mode === 'draft') state.pr.draft = true;
+    if (mode === 'cloud-draft') {
+      state.pr.head.ref = 'copilot/example';
+      state.pr.draft = true;
+    }
+    if (mode === 'rejected') state.comments.push({
+      id: 100, user: { login: owner }, body: `<!-- squad-independent-revision:${sha}:${'b'.repeat(64)} -->`,
+    });
+    if (mode === 'fork') state.pr.head.repo.full_name = 'other/fork';
+    const result = await execute(state, 'enroll');
+    assert.equal(result.calls.some(call => call.route?.includes('/agent-merge')), false, mode);
+  }
+});
+
+test('Watch and fix resumes after an independently revised head is admitted by the owner', async () => {
+  const state = fixture();
+  state.comments.push({
+    id: 100, user: { login: owner }, body: `<!-- squad-independent-revision:${'c'.repeat(40)}:${'b'.repeat(64)} -->`,
+  });
+  state.reviews.push({
+    user: { login: owner, type: 'User' }, state: 'COMMENTED', commit_id: sha,
+    body: 'Independent revision: 100 by builder',
+  });
+  const result = await execute(state, 'enroll');
+  assert.ok(result.calls.some(call => call.route?.startsWith('PUT /agents/')));
+});
+
+test('Watch and fix reports API errors and checks live ownership before creating enrollment', async () => {
+  const failure = fixture();
+  failure.watchError = 403;
+  const failed = await execute(failure, 'enroll');
+  assert.match(commentsFrom(failed)[0], /HTTP 403[\s\S]*Agent tasks permission/);
+  assert.equal(failed.calls.some(call => call.route?.startsWith('PUT /agents/')), false);
+  const race = fixture();
+  race.before = (name, args, calls) => {
+    if (name === 'pr' && calls.filter(call => call.name === 'pr').length === 2) {
+      race.pr.labels.push({ name: 'handoff:local' });
+    }
+  };
+  const result = await execute(race, 'enroll');
+  assert.equal(result.calls.some(call => call.route?.startsWith('PUT /agents/')), false);
+});
 
 test('observation preserves all reviewers; enforcement dispatches Verifier with one bounded evidence bundle', async () => {
   for (const mode of [undefined, 'enforce']) {
