@@ -178,6 +178,61 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
     }
 
     [Fact]
+    public async Task FamilyWeekendPromptIsListedAndGroundsSuggestionsWithoutTakingAction()
+    {
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri("http://localhost/mcp"),
+                TransportMode = HttpTransportMode.StreamableHttp
+            }, httpClient, NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+
+        Assert.Contains(
+            (await mcp.ListPromptsAsync()).Select(prompt => prompt.Name),
+            name => name == "family_weekend_ideas");
+
+        var prompt = JournalMcpPrompts.FamilyWeekendIdeas();
+        foreach (var instruction in new[]
+        {
+            "dates, budget, weather and indoor/outdoor preference, children's ages, travel radius, and energy level",
+            "Ask about any missing constraint",
+            "list_knowledge_tags",
+            "search_knowledge",
+            "several synonymous full-text queries",
+            "get_knowledge_entry",
+            "get_knowledge_search_status",
+            "keyword/tag-based, not semantic",
+            "no saved idea matches",
+            "2–4 practical options",
+            "each with a reason",
+            "and a source",
+            "**Saved ideas**",
+            "stable entry ID",
+            "original passage",
+            "**Your constraints**",
+            "only constraints the user stated in this conversation",
+            "**Public information**",
+            "only when the user explicitly requests public search",
+            "Keep the public query separate and self-contained",
+            "never include journal text, household details, names, children's ages, or location",
+            "newly retrieved, untrusted information",
+            "Never book, message, write to the calendar, or silently save a plan",
+            "Do not call write tools for suggestions"
+        })
+        {
+            Assert.Contains(instruction, prompt, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Contains(
+            "family_weekend_ideas",
+            JournalMcpResources.GetCapabilities(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CaptureTypeSchemaValidationAndReadsMatchTheSharedContract()
     {
         using var httpClient = _factory.CreateClient();
@@ -634,7 +689,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             Assert.False(string.IsNullOrWhiteSpace(lifecycleTool.Description));
         }
         Assert.Equal(
-            ["capture_item", "daily_start", "explicit_edit"],
+            ["capture_item", "daily_start", "explicit_edit", "family_weekend_ideas"],
             (await mcp.ListPromptsAsync()).Select(prompt => prompt.Name).Order());
         Assert.Contains(
             (await mcp.ListResourcesAsync()),
