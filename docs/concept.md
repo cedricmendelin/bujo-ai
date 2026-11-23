@@ -55,10 +55,13 @@ or credentials belong in the repository.
   [proposed ADR](adr/0002-foundry-agui-chat.md).
 - MCP access for assistants such as Copilot and Claude, sharing application
   capabilities rather than maintaining a second copy of the user's journal.
-- Scheduling configurable through the application or assistant.
-- Expose assistant setup guidance through MCP prompts and/or skills, including
-  examples for configuring scheduled prompts. Client support and execution
-  capabilities must be verified; exposing a prompt does not install a scheduler.
+- Versioned assistant skills cover daily review, one-item capture, and weekly
+  draft review; the weekly skill reviews an existing list and does not generate
+  an AI-authored draft.
+- Scheduling is client-owned; skills do not install a scheduler. Safe unattended
+  execution has not been verified for any Copilot or Claude client. The
+  read-only scheduled prompt remains an unverified template, not supported
+  functionality.
 - Longer-term app interaction candidates include simple text, voice and
   web-search flows; more sophisticated orchestration can remain in external
   assistants.

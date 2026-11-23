@@ -127,6 +127,32 @@ Whole-journal export and restore are available through the authenticated
 Version 1 includes the knowledge collection. Legacy snapshots without that
 section remain readable and leave current knowledge unchanged on restore.
 
+## Versioned assistant skills
+
+The repository publishes three versioned Markdown skills in
+[`assistants/`](../assistants/README.md): daily review, one-item capture, and
+weekly draft review. Each names its exact MCP tools and safety limits. Copy a
+skill into a client that supports user-provided skills, or paste it into an
+interactive prompt; follow the client's own setup instructions. Client-side
+skill installation and prompt execution have not been verified. The MCP prompt
+`weekly_review` follows the weekly skill and can create a proposal only for
+inspection and approval in the authenticated PWA. It does not generate an
+AI-authored weekly list.
+
+| Routine | Manual equivalent |
+|---|---|
+| Daily review | Open **Today** in the web app, or run the `daily_start` MCP prompt interactively with an IANA time zone. |
+| Capture | Use **Capture** in the web app, or explicitly ask a connected assistant to capture one item. |
+| Weekly draft review | Open **Lists**, select the weekly list, and choose **Start review**. Inspect and approve any proposal in the PWA. |
+
+Skills do not install or enable scheduling, store credentials, grant approval,
+or send journal content to another integration. Connect only a client the user
+trusts to process private journal results. No client is verified for safe
+unattended Bujo runs; the
+[read-only scheduled prompt template](../assistants/scheduled/daily-review-readonly.md)
+is unverified and must not be enabled. Use the manual equivalent until
+client/version/platform evidence is recorded.
+
 ## Authentication and safe setup
 
 The MCP server publishes RFC 9728 protected-resource metadata and advertises
@@ -247,23 +273,27 @@ guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-c
 
 Local protocol/contract tests exercise the MCP SDK against a test authentication
 scheme. They do not prove Entra interoperability or a third-party client's
-connection behavior. No live Copilot or Claude connection has been performed.
-Version numbers below are local implementation/test dependencies, not client
-compatibility claims. Product versions were not recorded because those clients
-were not installed and exercised.
+connection behavior. No live Copilot or Claude connection, skill installation,
+or scheduled run has been performed. The date below records this evidence
+snapshot; it is not a test date for untested rows.
 
-| Surface | Version recorded | Status |
-|---|---|---|
-| Bujo.Host / MCP SDK | .NET SDK 11.0.100 / `ModelContextProtocol.AspNetCore` 2.4.0 | Local build and protocol contract tests passed; real Entra not tested. |
-| VS Code Copilot | Not recorded | Untested against Bujo; vendor docs describe remote HTTP configuration. |
-| GitHub Copilot CLI | Not recorded | Untested against Bujo; vendor docs describe remote HTTP configuration. |
-| Claude Code | Not recorded | Untested against Bujo; vendor docs describe remote HTTP configuration. |
-| claude.ai custom connector | Hosted version not exposed | Untested against Bujo; vendor docs describe remote custom connectors. |
-| Claude Desktop custom connector | Not recorded | Untested against Bujo; vendor docs describe remote custom connectors. |
-| Copilot cloud coding agent | Not applicable | Unsupported by the current Entra OAuth design; GitHub documents no remote OAuth support on this surface. |
+| Client/surface and version | Platform | Connection | Skills/prompts | Scheduler | Observed result and date |
+|---|---|---|---|---|---|
+| Bujo.Host MCP test fixture; .NET SDK 11.0.100, `ModelContextProtocol.AspNetCore` 2.4.0 | Linux; test environment | Local test authentication only | MCP tool/prompt contracts and skill tool references tested; third-party skill installation not applicable | Not applicable; the host does not schedule prompts | Local integration tests passed 2026-11-21; no Entra or client compatibility evidence. |
+| VS Code Copilot; version not recorded | Not recorded; client not exercised | Untested | Untested | Unverified; do not schedule | No live observation; evidence snapshot 2026-11-21. |
+| GitHub Copilot CLI; version not recorded | Not recorded; client not exercised | Untested | Untested | Unverified; do not schedule | No live observation; evidence snapshot 2026-11-21. |
+| Claude Code; version not recorded | Not recorded; client not exercised | Untested | Untested | Unverified; do not schedule | No live observation; evidence snapshot 2026-11-21. |
+| claude.ai custom connector; hosted version not exposed | Hosted platform; not exercised | Untested | Untested | Unverified; do not schedule | No live observation; evidence snapshot 2026-11-21. |
+| Claude Desktop custom connector; version not recorded | Not recorded; client not exercised | Untested | Untested | Unverified; do not schedule | No live observation; evidence snapshot 2026-11-21. |
+| Copilot cloud coding agent; version not applicable | Hosted service | Unsupported by the current Entra OAuth design | Unsupported for this authenticated Bujo connection | Unsupported | GitHub documents no remote OAuth support on this surface; evidence snapshot 2026-11-21. |
 
 This matrix is not a supported-client declaration. Live verification requires
 owner-approved Entra registrations and test access, along with the live
-authentication proof for issue #4. Record the exact client version, platform,
-connection steps, and sanitized observed outcome before changing a row to
-tested.
+authentication proof for issue #4. The current Entra `Application ID URI`
+alignment remains an owner-owned deployment blocker; no client is currently
+tested. Until unattended execution is verified for an exact client version and
+platform, scheduled Bujo prompts are unsupported for all listed clients. Record
+the exact connection steps and a sanitized observed outcome before changing any
+row to tested. The Copilot cloud coding agent and local Claude Desktop
+configuration are unsupported combinations; use the documented remote client
+surfaces or the manual equivalents above.

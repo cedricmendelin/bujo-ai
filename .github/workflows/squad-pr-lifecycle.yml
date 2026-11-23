@@ -702,16 +702,14 @@ jobs:
               const shouldReview = !pr.draft && !isReviewNone(nowLabels) && (!cloudPr || session.state === 'ok');
               const classifyReviews = (candidate, files, reviews) => routeReviews({
                 labels: candidate.labels.map(label => label.name), changedFiles: candidate.changed_files,
-                files, reviews, owner: human, sha: candidate.head.sha, baseSha: candidate.base.sha,
-                inputKey: reviewInputKey(candidate.body || ''),
+                files, reviews, owner: human, sha: candidate.head.sha,
               });
               const files = shouldReview ? await changedFiles(pr) : [];
               const routing = shouldReview ? classifyReviews(pr, files, humanData.reviews) : null;
               if (routing) core.info(`#${number}: reviewer routing (${enforceRouting ? 'enforce' : 'observe'}) ${JSON.stringify({
                 selected: routing.roles, reasons: routing.reasons, omitted: routing.omitted, needsAttention: !!routing.blocked,
               })}`);
-              const reviewers = enforceRouting
-                ? availableReviewers.filter(item => routing?.roles.includes(item.role)) : availableReviewers;
+              const reviewers = availableReviewers.filter(item => routing?.roles.includes(item.role));
               const reviewRuns = new Map();
               const latestReviewChecks = new Map();
               if (shouldReview) {
@@ -782,14 +780,10 @@ jobs:
                   }
                 }
               }
-              // A role removed from routing must not make a current-head failure disappear.
-              const excludedFailure = checks => enforceRouting && shouldReview && availableReviewers.find(item =>
-                !reviewers.includes(item) && currentHeadCheck(checks, item.check, sha)?.conclusion === 'failure');
-              const uncoveredFailure = excludedFailure(allChecks);
-              if (enforceRouting && (routing?.blocked || uncoveredFailure)) {
+              if (enforceRouting && routing?.blocked) {
                 await pauseMerge(pr);
                 await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
-                  reason: routing?.blocked || `${uncoveredFailure.role} has a blocking check on this head. Resolve it or ask the owner to request that specialist again.`,
+                  reason: routing.blocked,
                 });
                 return;
               }
@@ -957,7 +951,7 @@ jobs:
                     || freshLabels.includes('handoff:local') !== nowLabels.includes('handoff:local')
                     || freshSplit?.reason || (freshSplit?.key || reviewInputKey(latestPr.body || '')) !== inputKey
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
-                    || freshRouting && (freshRouting.blocked || excludedFailure(freshChecks)
+                    || freshRouting && (freshRouting.blocked
                       || latestPr.base.sha !== pr.base.sha
                       || freshRouting.roles.join(',') !== routing?.roles.join(','))
                     || !freshReviewsOk

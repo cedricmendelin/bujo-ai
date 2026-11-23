@@ -65,7 +65,7 @@ function reviewDispatchNeeded({ fresh, runs = [], forceFresh = false, eventAt = 
 }
 
 function reviewSelection(labels = []) {
-  return isReviewNone(labels) ? [] : [...ROLES];
+  return isReviewNone(labels) ? [] : ['Verifier'];
 }
 
 const specialistRules = {
@@ -75,7 +75,7 @@ const specialistRules = {
 };
 const knownReviewPaths = /^(?:src\/Bujo\.(?:Domain|Application|Host|Infrastructure|Web|AppHost|ServiceDefaults)\/|tests\/|docs\/|infra\/|\.github\/|\.squad\/|(?:README\.md|LICENSE|\.gitignore|\.gitattributes|\.dockerignore|Dockerfile|Bujo\.slnx|Directory\.(?:Build|Packages)\.props|global\.json)$)/;
 
-function routeReviews({ labels, files, changedFiles, reviews, owner, sha, baseSha, inputKey }) {
+function routeReviews({ labels, files, changedFiles, reviews, owner, sha }) {
   if (isReviewNone(labels)) return { roles: [], omitted: [], blocked: '', reasons: {} };
   const routes = ['Security', 'DevOps', 'Architect'];
   const reasons = { Verifier: 'default' };
@@ -93,14 +93,9 @@ function routeReviews({ labels, files, changedFiles, reviews, owner, sha, baseSh
   const specialists = routes.filter(role => reasons[role]);
   const roles = ['Verifier', ...specialists.slice(0, 2)];
   const omitted = specialists.slice(2);
-  const coverageKey = reviewInputKey(JSON.stringify([sha, baseSha, inputKey, roles, omitted]));
-  const covered = ownerReviews.some(review => review.state === 'APPROVED'
-    && review.body?.split(/\r?\n/).includes(`Squad coverage: ${omitted.join(', ')} ${coverageKey}`));
   const blocked = incomplete || paths.some(path => !knownReviewPaths.test(path))
     ? 'Reviewer routing needs human attention: the changed-file inventory is incomplete or contains an unmapped path.'
-    : omitted.length && !covered
-      ? `Reviewer cap reached. Split the PR or have the repository owner cover ${omitted.join(', ')} and submit an approving review with this exact line: Squad coverage: ${omitted.join(', ')} ${coverageKey}`
-      : '';
+    : '';
   return { roles, omitted, blocked, reasons };
 }
 

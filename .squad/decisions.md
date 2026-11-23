@@ -585,3 +585,15 @@
   budget; bot removals do not.
 - The owner sets `SQUAD_REVIEW_ROUTING=enforce` (a repository variable) after
   merge. This decision authorizes only this scope; no ruleset change is implied.
+
+### 2026-11-23: Automatic three-agent PR review limit
+
+- Supersede the 2026-11-18 overflow gate. Every PR not using `review:none`
+  automatically routes to Verifier plus at most two applicable specialists in
+  both observation and enforcement modes.
+- Resolve overflow by the existing deterministic priority: Security, DevOps,
+  then Architect. An omitted specialist and that role's current-head check do
+  not block readiness; no owner `Squad coverage:` approval is required.
+- Enforcement still blocks incomplete or unmapped changed-file inventories.
+  CI, trusted human blockers, drafts, `needs:human`, and `review:none` remain
+  unchanged.
