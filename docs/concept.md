@@ -154,6 +154,12 @@ embeddings or synchronization jobs are required in release 1.
 
 ## Planning and follow-through
 
+Monthly, quarterly, and yearly lists extend the planning horizon without
+replacing weekly planning. People create and navigate these calendar periods
+and start reviews themselves; no scheduler or automatic rollover changes their
+journal. Reviews use the existing explicit approval flow, not AI-drafted
+longer-period reviews.
+
 **Agreed assistant authority:** direct execution for explicit individual edits;
 approval before applying ceremony-generated proposals, bulk moves, or destructive
 changes. Capture should stay frictionless; AI must not silently reorganize data.

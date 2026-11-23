@@ -4,7 +4,10 @@ public enum JournalListKind
 {
     FutureLog,
     Weekly,
-    Custom
+    Custom,
+    Monthly,
+    Quarterly,
+    Yearly
 }
 
 public enum JournalListState
@@ -20,13 +23,15 @@ public sealed class JournalList
         string name,
         JournalListKind kind,
         string? goalText,
-        IsoWeekKey? weekKey)
+        IsoWeekKey? weekKey,
+        JournalPeriodKey? periodKey)
     {
         Id = id;
         Name = name;
         Kind = kind;
         GoalText = goalText;
         WeekKey = weekKey;
+        PeriodKey = periodKey;
     }
 
     public Guid Id { get; }
@@ -41,6 +46,8 @@ public sealed class JournalList
 
     public IsoWeekKey? WeekKey { get; }
 
+    public JournalPeriodKey? PeriodKey { get; }
+
     public long Version { get; private set; }
 
     internal static JournalList Create(
@@ -48,7 +55,8 @@ public sealed class JournalList
         string name,
         JournalListKind kind,
         string? goalText,
-        IsoWeekKey? weekKey)
+        IsoWeekKey? weekKey,
+        JournalPeriodKey? periodKey = null)
     {
         if (!Enum.IsDefined(kind))
         {
@@ -65,21 +73,30 @@ public sealed class JournalList
             throw DomainLimits.Invalid("A valid ISO week key is required.");
         }
 
+        if (kind is JournalListKind.Monthly or JournalListKind.Quarterly or JournalListKind.Yearly)
+        {
+            if (periodKey is not { IsValid: true } period || period.Kind != kind)
+                throw DomainLimits.Invalid("A matching calendar period key is required.");
+        }
+        else if (periodKey is not null)
+            throw DomainLimits.Invalid("Only calendar period lists can have a calendar period key.");
+
         return new JournalList(
             id,
             DomainLimits.RequiredText(name, DomainLimits.ListName, "List name"),
             kind,
             DomainLimits.OptionalText(goalText, DomainLimits.GoalText, "Goal text"),
-            weekKey);
+            weekKey,
+            periodKey);
     }
 
     internal static JournalList FromSnapshot(JournalListSnapshot snapshot)
     {
-        var list = new JournalList(snapshot.Id, snapshot.Name, snapshot.Kind, snapshot.GoalText, snapshot.WeekKey)
-        {
-            State = snapshot.State,
-            Version = snapshot.Version
-        };
+        // Validate keys and text without changing verbatim legacy snapshot values.
+        _ = Create(snapshot.Id, snapshot.Name, snapshot.Kind, snapshot.GoalText, snapshot.WeekKey, snapshot.PeriodKey);
+        var list = new JournalList(snapshot.Id, snapshot.Name, snapshot.Kind, snapshot.GoalText, snapshot.WeekKey, snapshot.PeriodKey);
+        list.State = snapshot.State;
+        list.Version = snapshot.Version;
         return list;
     }
 

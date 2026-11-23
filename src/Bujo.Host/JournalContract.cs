@@ -76,4 +76,18 @@ internal static class JournalContract
             return DomainResult<IsoWeekKey?>.Failure(exception.ToError());
         }
     }
+
+    public static DomainResult<JournalPeriodKey?> ParseJournalPeriod(JournalEndpoints.JournalPeriodKeyRequest? request)
+    {
+        if (request is null) return DomainResult<JournalPeriodKey?>.Success(null);
+        try
+        {
+            return DomainResult<JournalPeriodKey?>.Success(new JournalPeriodKey(
+                request.Kind, request.Year, request.Month, request.Quarter));
+        }
+        catch (DomainException exception)
+        {
+            return DomainResult<JournalPeriodKey?>.Failure(exception.ToError());
+        }
+    }
 }

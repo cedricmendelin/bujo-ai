@@ -15,7 +15,8 @@ so changing your mind doesn't erase the original plan. The web app and a
    **Capture item**. Task is the default. Add a description or tags if useful.
    With no destination or planned period selected, the item goes to the **Future
    Log**, unplanned.
-3. Open **Lists → Future Log** to find it again, or create a custom or weekly list
+3. Open **Lists → Future Log** to find it again, or create a custom, weekly,
+   monthly, quarterly, or yearly list
    in **Lists**. Open an item to edit its details, set a planned period, or move
    it. Use **Complete item** for work that's done and **Abandon item** when you no
    longer intend to do it. Open an item from an old list to see its current
@@ -23,6 +24,14 @@ so changing your mind doesn't erase the original plan. The web app and a
    completed, abandoned, or reopened.
 
 ## Make a daily and weekly habit
+
+On **Lists**, use the calendar period selector and Previous, Current, and Next
+to see all lists for a month, quarter, or year, along with its dates. Current
+uses your browser's time zone. Create a list by selecting its kind and entering
+the calendar year and, when needed, month or quarter. List names must be unique,
+but several lists can share a period. Open **Start review** beside an open list
+or on its detail page for planning or retrospective review. Nothing rolls over
+automatically, and there is no schedule or AI-drafted period review.
 
 - **Today** resurfaces unfinished task plans, including overdue items, today's items,
   and this week's plans. **Upcoming** lets you look across a future date range.

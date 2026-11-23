@@ -12,6 +12,27 @@ namespace Bujo.Integration.Tests;
 public sealed class ItemTypePersistenceTests
 {
     [Fact]
+    public void CalendarKeyMigrationIsAdditiveAndExportContainsKeys()
+    {
+        var options = new DbContextOptionsBuilder<JournalDbContext>().UseSqlServer().Options;
+        using var context = new JournalDbContext(options);
+        var script = context.GetService<IMigrator>().GenerateScript(
+            "20261119215100_AddKnowledgeFullText", "20261121220000_AddJournalPeriodKeys");
+        Assert.Contains("ALTER TABLE [JournalLists] ADD [PeriodYear] int NULL", script);
+        Assert.Contains("ALTER TABLE [JournalLists] ADD [PeriodMonth] int NULL", script);
+        Assert.Contains("ALTER TABLE [JournalLists] ADD [PeriodQuarter] int NULL", script);
+        var repository = InMemoryJournalRepository.CreateWithFutureLog(Guid.NewGuid());
+        var key = new JournalPeriodKey(JournalListKind.Quarterly, 2026, quarter: 4);
+        var created = repository.CreateList(new CreateListCommand("Q4", JournalListKind.Quarterly, PeriodKey: key));
+        Assert.True(created.IsSuccess);
+        var export = new JournalExport(TimeProvider.System).Create(repository.GetSnapshot());
+        var row = export.Lists.Single(item => item.Id == created.Value!.Id);
+        Assert.Equal(2026, row.PeriodYear);
+        Assert.Equal(4, row.PeriodQuarter);
+        Assert.Null(row.PeriodMonth);
+    }
+
+    [Fact]
     public void SnapshotBackupAndExportPreserveThoughtAndReadLegacyPayloadsAsTask()
     {
         var futureId = Guid.NewGuid();

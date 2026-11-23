@@ -11,6 +11,74 @@ namespace Bujo.E2E.Tests;
 public sealed class JournalBrowserTests(BrowserFixture fixture) : IClassFixture<BrowserFixture>
 {
     [Fact]
+    public async Task PeriodNavigationReadFailureShowsSafeErrorAndRecovers()
+    {
+        await using var context = await fixture.CreateContextAsync();
+        var page = await context.NewPageAsync();
+        try
+        {
+            await page.GotoAsync("/lists");
+            await Expect(Button(page, "Previous")).ToBeEnabledAsync();
+            fixture.Journal.FailReads = true;
+            await Button(page, "Previous").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Could not load the journal. Refresh to try again.");
+            await Expect(page.GetByText("Synthetic private journal data must not be logged.")).ToHaveCountAsync(0);
+            await Expect(Button(page, "Next")).ToBeDisabledAsync();
+
+            fixture.Journal.FailReads = false;
+            await Button(page, "Current").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
+            await Expect(Button(page, "Previous")).ToBeEnabledAsync();
+            fixture.Journal.FailReads = true;
+            await page.GetByLabel("Period type").SelectOptionAsync("Yearly");
+            await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Could not load the journal.");
+            fixture.Journal.FailReads = false;
+            await Button(page, "Current").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
+            await Expect(Button(page, "Next")).ToBeEnabledAsync();
+            fixture.Journal.FailReads = true;
+            await Button(page, "Next").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Could not load the journal.");
+            await Button(page, "Current").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Could not load the journal.");
+            fixture.Journal.FailReads = false;
+            await Button(page, "Current").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0);
+            await Expect(Button(page, "Next")).ToBeEnabledAsync();
+        }
+        finally { fixture.Journal.FailReads = false; }
+    }
+
+    [Fact]
+    public async Task CalendarListsCanBeCreatedNavigatedAndReviewed()
+    {
+        var previous = fixture.Clock.UtcNow;
+        fixture.Clock.UtcNow = new DateTimeOffset(2026, 12, 31, 23, 30, 0, TimeSpan.Zero);
+        try
+        {
+            await using var context = await fixture.CreateContextAsync();
+            var page = await context.NewPageAsync();
+            await page.GotoAsync("/lists");
+            await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "January 2027" })).ToBeVisibleAsync();
+            await page.GetByLabel("List type").SelectOptionAsync("Monthly");
+            await page.GetByLabel("List name").FillAsync("Calendar browser list");
+            await page.GetByLabel("Calendar year").FillAsync("2027");
+            await page.GetByLabel("Month", new() { Exact = true }).FillAsync("1");
+            await Button(page, "Create list").ClickAsync();
+            await Expect(page.GetByText("List created.")).ToBeVisibleAsync();
+            var section = page.Locator("section").Filter(new() { Has = page.GetByRole(AriaRole.Heading, new() { Name = "Calendar periods" }) });
+            await Expect(section).ToContainTextAsync("2027-01-01 – 2027-01-31");
+            await Expect(section).ToContainTextAsync("Calendar browser list");
+            await Button(page, "Previous").ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "December 2026" })).ToBeVisibleAsync();
+            await Button(page, "Next").ClickAsync();
+            await section.GetByRole(AriaRole.Link, new() { Name = "Start review" }).ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Review · Calendar browser list" })).ToBeVisibleAsync();
+        }
+        finally { fixture.Clock.UtcNow = previous; }
+    }
+
+    [Fact]
     public async Task ChatApprovalCardShowsExactChangesBeforeApplyingThem()
     {
         var journal = new JournalApplicationService(new JournalService(fixture.Journal));

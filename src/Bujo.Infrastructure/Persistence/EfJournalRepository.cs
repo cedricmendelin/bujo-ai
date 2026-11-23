@@ -289,7 +289,10 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
             item.State,
             item.GoalText,
             item.WeekYear is { } year && item.WeekNumber is { } week ? new IsoWeekKey(year, week) : null,
-            item.Version)).ToArray();
+            item.Version,
+            item.PeriodYear is { } periodYear
+                ? new JournalPeriodKey(item.Kind, periodYear, item.PeriodMonth, item.PeriodQuarter)
+                : null)).ToArray();
         var occurrencesQuery = tracked ? context.Occurrences : context.Occurrences.AsNoTracking();
         var occurrenceEntities = occurrencesQuery
             .OrderBy(item => item.Sequence)
@@ -362,6 +365,9 @@ public sealed class EfJournalRepository(IDbContextFactory<JournalDbContext> cont
             entity.GoalText = list.GoalText;
             entity.WeekYear = list.WeekKey?.Year;
             entity.WeekNumber = list.WeekKey?.Week;
+            entity.PeriodYear = list.PeriodKey?.Year;
+            entity.PeriodMonth = list.PeriodKey?.Month;
+            entity.PeriodQuarter = list.PeriodKey?.Quarter;
             entity.Version = list.Version;
         }
 

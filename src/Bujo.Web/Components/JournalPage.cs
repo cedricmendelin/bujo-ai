@@ -71,6 +71,19 @@ public abstract class JournalPage : ComponentBase, IDisposable
 
     protected void SetError(string message) => Error = message;
 
+    protected void ReadFromEvent(Action read)
+    {
+        if (Busy || !Ready) return;
+        Error = Confirmation = null;
+        try { read(); }
+        catch (DomainException ex) { Error = ex.Message; }
+        catch (Exception ex)
+        {
+            Logger.LogWarning("Journal read failed ({ExceptionType})", ex.GetType().Name);
+            Error = "Could not load the journal. Refresh to try again.";
+        }
+    }
+
     [JSInvokable]
     public bool CheckConnection() => true;
 

@@ -1,7 +1,7 @@
 @page "/lists"
 @attribute [Authorize(Policy = "ApprovedUi")]
 @rendermode InteractiveServer
-@inherits JournalPage
+@inherits PlanningPage
 
 <PageTitle>Lists · Bujo-AI</PageTitle>
 <div data-requires-circuit>
@@ -10,6 +10,36 @@
     <JournalFeedback Error="@Error" Confirmation="@Confirmation" Ready="@Ready" Busy="@Busy" Refresh="RefreshAsync" />
     @if (Ready)
     {
+        <section aria-labelledby="period-navigation">
+            <h2 id="period-navigation">Calendar periods</h2>
+            <label for="period-kind">Period type</label>
+            <select id="period-kind" @bind="_navigationKind" @bind:after="ShowCurrentFromEvent">
+                <option value="@JournalListKind.Monthly">Monthly</option>
+                <option value="@JournalListKind.Quarterly">Quarterly</option>
+                <option value="@JournalListKind.Yearly">Yearly</option>
+            </select>
+            <div class="journal-actions">
+                <button type="button" disabled="@(_period?.Key.Previous() is null)" @onclick="() => NavigateFromEvent(false)">Previous</button>
+                <button type="button" @onclick="ShowCurrentFromEvent">Current</button>
+                <button type="button" disabled="@(_period?.Key.Next() is null)" @onclick="() => NavigateFromEvent(true)">Next</button>
+            </div>
+            @if (_period is { } period)
+            {
+                <h3>@period.Label</h3>
+                <p>@period.Range.Start.ToString("yyyy-MM-dd") – @period.Range.End.ToString("yyyy-MM-dd")</p>
+                @if (period.Lists.Count == 0) { <p>No lists in this period.</p> }
+                <ul>
+                    @foreach (var list in period.Lists)
+                    {
+                        <li><a href="/lists/@list.Id">@list.Name</a> · @list.State
+                            @if (list.State == JournalListState.Open) { <a href="/lists/@list.Id/review">Start review</a> }
+                        </li>
+                    }
+                </ul>
+            }
+            else { <p>Period unavailable. Check the message above and refresh or try again.</p> }
+        </section>
+        <h2>All lists</h2>
         <ul class="journal-rows" role="list">
             @foreach (var list in _lists)
             {
@@ -18,6 +48,10 @@
                     @if (list.WeekKey is { } week)
                     {
                         <div class="journal-meta">Week number @week.Week · Week year @week.Year</div>
+                    }
+                    @if (list.PeriodKey is { } periodKey)
+                    {
+                        <div class="journal-meta">@periodKey.Label · @periodKey.Range.Start.ToString("yyyy-MM-dd") – @periodKey.Range.End.ToString("yyyy-MM-dd")</div>
                     }
                     <div class="journal-meta">@list.State</div>
                     @if (list.GoalText is { } goal)
@@ -36,6 +70,9 @@
                 <select id="list-kind" @bind="_kind">
                     <option value="@JournalListKind.Custom">Custom</option>
                     <option value="@JournalListKind.Weekly">Weekly</option>
+                    <option value="@JournalListKind.Monthly">Monthly</option>
+                    <option value="@JournalListKind.Quarterly">Quarterly</option>
+                    <option value="@JournalListKind.Yearly">Yearly</option>
                 </select>
                 @if (_kind == JournalListKind.Weekly)
                 {
@@ -43,6 +80,21 @@
                     <input id="week-year" type="number" min="1" max="9999" required @bind="_year" @bind:event="oninput" />
                     <label for="week-number">Week number</label>
                     <input id="week-number" type="number" min="1" max="53" required @bind="_week" @bind:event="oninput" />
+                }
+                @if (_kind is JournalListKind.Monthly or JournalListKind.Quarterly or JournalListKind.Yearly)
+                {
+                    <label for="period-year">Calendar year</label>
+                    <input id="period-year" type="number" min="1" max="9999" required @bind="_year" />
+                    @if (_kind == JournalListKind.Monthly)
+                    {
+                        <label for="period-month">Month</label>
+                        <input id="period-month" type="number" min="1" max="12" required @bind="_month" />
+                    }
+                    @if (_kind == JournalListKind.Quarterly)
+                    {
+                        <label for="period-quarter">Quarter</label>
+                        <input id="period-quarter" type="number" min="1" max="4" required @bind="_quarter" />
+                    }
                 }
                 <label for="new-goal">Goal (optional)</label>
                 <textarea id="new-goal" maxlength="@DomainLimits.GoalText" @bind="_goal" @bind:event="oninput"></textarea>
@@ -59,18 +111,48 @@
     private string? _goal;
     private int? _year;
     private int? _week;
+    private int? _month;
+    private int? _quarter;
+    private JournalListKind _navigationKind = JournalListKind.Monthly;
+    private JournalPeriodNavigation? _period;
 
-    protected override void Read() => _lists = Journal.GetSnapshot().Lists
-        .OrderBy(list => list.Kind != JournalListKind.FutureLog).ThenBy(list => list.Name).ToArray();
+    protected override void Read()
+    {
+        _lists = Journal.GetSnapshot().Lists
+            .OrderBy(list => list.Kind != JournalListKind.FutureLog).ThenBy(list => list.Name).ToArray();
+        if (_period is null) ShowCurrent();
+        else SetPeriod(Journal.NavigatePeriod(_period.Key.Kind, _period.Key.Year, _period.Key.Month, _period.Key.Quarter, "selected", Zone));
+    }
+
+    private void ShowCurrent() => SetPeriod(Journal.NavigatePeriod(_navigationKind, null, null, null, "current", Zone));
+    private void ShowCurrentFromEvent() => ReadFromEvent(() =>
+    {
+        _period = null;
+        ShowCurrent();
+    });
+    private void NavigateFromEvent(bool next) => ReadFromEvent(() =>
+    {
+        if (_period is not { } period) return;
+        _period = null;
+        SetPeriod(Journal.NavigatePeriod(period.Key.Kind, period.Key.Year, period.Key.Month, period.Key.Quarter, next ? "next" : "previous", Zone));
+    });
+    private void SetPeriod(DomainResult<JournalPeriodNavigation> result)
+    {
+        if (result.IsSuccess) _period = result.Value;
+        else { _period = null; SetError(result.Error!.Message); }
+    }
 
     private Task CreateAsync() => SaveAsync(
         () => Journal.CreateList(_name, _kind, _goal,
-            _kind == JournalListKind.Weekly ? new IsoWeekKey(_year ?? 0, _week ?? 0) : null),
+            _kind == JournalListKind.Weekly ? new IsoWeekKey(_year ?? 0, _week ?? 0) : null,
+            _kind is JournalListKind.Monthly or JournalListKind.Quarterly or JournalListKind.Yearly
+                ? new JournalPeriodKey(_kind, _year ?? 0, _kind == JournalListKind.Monthly ? _month : null,
+                    _kind == JournalListKind.Quarterly ? _quarter : null) : null),
         _ =>
         {
             _name = "";
             _goal = null;
-            _year = _week = null;
+            _year = _week = _month = _quarter = null;
             _kind = JournalListKind.Custom;
             return "List created.";
         });

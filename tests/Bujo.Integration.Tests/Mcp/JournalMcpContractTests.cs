@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Claims;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -31,6 +33,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
             ["GET /api/daily-start"] = ["get_daily_start"],
             ["GET /api/planning/upcoming"] = ["get_upcoming"],
             ["POST /api/lists"] = ["create_list"],
+            ["GET /api/lists/period"] = ["navigate_list_period"],
             ["POST /api/items"] = ["capture_item"],
             ["POST /api/items/{itemId:guid}/move"] = ["move_item"],
             ["POST /api/occurrences/{occurrenceId:guid}/transition"] =
@@ -70,6 +73,7 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         "find_lists",
         "capture_item",
         "create_list",
+        "navigate_list_period",
         "resolve_occurrence",
         "edit_item",
         "set_planned_period",
@@ -105,6 +109,73 @@ public sealed class JournalMcpContractTests : IClassFixture<JournalApiFactory>
         _factory = factory;
         _factory.ShareInMemoryRepository = true;
         _factory.FixedUtcNow = new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void HostRegistersNoBujoHostedServiceForAutomaticPeriodRollover()
+    {
+        using var client = _factory.CreateClient();
+        var hosted = _factory.Services.GetServices<IHostedService>();
+        Assert.DoesNotContain(hosted, service => service.GetType().Namespace?.StartsWith("Bujo.", StringComparison.Ordinal) == true);
+    }
+
+    [Theory]
+    [InlineData(JournalListKind.Monthly, 12, 0, "December 2026")]
+    [InlineData(JournalListKind.Quarterly, 0, 4, "Q4 2026")]
+    [InlineData(JournalListKind.Yearly, 0, 0, "2026")]
+    public async Task CalendarCreateAndNavigationAgreeAcrossApiAndMcp(JournalListKind kind, int month, int quarter, string label)
+    {
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Test allow");
+        await using var transport = new HttpClientTransport(
+            new HttpClientTransportOptions { Endpoint = new Uri("http://localhost/mcp"), TransportMode = HttpTransportMode.StreamableHttp },
+            client, NullLoggerFactory.Instance);
+        await using var mcp = await McpClient.CreateAsync(transport);
+        var key = new { kind, year = 2026, month = month == 0 ? (int?)null : month, quarter = quarter == 0 ? (int?)null : quarter };
+        var name = $"Period {Guid.NewGuid()}";
+        var created = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = name, ["kind"] = kind, ["periodKey"] = key
+        });
+        Assert.False(created.IsError);
+        var id = created.StructuredContent!.Value.GetProperty("id").GetGuid();
+        using var apiCreate = await client.PostAsJsonAsync("/api/lists", new
+        {
+            name = name + " API", kind, periodKey = key
+        });
+        Assert.Equal(HttpStatusCode.OK, apiCreate.StatusCode);
+        using var apiBody = JsonDocument.Parse(await apiCreate.Content.ReadAsStringAsync());
+        var apiId = apiBody.RootElement.GetProperty("id").GetGuid();
+        var query = $"/api/lists/period?kind={kind}&year=2026" +
+                    (month == 0 ? "" : $"&month={month}") + (quarter == 0 ? "" : $"&quarter={quarter}");
+        using var response = await client.GetAsync(query);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(label, json.RootElement.GetProperty("label").GetString());
+        Assert.Contains(json.RootElement.GetProperty("lists").EnumerateArray(), item => item.GetProperty("id").GetGuid() == id);
+        Assert.Contains(json.RootElement.GetProperty("lists").EnumerateArray(), item => item.GetProperty("id").GetGuid() == apiId);
+        var navigation = await mcp.CallToolAsync("navigate_list_period", new Dictionary<string, object?>
+        {
+            ["kind"] = kind, ["year"] = 2026, ["month"] = month == 0 ? null : month,
+            ["quarter"] = quarter == 0 ? null : quarter, ["direction"] = "selected"
+        });
+        Assert.False(navigation.IsError);
+        Assert.Equal(label, navigation.StructuredContent!.Value.GetProperty("label").GetString());
+        Assert.Contains(navigation.StructuredContent.Value.GetProperty("lists").EnumerateArray(),
+            item => item.GetProperty("id").GetGuid() == id);
+        Assert.Contains(navigation.StructuredContent.Value.GetProperty("lists").EnumerateArray(),
+            item => item.GetProperty("id").GetGuid() == apiId);
+        var invalid = await mcp.CallToolAsync("create_list", new Dictionary<string, object?>
+        {
+            ["name"] = name + " invalid", ["kind"] = JournalListKind.Custom, ["periodKey"] = key
+        });
+        Assert.True(invalid.IsError);
+        Assert.Equal("InvalidInput", GetErrorCode(invalid));
+        using var bad = await client.PostAsJsonAsync("/api/lists", new
+        {
+            name = name + " invalid api", kind = JournalListKind.Custom, periodKey = key
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
     }
 
     [Fact]

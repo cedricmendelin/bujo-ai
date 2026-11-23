@@ -14,13 +14,18 @@ Knowledge entries have a separate contract and are not journal occurrences.
   description, customizable tags, a planned period, and a reference to its
   current occurrence. It has no global status. Tags are free-form, normalized,
   and unique per item without regard to case. Domain inputs have length limits.
-- A **list** has an identity, name, `FutureLog`, `Weekly`, or `Custom` kind,
-  `Open` or `Closed` state, optional goal text, and an optional calendar week key
-  for weekly lists. There is exactly one ongoing Future Log; it cannot be closed.
+- A **list** has an identity, name, `FutureLog`, `Weekly`, `Custom`, `Monthly`,
+  `Quarterly`, or `Yearly` kind, `Open` or `Closed` state, optional goal text,
+  and an optional ISO week key for weekly lists. Calendar lists require a
+  matching year/month, year/quarter, or year key. There is exactly one ongoing
+  Future Log; it cannot be closed.
   List names are globally unique without regard to case. Goals are list text,
   not a goal hierarchy.
-- Multiple weekly lists may share an ISO year/week key; uniqueness is by list
-  name, not by week key.
+- Multiple lists may share a week or calendar period key; uniqueness is by list
+  name, not by period key. Months and years use inclusive calendar boundaries;
+  quarters are Jan–Mar, Apr–Jun, Jul–Sep, and Oct–Dec. ISO week-years are
+  independent of calendar years. Navigation and reviews are manual; they do not
+  create, move, or reschedule items.
 - An **occurrence** is one visit by an item to a list. It has its own identity,
   local state, sequence number, UTC timestamps, and previous/next occurrence
   links for moves. Only an `Open` occurrence is active. The current occurrence
@@ -36,6 +41,10 @@ deletes and reinserts items without their type, defaulting Thoughts to Tasks.
 Do not use the older application's restore or other writes that replace Thought
 rows after rollback; retain a type-aware backup and restore with a type-aware
 version.
+The nullable calendar-key columns are additive, but older binaries do not
+understand the new list kinds. Before rollback, retain a period-aware whole
+journal backup; do not restore or rewrite period-list data with an older binary.
+Restore it using a period-aware version.
 Unless a planned period is supplied, the item is `Unplanned`. Item text and
 tags remain canonical: historical views show their current values, not snapshots.
 Auditing text edits is outside the MVP.
