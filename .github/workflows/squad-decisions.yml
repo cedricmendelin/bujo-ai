@@ -38,12 +38,15 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch)
       || (github.event.issue.pull_request
-        && (startsWith(github.event.comment.body, '## Scope change request')
+        && (github.event.action == 'deleted'
+          || startsWith(github.event.comment.body, '## Scope change request')
           || startsWith(github.event.comment.body, '/approve-change ')
           || startsWith(github.event.comment.body, '/reject-change ')
           || contains(github.event.comment.body, '<!-- squad-decision:')
+          || contains(github.event.comment.body, '<!-- squad-request-record:')
           || startsWith(github.event.changes.body.from, '## Scope change request')
-          || contains(github.event.changes.body.from, '<!-- squad-decision:')))
+          || contains(github.event.changes.body.from, '<!-- squad-decision:')
+          || contains(github.event.changes.body.from, '<!-- squad-request-record:')))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

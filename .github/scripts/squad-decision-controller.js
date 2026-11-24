@@ -1,6 +1,72 @@
 'use strict';
 
-const { BOT, card, command, loadState, requestComment, teamsDecision } = require('./squad-decisions');
+const {
+  BOT, card, command, loadState, requestCandidate, requestComment, requestRecord,
+  requestRecordBody, teamsDecision,
+} = require('./squad-decisions');
+
+async function preserveRequests({ github, owner, repo, number, comments, event, action, previousBody }) {
+  const archived = new Set(comments.map(comment => requestRecord(comment, owner)).filter(Boolean).map(item => item.id));
+  const candidates = new Map();
+  const add = (comment, invalid) => {
+    if (!requestCandidate(comment, owner) || archived.has(comment.id)) return;
+    const body = requestRecordBody(comment, owner, invalid);
+    if (!body) return;
+    const id = Number(body.match(/^<!-- squad-request-record:([1-9]\d*):/)[1]);
+    if (!candidates.has(id)) candidates.set(id, body);
+  };
+  const eventRecord = action === 'deleted' && event ? requestRecord(event, owner) : null;
+  const previousRecord = previousBody && event ? requestRecord({ ...event, body: previousBody }, owner) : null;
+  if (eventRecord) add(eventRecord.archivedSource, eventRecord.invalid);
+  if (previousRecord) {
+    add(previousRecord.archivedSource, 'The audit record was edited; its original request remains blocked.');
+  }
+  if (event && action === 'created') add(event);
+  if (event && previousBody?.startsWith('## Scope change request\n')) {
+    add({ ...event, body: previousBody }, 'The source comment was edited before its original request could be archived.');
+  }
+  if (event && action === 'deleted') add(event);
+  for (const comment of comments) add(comment);
+  for (const body of candidates.values()) {
+    await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+  }
+}
+
+async function failClosedArchive({ github, agent, owner, repo, number, pr, event, defaultBranch, error }) {
+  const failures = [];
+  const attempt = async (name, operation) => {
+    try { await operation(); } catch (failure) { failures.push({ name, error: failure }); }
+  };
+  await attempt('disable auto-merge', async () => {
+    if (pr.auto_merge) {
+      await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', {
+        id: pr.node_id,
+      });
+    }
+  });
+  await attempt('apply needs:human', () => agent.rest.issues.addLabels({
+    owner, repo, issue_number: number, labels: ['needs:human'],
+  }));
+  const marker = `<!-- squad-request-archive-failure:${number}:${event.id} -->`;
+  await attempt('write recovery audit', async () => {
+    const history = await github.paginate(github.rest.issues.listComments, {
+      owner, repo, issue_number: number, per_page: 100,
+    });
+    if (!history.some(comment => comment.user?.login === BOT && comment.body?.startsWith(marker))) {
+      await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+        body: `${marker}\n@${owner} The result of preserving the deleted or edited scope request could not be confirmed, so no archive success or approval is inferred. Auto-merge was paused and this PR requires human attention. Do not remove \`needs:human\` or merge until the source request is archived and the blocked state is verified. Rerun this failed workflow after GitHub API access recovers; the archive and lifecycle reconciliation must both succeed.` });
+    }
+  });
+  await attempt('dispatch lifecycle reconciliation', () => agent.rest.actions.createWorkflowDispatch({
+    owner, repo, workflow_id: 'squad-pr-lifecycle.yml',
+    ref: defaultBranch,
+    inputs: { pr_number: String(number) },
+  }));
+  if (failures.length) {
+    throw new AggregateError([error, ...failures.map(failure => failure.error)],
+      `Could not archive the changed scope request; recovery failed in: ${failures.map(failure => failure.name).join(', ')}.`);
+  }
+}
 
 async function notify({ github, owner, repo, number, key, payload, env, fetchImpl = fetch }) {
   if (env.SQUAD_TEAMS_NOTIFICATIONS !== 'true') return;
@@ -53,7 +119,38 @@ async function handleDecision({ github, agent, context, core, env = process.env,
     return true;
   };
   let comments = await read();
+  const event = context.payload.comment;
+  const previousBody = context.payload.changes?.body?.from;
+  if (!dispatch) {
+    try {
+      await preserveRequests({
+        github, owner, repo, number, comments, event,
+        action: context.payload.action, previousBody,
+      });
+    } catch (error) {
+      const destructiveRequestChange = context.payload.action === 'deleted'
+        && (requestComment(event || {}, owner) || requestRecord(event || {}, owner))
+        || context.payload.action === 'edited' && previousBody?.startsWith('## Scope change request\n');
+      if (destructiveRequestChange) {
+        try {
+          await failClosedArchive({
+            github, agent, owner, repo, number, pr, event,
+            defaultBranch: context.payload.repository?.default_branch, error,
+          });
+        } catch (recoveryError) {
+          throw recoveryError;
+        }
+      }
+      throw error;
+    }
+    comments = await read();
+  }
   let state = await loadState({ github, owner, repo, pr, comments });
+  if (state.requests.some(item => item.status === 'unreadable') && pr.auto_merge) {
+    await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', {
+      id: pr.node_id,
+    });
+  }
   let choice;
   if (dispatch) {
     choice = teamsDecision({
@@ -62,14 +159,20 @@ async function handleDecision({ github, agent, context, core, env = process.env,
       enabled: env.SQUAD_TEAMS_APPROVALS, ...input,
     });
   } else {
-    const event = context.payload.comment;
     const live = comments.find(comment => comment.id === event?.id);
     if (context.payload.action === 'created' && live?.body === event.body) choice = command(live, owner);
-    const previousBody = context.payload.changes?.body?.from;
     if (!choice && !requestComment(event || {}, owner)
         && !requestComment({ ...event, body: previousBody }, owner)
+        && !requestRecord(event || {}, owner)
+        && !requestRecord({ ...event, body: previousBody }, owner)
+        && !comments.some(comment => requestRecord(comment, owner)?.id === event?.id)
         && !(event?.user?.login === BOT && event.user?.type === 'Bot'
           && [event.body, previousBody].some(body => body?.startsWith('<!-- squad-decision:')))) return;
+  }
+  if (choice?.decision === 'approve'
+      && state.requests.find(item => item.id === choice.request)?.status === 'unreadable') {
+    core.info(`Request ${choice.request} was not approved because its linked issue baseline could not be read.`);
+    choice = null;
   }
   if (choice) {
     const request = state.requests.find(item => item.id === choice.request);
@@ -100,11 +203,14 @@ async function handleDecision({ github, agent, context, core, env = process.env,
   state = await loadState({ github, owner, repo, pr, comments });
   if (state.blocked) {
     if (pr.auto_merge) await agent.graphql('mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}', { id: pr.node_id });
-    for (const request of state.requests.filter(item => ['invalid', 'expired', 'stale'].includes(item.status))) {
+    for (const request of state.requests.filter(item => ['invalid', 'expired', 'stale', 'unreadable'].includes(item.status))) {
       const marker = `<!-- squad-decision-recovery:${request.id}:${request.key}:${request.status} -->`;
       if (!comments.some(comment => comment.user?.login === BOT && comment.body?.startsWith(marker))) {
+        const recovery = request.status === 'unreadable'
+          ? 'The linked issue baseline could not be verified; restore API access or confirm the issue reference, then re-evaluate.'
+          : `Reject the preserved obsolete record with \`/reject-change ${request.id}\`, then post a new immutable request against the current linked approved baseline if still needed.`;
         await github.rest.issues.createComment({ owner, repo, issue_number: number,
-          body: `${marker}\n@${owner} Request ${request.id} is ${request.status}; it grants no scope and blocks merge. Reject the obsolete record with \`/reject-change ${request.id}\`, then post a new immutable request against the current linked approved baseline if still needed. Preserve original acceptance history and remove any unauthorized changes before proceeding.` });
+          body: `${marker}\n@${owner} Request ${request.id} is ${request.status}; it grants no scope and blocks merge. ${recovery} Preserve original acceptance history and remove any unauthorized changes before proceeding.` });
       }
     }
     for (const request of state.requests.filter(item => item.status === 'pending')) {
@@ -165,4 +271,4 @@ async function notifyBlocker({ github, owner, repo, number, env = process.env, f
     } }, env, fetchImpl });
 }
 
-module.exports = { handleDecision, notify, notifyBlocker, resumeAmendments };
+module.exports = { handleDecision, notify, notifyBlocker, preserveRequests, resumeAmendments };

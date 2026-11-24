@@ -278,6 +278,7 @@ jobs:
             const { isEligiblePermission, latestPlan, parsePlan } = require('./.github/scripts/plan-approval');
             const { loadState: loadDecisions } = require('./.github/scripts/squad-decisions');
             const { resumeAmendments } = require('./.github/scripts/squad-decision-controller');
+            const { admitRepairResume } = require('./.github/scripts/repair-resume');
             const { recoveryInput } = require('./.github/scripts/acceptance-recovery');
             const { readSplit, splitReviewPasses, validateSplit } = require('./.github/scripts/scope-split');
             const {
@@ -551,6 +552,13 @@ jobs:
                 ? (removedAt || new Date().toISOString())
                 : context.payload.pull_request?.updated_at;
               let comments = await getComments(number);
+              let scopeDecisions = await loadDecisions({ github, owner, repo, pr, comments });
+              if (scopeDecisions.blocked) {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                  reason: 'An explicit scope decision is pending, stale, expired, invalid or unreadable. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
+                return;
+              }
 
               // A new cloud session is not ready until the newest Copilot workflow
               // run succeeds. Native Watch and fix remains the CI/conflict owner.
@@ -564,18 +572,37 @@ jobs:
                   await setReadiness(pr, sha, { status: 'in_progress', reason: 'Finish the active cloud session before resuming repairs.' });
                   return;
                 }
-                const marker = `<!-- squad-repair-resume:${context.runId} -->`;
-                if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
-                  await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-                    body: `${marker}\n@${actor} resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
-                  if (pr.labels.some(label => label.name === 'needs:human')) {
-                    await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
+                const admitted = await admitRepairResume({
+                  loadScope: async () => loadDecisions({ github, owner, repo, pr, comments: await getComments(number) }),
+                  onBlocked: async () => {
+                    await pauseMerge(pr);
+                    await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                      reason: 'An explicit scope decision is pending, stale, expired, invalid or unreadable. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
+                  },
+                  resume: async () => {
+                    comments = await getComments(number);
+                    const latestScope = await loadDecisions({ github, owner, repo, pr, comments });
+                    if (latestScope.blocked) {
+                      await pauseMerge(pr);
+                      await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                        reason: 'An explicit scope decision is pending, stale, expired, invalid or unreadable. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
+                      return false;
+                    }
+                    const marker = `<!-- squad-repair-resume:${context.runId} -->`;
+                    if (!comments.some(comment => isControllerComment(comment, owner) && (comment.body || '').includes(marker))) {
+                      await agent.rest.issues.createComment({ owner, repo, issue_number: number,
+                        body: `${marker}\n@${actor} resumed repairs after inspecting the pause. Previous attempts remain in the audit history; a new bounded repair episode begins. Scope, CI, and human review requirements are unchanged.` });
+                      if (pr.labels.some(label => label.name === 'needs:human')) {
+                        await agent.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'needs:human' });
+                      }
+                    }
+                    return true;
                   }
-                }
+                });
+                if (!admitted) return;
                 comments = await getComments(number);
               }
-              if (cloudPr && session.state === 'ok' && pr.draft) await ensureReady(pr);
-              else if (cloudPr && session.state !== 'ok') {
+              if (cloudPr && session.state !== 'ok') {
                 const marker = comments.some(comment => isControllerComment(comment, owner)
                   && (comment.body || '').includes('<!-- squad-pr-lifecycle:session-wait -->'));
                 if (pr.auto_merge) await pauseMerge(pr);
@@ -589,14 +616,25 @@ jobs:
                 await pauseMerge(pr);
                 return core.info(`#${number}: head changed; wait for its lifecycle event.`);
               }
-              const nowLabels = pr.labels.map(label => label.name);
-              const scopeDecisions = await loadDecisions({ github, owner, repo, pr, comments: await getComments(number) });
+              scopeDecisions = await loadDecisions({ github, owner, repo, pr, comments: await getComments(number) });
               if (scopeDecisions.blocked) {
                 await pauseMerge(pr);
                 await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
-                  reason: 'An explicit scope decision is pending, stale, expired or invalid. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
+                  reason: 'An explicit scope decision is pending, stale, expired, invalid or unreadable. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
                 return;
               }
+              // Scope admission must precede any draft-to-ready transition. A
+              // pending or unreadable baseline is a stop, not an invitation to
+              // begin CI/reviews or continue the cloud delivery.
+              if (cloudPr && session.state === 'ok' && pr.draft) {
+                await ensureReady(pr);
+                ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number }));
+                if (pr.head.sha !== sha) {
+                  await pauseMerge(pr);
+                  return core.info(`#${number}: head changed while marking ready; wait for its lifecycle event.`);
+                }
+              }
+              const nowLabels = pr.labels.map(label => label.name);
               if (nowLabels.includes('needs:human')) {
                 await pauseMerge(pr);
                 const pending = await setReadiness(pr, sha, readiness({

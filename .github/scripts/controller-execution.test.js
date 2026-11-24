@@ -283,7 +283,7 @@ test('pending amendments stop actual readiness and Watch and fix; a production g
     const state = fixture();
     scopeRequest(state);
     state.pr.auto_merge = { merge_method: 'squash' };
-    if (mutate) state.mutateSource = code => code.replace('if (scopeDecisions.blocked)', 'if (false)');
+    if (mutate) state.mutateSource = code => code.replaceAll('if (scopeDecisions.blocked)', 'if (false)');
     const result = await execute(state);
     assert.equal(enables(result).length, 0);
     assert.match(readinessFrom(state).output.summary, /explicit scope decision/);
@@ -292,6 +292,51 @@ test('pending amendments stop actual readiness and Watch and fix; a production g
   };
   await verify(false);
   await assert.rejects(verify(true), /explicit scope decision/);
+});
+
+test('pending scope blocks draft readiness and explicit repair-resume side effects', async () => {
+  const state = fixture();
+  scopeRequest(state);
+  state.pr.draft = true;
+  state.pr.head.ref = 'copilot/work';
+  state.pr.labels = [{ name: 'needs:human' }];
+  state.context.eventName = 'workflow_dispatch';
+  state.context.payload = {
+    action: 'workflow_dispatch',
+    inputs: { pr_number: '81', resume_repairs: 'true' },
+    repository: { default_branch: 'main', owner: { login: owner } },
+    sender: { login: owner, type: 'User' },
+  };
+
+  const result = await execute(state);
+  assert.equal(state.pr.draft, true, 'the scope gate must precede marking a draft ready');
+  assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true,
+    'a blocked scope cannot clear an unrelated human pause');
+  assert.equal(result.calls.some(call => call.name === 'mutation'
+    && call.query.includes('markPullRequestReadyForReview')), false);
+  assert.equal(result.calls.some(call => call.name === 'agentRemoveLabel'), false);
+  assert.equal(result.calls.some(call => call.name === 'dispatch'), false,
+    'CI and reviewers cannot be dispatched before scope admission');
+  assert.match(readinessFrom(state).output.summary, /explicit scope decision/);
+});
+
+test('unreadable issue baseline fails closed before readiness or CI/review dispatch', async () => {
+  const state = fixture();
+  scopeRequest(state);
+  state.pr.draft = true;
+  state.pr.head.ref = 'copilot/work';
+  state.pr.auto_merge = { merge_method: 'squash' };
+  state.fail = 'issue';
+
+  const result = await execute(state);
+  assert.equal(state.pr.draft, true);
+  assert.equal(state.pr.auto_merge, null, 'an unreadable baseline pauses existing auto-merge');
+  assert.equal(result.calls.some(call => call.name === 'mutation'
+    && call.query.includes('markPullRequestReadyForReview')), false);
+  assert.equal(result.calls.some(call => call.name === 'dispatch'), false);
+  assert.equal(result.calls.some(call => call.name === 'agentRequest'), false,
+    'an unreadable baseline cannot continue delivery or enroll Watch and fix');
+  assert.match(readinessFrom(state).output.summary, /explicit scope decision/);
 });
 
 test('accepted amendment reaches review evidence and invalidates old current-head reviews', async () => {
@@ -1247,6 +1292,30 @@ test('explicit repair resume rejects ineligible actors and active cloud sessions
     }
     assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true);
   }
+});
+
+test('a request arriving in the resume callback comment fetch preserves the human pause', async () => {
+  const state = fixture();
+  const request = scopeRequest(state);
+  state.comments.splice(state.comments.indexOf(request), 1);
+  cloud(state);
+  state.pr.labels.push({ name: 'needs:human' });
+  state.context.eventName = 'workflow_dispatch';
+  state.context.payload.inputs = { pr_number: '81', resume_repairs: true };
+  let commentReads = 0;
+  state.before = async (name, args) => {
+    if (name === 'comments' && args.issue_number === 81 && ++commentReads === 3) state.comments.push(request);
+  };
+
+  const result = await execute(state);
+  assert.equal(state.pr.labels.some(label => label.name === 'needs:human'), true,
+    'the pause is not cleared after the callback sees a newly arrived request');
+  assert.equal(result.calls.some(call => call.name === 'agentRemoveLabel'), false);
+  assert.equal(commentsFrom(result).some(body => body.includes('squad-repair-resume:')), false,
+    'no resume marker is written for the late-blocked admission');
+  assert.equal(readinessFrom(state).conclusion, 'failure');
+  assert.match(readinessFrom(state).output.summary, /explicit scope decision/);
+  assert.equal(commentReads, 3, 'the request arrived in the actual production callback fetch');
 });
 
 function continuationFixture() {

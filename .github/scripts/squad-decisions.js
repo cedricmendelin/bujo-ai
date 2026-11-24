@@ -5,14 +5,19 @@ const { latestPlan } = require('./plan-approval');
 
 const REQUEST = '## Scope change request';
 const BOT = 'github-actions[bot]';
+const REQUEST_RECORD = 'squad-request-record';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const unchanged = comment => !!comment.created_at && comment.created_at === comment.updated_at;
 const human = (comment, owner) => comment.user?.login === owner && comment.user?.type === 'User';
 const authoredRequest = (comment, owner) => human(comment, owner)
   || ['copilot-swe-agent[bot]', 'Copilot', BOT].includes(comment.user?.login) && comment.user?.type === 'Bot';
 
+function requestCandidate(comment, owner) {
+  return authoredRequest(comment, owner) && comment.body?.startsWith(`${REQUEST}\n`);
+}
+
 function requestComment(comment, owner) {
-  if (!authoredRequest(comment, owner) || !comment.body?.startsWith(`${REQUEST}\n`)) return null;
+  if (!requestCandidate(comment, owner)) return null;
   const invalid = reason => ({ id: comment.id, key: digest(comment.body || ''), created: comment.created_at, invalid: reason });
   if (!Number.isSafeInteger(comment.id) || !unchanged(comment)) return invalid('Request was edited or has no immutable timestamp.');
   const match = comment.body.match(/^## Scope change request\n\n```json\n([\s\S]+)\n```\s*$/);
@@ -34,6 +39,42 @@ function requestComment(comment, owner) {
   return { id: comment.id, key: digest(comment.body), data, url: comment.html_url, created: comment.created_at };
 }
 
+function requestRecordBody(comment, owner, invalid) {
+  if (!requestCandidate(comment, owner) || !Number.isSafeInteger(comment.id) || comment.id < 1) return null;
+  const key = digest(comment.body);
+  const source = {
+    id: comment.id,
+    body: comment.body,
+    created_at: comment.created_at,
+    updated_at: comment.updated_at,
+    html_url: comment.html_url,
+    user: { login: comment.user.login, type: comment.user.type },
+  };
+  return `<!-- ${REQUEST_RECORD}:${comment.id}:${key} -->\n${JSON.stringify({ source, invalid: invalid || null })}`;
+}
+
+function requestRecord(comment, owner) {
+  if (comment.user?.login !== BOT || comment.user?.type !== 'Bot') return null;
+  const match = comment.body?.match(new RegExp(`^<!-- ${REQUEST_RECORD}:([1-9]\\d*):([a-f0-9]{64}) -->\\n(\\{[\\s\\S]*\\})$`));
+  if (!match || !Number.isSafeInteger(Number(match[1]))) return null;
+  let record;
+  try { record = JSON.parse(match[3]); } catch { return null; }
+  const source = record?.source;
+  if (!source || source.id !== Number(match[1]) || typeof source.body !== 'string'
+      || digest(source.body) !== match[2] || !requestCandidate(source, owner)) return null;
+  const parsed = requestComment(source, owner);
+  return {
+    ...parsed,
+    key: match[2],
+    created: source.created_at,
+    data: parsed?.data,
+    url: source.html_url,
+    archived: true,
+    archivedSource: source,
+    ...(record.invalid && { invalid: record.invalid }),
+  };
+}
+
 function command(comment, owner) {
   if (!human(comment, owner) || !unchanged(comment)) return null;
   const match = comment.body?.trim().match(/^\/(approve|reject)-change ([1-9]\d*)(?:[ \t]+([^\r\n]+))?$/);
@@ -48,7 +89,25 @@ function receipt(comment) {
 }
 
 function decisionState(comments, owner, baselines, now = Date.now()) {
-  const requests = comments.map(comment => requestComment(comment, owner)).filter(Boolean);
+  const live = comments.map(comment => requestComment(comment, owner)).filter(Boolean);
+  const archives = comments.map(comment => requestRecord(comment, owner)).filter(Boolean);
+  const requestsById = new Map(live.map(request => [request.id, request]));
+  for (const archived of archives) {
+    const source = comments.find(comment => comment.id === archived.id
+      && comment.user?.login === archived.archivedSource.user?.login
+      && comment.user?.type === archived.archivedSource.user?.type);
+    if (!source || !requestCandidate(source, owner)) {
+      archived.invalid ||= 'Request source comment is missing; owner must explicitly reject the preserved record.';
+    } else if (source.body !== archived.archivedSource.body
+        || source.created_at !== archived.archivedSource.created_at
+        || source.updated_at !== archived.archivedSource.updated_at
+        || source.user?.login !== archived.archivedSource.user?.login
+        || source.user?.type !== archived.archivedSource.user?.type) {
+      archived.invalid ||= 'Request source comment was edited; owner must explicitly reject the preserved record.';
+    }
+    requestsById.set(archived.id, archived);
+  }
+  const requests = [...requestsById.values()];
   const receipts = comments.map(receipt).filter(Boolean).sort((a, b) => a.comment.id - b.comment.id);
   const results = requests.map(request => {
     const matching = receipts.filter(item => item.request === request.id && item.key === request.key
@@ -61,6 +120,10 @@ function decisionState(comments, owner, baselines, now = Date.now()) {
     }
     if (request.invalid) return { ...request, status: 'invalid' };
     const baseline = baselines.get(request.data.issue);
+    if (baseline?.unreadable) {
+      return { ...request, status: 'unreadable',
+        invalid: 'The linked issue baseline could not be read; owner decision admission and merge remain blocked.' };
+    }
     if (!baseline?.approved || baseline.plan !== request.data.plan) {
       return { ...request, status: rejection ? 'rejected' : 'stale', ...(rejection && { receipt: rejection.comment.id }) };
     }
@@ -78,25 +141,37 @@ function decisionState(comments, owner, baselines, now = Date.now()) {
   }
   return {
     requests: results,
-    blocked: results.some(item => ['pending', 'invalid', 'expired', 'stale'].includes(item.status)),
+    blocked: results.some(item => ['pending', 'invalid', 'expired', 'stale', 'unreadable'].includes(item.status)),
     amendments: results.filter(item => item.status === 'approved').sort((a, b) => a.receipt - b.receipt),
     key: results.length ? digest(JSON.stringify(results)) : '',
   };
 }
 
 async function loadState({ github, owner, repo, pr, comments, now }) {
-  const requests = comments.map(comment => requestComment(comment, owner)).filter(item => item?.data);
+  const requests = [
+    ...comments.map(comment => requestComment(comment, owner)),
+    ...comments.map(comment => requestRecord(comment, owner)),
+  ].filter(item => item?.data);
   const baselines = new Map();
   for (const number of new Set(requests.map(item => item.data.issue))) {
-    const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number });
-    const history = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
-    const selected = latestPlan(history, owner);
-    const linked = pr?.body?.split(/\r?\n/).some(line =>
-      new RegExp(`^(?:Relates to|Refs|Fixes|Closes|Resolves):?\\s+#${number}\\b`, 'i').test(line.trim()));
-    baselines.set(number, {
-      approved: linked && !issue.pull_request && issue.state === 'open' && issue.labels.some(label => label.name === 'plan:approved'),
-      plan: selected.ok ? selected.plan.comment.id : null,
-    });
+    try {
+      const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number });
+      if (!issue || typeof issue.state !== 'string' || !Array.isArray(issue.labels)) {
+        throw new Error('Issue baseline response was incomplete.');
+      }
+      const history = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+      const selected = latestPlan(history, owner);
+      const linked = pr?.body?.split(/\r?\n/).some(line =>
+        new RegExp(`^(?:Relates to|Refs|Fixes|Closes|Resolves):?\\s+#${number}\\b`, 'i').test(line.trim()));
+      baselines.set(number, {
+        approved: linked && !issue.pull_request && issue.state === 'open' && issue.labels.some(label => label.name === 'plan:approved'),
+        plan: selected.ok ? selected.plan.comment.id : null,
+      });
+    } catch {
+      // A 404 or transient API failure cannot turn an unresolved amendment into
+      // an empty/successful scope. The caller treats this as a blocking state.
+      baselines.set(number, { unreadable: true, approved: false, plan: null });
+    }
   }
   return decisionState(comments, owner, baselines, now);
 }
@@ -131,4 +206,7 @@ function card({ request, title }) {
   };
 }
 
-module.exports = { BOT, REQUEST, card, command, decisionState, digest, loadState, receipt, requestComment, teamsDecision };
+module.exports = {
+  BOT, REQUEST, REQUEST_RECORD, card, command, decisionState, digest, loadState,
+  receipt, requestCandidate, requestComment, requestRecord, requestRecordBody, teamsDecision,
+};

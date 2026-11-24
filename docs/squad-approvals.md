@@ -203,11 +203,29 @@ GitHub; uncertain transport is never approval. Repeated reconciliation may retry
 within that cap. After exhaustion, inspect the flow and use GitHub; a fresh
 request gives a fresh notification identity, not automatic approval.
 
-Reject an invalid, expired or outdated request with `/reject-change <id>` and
-post a new immutable request if still needed. If an approved request was deleted,
-the retained receipt blocks merge until the owner explicitly rejects that obsolete
-record. Check the diff and remove any no-longer-authorized changes. Editing the
-request is not a recovery path.
+The decision controller preserves each observed request as a bot-authored audit
+record, including request content and its original comment identity. Deleting the
+comment or removing its heading does not erase the blocker: a missing or edited
+source becomes invalid and remains blocked until the owner explicitly rejects
+the preserved request with `/reject-change <id>`. This also applies to an
+approved request whose source was deleted; its receipt remains visible, but it
+does not authorize scope while the source is missing. Check the diff and remove
+any no-longer-authorized changes before proceeding. Editing or deleting a request
+is never a recovery path.
+Archive verification matches the original immutable author identity, including
+eligible Copilot and GitHub Actions bot requests; an audit marker from another
+bot cannot stand in for the recorded source.
+If archiving a deleted or edited request fails, the decision workflow fails
+explicitly. It also disables auto-merge, applies `needs:human`, writes a
+separate recovery audit when the API is available, and dispatches lifecycle
+reconciliation. Do not remove the pause or merge until rerunning the failed
+workflow verifies the immutable record and the blocked readiness.
+If any recovery action also fails, its error is surfaced with the archive
+failure; no successful archive is claimed.
+
+An unreadable linked issue or plan baseline is also a blocking error, not an
+empty/successful scope. Restore API access or correct the issue reference and
+re-evaluate; if the request is obsolete, explicitly reject its preserved record.
 
 If a continuation claim exists but no later session started, inspect GitHub's
 session and the attempted comment before an owner manually comments to the same

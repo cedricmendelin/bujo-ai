@@ -191,7 +191,10 @@ successful cloud PR ready, dispatches initial CI if the Copilot approval gate
 prevented CI from starting, starts selected reviews, forwards actionable review
 findings, publishes `Squad Merge Readiness`, and enables native GitHub squash
 auto-merge only when eligible. `workflow_dispatch` with a PR number remains the
-manual recovery/re-evaluation entry point.
+manual recovery/re-evaluation entry point. It checks linked scope amendments
+before clearing a repair pause, marking a cloud draft ready, or dispatching
+CI/reviews; pending, invalid, or unreadable scope fails readiness and pauses
+auto-merge.
 
 For an eligible ready PR, the controller uses GitHub's Agent Merge API to enroll
 native **Watch and fix** with both failed Actions workflow and merge-conflict
@@ -363,6 +366,16 @@ dispatches and code commits do not reset attempts or clear a pause. A person
 removing the label resets the budget; a bot removing it does not. Human review blocks, CI, completion,
 and scope approval still apply. `needs:human` does not stop native Watch and fix,
 which must be disabled separately when pausing.
+After checking repository permission and session state, resume re-reads scope
+before resuming and again after fetching comments in the resume callback, directly
+before writing its marker or clearing `needs:human`. A blocked scope discovered
+in either read stops those resume actions and records failed readiness. The later
+lifecycle scope check still gates delivery. GitHub does not provide a transaction
+spanning comment reads and label/comment writes, so a request submitted after the
+last read can still race those writes; this is not an atomic admission guarantee.
+If that timing is suspected, inspect any repair run and its changes, resolve or
+reject the exact scope request, restore `needs:human` if the repair pause still
+applies, and manually re-evaluate. A resume marker is not scope approval.
 
 The resume operation removes the PR label with the existing `GH_AW_AGENT_TOKEN`
 PR-write credential. If a run records a resume marker but fails to remove the
