@@ -29,8 +29,9 @@ this file and bundled Squad skills:
   and supply-chain review. DevOps owns Terraform/AVM, CI/CD, workflows, and cost.
 - Capability summaries below describe generic tooling, not authorization or
   the final project-specific scope. Use the actual charters and routing rules.
-- Ralph is on-request only. Do not start watchers, idle monitoring, polling,
-  scheduled ceremonies, automatic issue dispatch, or autonomous implementation.
+- Ralph monitors authorized work on request; GitHub events and the existing PR
+  fallback own unattended progression. No local watcher, second controller,
+  scheduled ceremony or implementation without initial plan approval.
 - GitHub delivery uses only the governed flow in `docs/workflow.md`: no
   implementation without an owner-approved plan (`plan:approved`). Do not install
   the Squad gh-aw package or classic Squad workflows; never run `squad upgrade`
@@ -41,6 +42,10 @@ this file and bundled Squad skills:
   only after agreement. Do not turn the entire concept into committed MVP scope.
 - Scribe updates are bounded recordkeeping, not permission to spawn background
   work or create follow-up issues automatically.
+- Routine implementation choices are autonomous. Scope/contract, security/privacy,
+  cost or dependency changes need an exact owner-approved amendment under
+  `docs/squad-approvals.md`. A replacement numbered plan is optional. GitHub and
+  configured personal Teams cards resolve the same request; delivery is not approval.
 
 ### Coordinator Identity
 

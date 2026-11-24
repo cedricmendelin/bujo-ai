@@ -1,9 +1,10 @@
 # Governed delivery workflow
 
-The workflow keeps human approval of issue plans, four independent specialist
-reviews by default, bounded review repair, and GitHub-protected auto-merge. It
-removes cryptographic approval records, plan binding, review attestations, and
-duplicate lifecycle controllers.
+The workflow keeps human approval of issue plans, independent Verifier plus up
+to two applicable specialist reviews, bounded repair, and protected auto-merge. It
+does not bind initial plans cryptographically or add review attestations or
+duplicate lifecycle controllers. Amendment fingerprints protect only the exact
+pending change request, not the initial plan.
 
 ```text
 issue ── /plan ──▶ Architect posts visible plan v1
@@ -98,7 +99,7 @@ then assigns Copilot with its named custom agent. The ordinary issue assignee
 state makes duplicate delivery idempotent. If `handoff:local` is already
 present, no cloud assignment is made. Adding it later stops subsequent custom
 cloud dispatches, but does **not** cancel an active cloud session or native
-Watch and fix. No plan SHA, approval record, `plan:bound` label, binding check,
+Watch and fix. No initial-plan SHA, approval record, `plan:bound` label, binding check,
 or timeline-provenance protocol is used.
 
 Initial-assignment idempotency is not continuation. After a partial delivery's
@@ -115,7 +116,9 @@ Copilot assignment if necessary, and reassigns the same approved scope. A rerun
 of that Actions run cannot create a duplicate session. If reassignment fails,
 inspect the admitted run before deliberately starting a new continuation.
 Dependency evidence is scope data, not permission to change the plan. Changed
-scope requires a new numbered plan and approval. When the plan hands the
+scope requires an explicit owner-approved amendment on the current PR under
+[Squad approvals](squad-approvals.md); a new numbered plan is optional.
+When the plan hands the
 next milestone to a different role, publish and approve the routed plan
 (for example, `/plan route builder`). If Copilot is still assigned from the
 previous milestone, reapproval alone does not start a session. Dispatch
@@ -136,6 +139,21 @@ and verify the account before applying the label. An owner-published newer plan
 automatically removes `plan:approved`; `/plan revise` and `/plan route` also
 remove it. The label authorizes initial cloud assignment, not a cryptographic
 scope hash.
+
+### Governed autonomy and amendments
+
+The approved baseline plus accepted immutable PR amendments is effective scope.
+Routine implementation choices do not need owner approval. Changes to criteria,
+user-visible behavior/contracts, security/privacy, cost or dependencies do.
+Agents post the exact proposed change before implementing it; pending requests
+block merge. Only the owner accepts amendments, through GitHub commands or a
+separately enabled authenticated personal Teams flow. Notifications are never
+approval. Approval cannot clear unrelated pauses, repair budgets, CI or reviews.
+
+See [Squad approvals](squad-approvals.md) for the request schema, minimal labels,
+triage, safe continuation, default-off Teams setup, failure recovery and rollout.
+The 2026-11-24 owner decision supersedes bootstrap-only Ralph restrictions and the
+earlier mandatory replacement-plan rule, not initial implementation approval.
 
 ## Manual Squad Retro
 
@@ -173,7 +191,10 @@ successful cloud PR ready, dispatches initial CI if the Copilot approval gate
 prevented CI from starting, starts selected reviews, forwards actionable review
 findings, publishes `Squad Merge Readiness`, and enables native GitHub squash
 auto-merge only when eligible. `workflow_dispatch` with a PR number remains the
-manual recovery/re-evaluation entry point.
+manual recovery/re-evaluation entry point. It checks linked scope amendments
+before clearing a repair pause, marking a cloud draft ready, or dispatching
+CI/reviews; pending, invalid, or unreadable scope fails readiness and pauses
+auto-merge.
 
 For an eligible ready PR, the controller uses GitHub's Agent Merge API to enroll
 native **Watch and fix** with both failed Actions workflow and merge-conflict
@@ -345,6 +366,16 @@ dispatches and code commits do not reset attempts or clear a pause. A person
 removing the label resets the budget; a bot removing it does not. Human review blocks, CI, completion,
 and scope approval still apply. `needs:human` does not stop native Watch and fix,
 which must be disabled separately when pausing.
+After checking repository permission and session state, resume re-reads scope
+before resuming and again after fetching comments in the resume callback, directly
+before writing its marker or clearing `needs:human`. A blocked scope discovered
+in either read stops those resume actions and records failed readiness. The later
+lifecycle scope check still gates delivery. GitHub does not provide a transaction
+spanning comment reads and label/comment writes, so a request submitted after the
+last read can still race those writes; this is not an atomic admission guarantee.
+If that timing is suspected, inspect any repair run and its changes, resolve or
+reject the exact scope request, restore `needs:human` if the repair pause still
+applies, and manually re-evaluate. A resume marker is not scope approval.
 
 The resume operation removes the PR label with the existing `GH_AW_AGENT_TOKEN`
 PR-write credential. If a run records a resume marker but fails to remove the
@@ -544,6 +575,8 @@ does not edit live PRs, remove their labels, or perform that rollout.
 |---|---|
 | `squad-plan.md` | gh-aw `/plan` command; append-only numbered plans |
 | `squad-plan-approved.yml` | Issue plan approval, new-version invalidation, idempotent cloud assignment/local suppression |
+| `squad-intake.yml` | Owner-enrolled priority intake and optional planning notifications |
+| `squad-decisions.yml` | Immutable PR amendments and owner decision admission |
 | `squad-review-{architect,security,verifier,devops}.md` | Independent default-branch specialist reviews |
 | `shared/squad-review.md` | Shared untrusted-data review protocol |
 | `squad-pr-lifecycle.yml` | Single event-driven readiness/review-feedback/auto-merge controller |
@@ -562,10 +595,12 @@ that GitHub settings or live Actions behavior are deployed.
 
 ## Ruleset migration and active PR coordination
 
-**Owner action required; this change does not edit repository settings, labels,
-or active PRs.** The observed effective `main` checks currently require `ci`
-and the four `Squad Review / <Role>` contexts; they do not require plan binding
-or `Squad Merge Readiness`. After this controller is deployed:
+**Historical rollout procedure; do not repeat it on an already migrated
+repository.** On 2026-11-24, the effective `main` rules require `ci` and
+`Squad Merge Readiness`. This change does not edit repository settings, labels
+or active PRs. The procedure below describes migration from the earlier
+four-specialist-check setup and applies only when those older protections
+are still in place:
 
 1. Keep all existing required checks. Use an isolated test PR to confirm the new
    controller publishes current-head `Squad Merge Readiness`, respects human

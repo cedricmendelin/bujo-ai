@@ -1,0 +1,73 @@
+name: Squad Decisions
+
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR containing the immutable change request
+        required: true
+        type: string
+      request:
+        description: Request comment ID returned in the Teams card
+        required: true
+        type: string
+      key:
+        description: Exact request fingerprint returned in the Teams card
+        required: true
+        type: string
+      decision:
+        type: choice
+        options: [approve, reject]
+        required: true
+      responder:
+        description: Verified responder identifier from the trusted flow, never a card field
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: squad-pr-lifecycle-${{ github.repository }}-${{ github.event.issue.number || inputs.pr_number }}
+  queue: max
+
+jobs:
+  decision:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch)
+      || (github.event.issue.pull_request
+        && (github.event.action == 'deleted'
+          || startsWith(github.event.comment.body, '## Scope change request')
+          || startsWith(github.event.comment.body, '/approve-change ')
+          || startsWith(github.event.comment.body, '/reject-change ')
+          || contains(github.event.comment.body, '<!-- squad-decision:')
+          || contains(github.event.comment.body, '<!-- squad-request-record:')
+          || startsWith(github.event.changes.body.from, '## Scope change request')
+          || contains(github.event.changes.body.from, '<!-- squad-decision:')
+          || contains(github.event.changes.body.from, '<!-- squad-request-record:')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Admit an owner decision using trusted code
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          SQUAD_TEAMS_NOTIFICATIONS: ${{ vars.SQUAD_TEAMS_NOTIFICATIONS }}
+          SQUAD_TEAMS_APPROVALS: ${{ vars.SQUAD_TEAMS_APPROVALS }}
+          SQUAD_TEAMS_APPROVAL_ACTOR: ${{ vars.SQUAD_TEAMS_APPROVAL_ACTOR }}
+          SQUAD_TEAMS_APPROVER_ID: ${{ secrets.SQUAD_TEAMS_APPROVER_ID }}
+          SQUAD_TEAMS_WEBHOOK_URL: ${{ secrets.SQUAD_TEAMS_WEBHOOK_URL }}
+        with:
+          script: |
+            const { handleDecision } = require('./.github/scripts/squad-decision-controller');
+            await handleDecision({ github, agent: getOctokit(process.env.AGENT_TOKEN), context, core });

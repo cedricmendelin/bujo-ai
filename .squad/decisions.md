@@ -597,3 +597,41 @@
 - Enforcement still blocks incomplete or unmapped changed-file inventories.
   CI, trusted human blockers, drafts, `needs:human`, and `review:none` remain
   unchanged.
+
+### 2026-11-24: Supersession of delivery decision history
+
+The accepted decision below supersedes the bootstrap-phase manual workflow and
+Ralph restrictions in **2026-11-14: Local-first team bootstrap**, and the
+requirement for a revised numbered plan and approval for changed scope in
+**2026-11-16: Simplified plan approval and PR lifecycle** and
+**2026-11-17: Capability-aware partial delivery and repair recovery**, to the
+extent an exact owner-approved amendment authorizes the change. Initial plan
+approval remains required. Other provisions of the earlier decisions remain
+unchanged unless explicitly superseded.
+
+#### 2026-11-24: Governed Squad autonomy and explicit amendments
+
+**By:** Repository owner, confirmed in the Squad integration planning conversation.
+
+**What:** Supersedes the manual-bootstrap/Ralph restrictions of 2026-11-14 and
+the mandatory replacement-plan requirement for scope changes in later delivery
+decisions. Preserve initial plan approval, named cloud specialists, independent
+review and protected GitHub auto-merge. Routine implementation choices are
+autonomous; any explicitly described change can instead be authorized as a
+specific immutable amendment, without a required new numbered plan.
+
+GitHub is the durable approval record. The human owner is the decision-routing
+target; personal Teams alerts and authenticated interactive cards are optional
+channels for the same request, disabled until separately configured and verified.
+Labels remain minimal status/owner/priority metadata, never implicit permission.
+Keep existing enforced Verifier-plus-relevant-specialist routing and one cloud
+assignment/PR lifecycle authority. Automatic retrospectives remain excluded.
+
+**Why:** Reduce routine human interruptions and duplicate orchestration while
+retaining explicit authority for product/contracts, security/privacy, cost and
+dependency changes. Live setup, credentials and paid services remain separately
+authorized.
+
+**Evidence:** `docs/squad-approvals.md`, `docs/workflow.md`,
+`.github/scripts/squad-decisions.js`, `.github/workflows/squad-decisions.yml`,
+`.squad/team.md`, `.squad/ralph-instructions.md`.

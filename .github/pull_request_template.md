@@ -25,7 +25,10 @@ the feature implementer writes updates and Verifier checks them. -->
 
 ## Deviations from plan
 
-<!-- State necessary deviations and rationale, or None. -->
+<!-- State necessary deviations and rationale, or None. Link exact accepted
+amendment request/decision comments in decision order when applicable; preserve
+the approved baseline and original acceptance history. An explicit accepted
+amendment does not require a replacement numbered plan. -->
 
 ## Remaining work
 

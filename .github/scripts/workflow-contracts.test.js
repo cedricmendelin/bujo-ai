@@ -54,6 +54,58 @@ function approvalText() {
   return read('.github/workflows/squad-plan-approved.yml');
 }
 
+test('decision and intake entrypoints use trusted code and serialize decisions with the PR lifecycle', () => {
+  const decisions = read('.github/workflows/squad-decisions.yml');
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  assert.match(decisions, /group: squad-pr-lifecycle-/);
+  assert.match(lifecycle, /group: squad-pr-lifecycle-/);
+  assert.match(decisions, /queue: max/);
+  for (const name of ['squad-decisions.yml', 'squad-intake.yml']) {
+    const workflow = read(`.github/workflows/${name}`);
+    assert.match(workflow, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
+    assert.match(workflow, /persist-credentials: false/);
+    assert.doesNotMatch(workflow, /pull_request\.head|pulls\.merge|npm install|npm ci/);
+  }
+  assert.match(decisions, /github\.ref_name == github\.event\.repository\.default_branch/);
+});
+
+test('deleted request events are admitted and scope blocking precedes draft readiness and dispatch', () => {
+  const decisions = read('.github/workflows/squad-decisions.yml');
+  assert.match(decisions, /github\.event\.action == 'deleted'/);
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  const scopeGate = lifecycle.indexOf('let scopeDecisions = await loadDecisions');
+  const blockedReturn = lifecycle.indexOf('if (scopeDecisions.blocked)', scopeGate);
+  const repairResume = lifecycle.indexOf('if (resume) {', scopeGate);
+  const finalScopeRead = lifecycle.indexOf('scopeDecisions = await loadDecisions', repairResume);
+  const readyTransition = lifecycle.indexOf("if (cloudPr && session.state === 'ok' && pr.draft)", scopeGate);
+  const ciDispatch = lifecycle.indexOf("core.info(`#${number}: dispatched initial CI", scopeGate);
+  const reviewDispatch = lifecycle.indexOf('reviewDispatchNeeded({', scopeGate);
+  assert.ok(scopeGate >= 0 && blockedReturn > scopeGate, 'scope must be evaluated and blocked before readiness');
+  assert.ok(scopeGate < repairResume, 'scope must block before a repair resume can clear its pause');
+  assert.ok(finalScopeRead > repairResume && finalScopeRead < readyTransition,
+    'scope is re-read after repair/resume actions and before the draft transition');
+  assert.ok(readyTransition > blockedReturn, 'a pending or unreadable scope cannot mark a draft ready');
+  assert.ok(ciDispatch > readyTransition && reviewDispatch > readyTransition,
+    'CI and review dispatch remain downstream of scope admission');
+});
+
+test('repair resume re-reads scope after permission checks and before its side effects', () => {
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  const resume = lifecycle.indexOf('if (resume) {');
+  const permission = lifecycle.indexOf('if (!isEligiblePermission(permission))', resume);
+  const active = lifecycle.indexOf('if (session.state === \'active\')', resume);
+  const admission = lifecycle.indexOf('await admitRepairResume({', active);
+  const scopeRead = lifecycle.indexOf('loadScope: async () => loadDecisions', admission);
+  const marker = lifecycle.indexOf('const marker = `<!-- squad-repair-resume:', admission);
+  const clearPause = lifecycle.indexOf("name: 'needs:human'", admission);
+  const stop = lifecycle.indexOf('if (!admitted) return;', admission);
+  assert.ok(resume >= 0 && permission > resume && active > permission);
+  assert.ok(admission > active && scopeRead > admission && scopeRead < marker);
+  assert.ok(marker > scopeRead && clearPause > marker,
+    'a request that appears after the initial scope read is checked before resume effects');
+  assert.ok(stop > clearPause, 'a blocked admission returns before later lifecycle work');
+});
+
 test('four independent specialist workflows remain dispatchable without attestations', () => {
   function checkReviewInput(workflow) {
     assert.match(workflow, /^run-name:.*github\.event\.inputs\.review_input/m);
