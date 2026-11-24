@@ -389,6 +389,48 @@ test('failed archive of a deleted approved request pauses prior authorization, r
     'recovery does not clear the independent human pause');
 });
 
+test('failed archive of a newly created request pauses prior authorization and reconciles before retry', async () => {
+  const f = fixture();
+  const created = request({ expires: new Date(Date.now() + 86400000).toISOString() });
+  created.id = 21;
+  created.created_at = created.updated_at = new Date().toISOString();
+  created.html_url = 'https://github.com/owner/repo/pull/2#issuecomment-21';
+  f.comments.splice(0, f.comments.length, created);
+  f.context.payload.comment = structuredClone(created);
+  f.pr.auto_merge = { merge_method: 'squash' };
+  let archiveFailure = true;
+  const createComment = f.github.rest.issues.createComment;
+  f.github.rest.issues.createComment = async args => {
+    if (args.body.startsWith('<!-- squad-request-record:21:') && archiveFailure) {
+      archiveFailure = false;
+      throw new Error('archive API temporarily unavailable');
+    }
+    return createComment(args);
+  };
+
+  await assert.rejects(handleDecision(f), /archive API temporarily unavailable/);
+  assert.equal(f.pr.auto_merge, null, 'the previous auto-merge authorization is disabled before surfacing failure');
+  assert.ok(f.prLabels.some(label => label.name === 'needs:human'));
+  const recoveryAudit = f.comments.find(comment => comment.body?.startsWith('<!-- squad-request-archive-failure:2:21 -->'));
+  assert.match(recoveryAudit?.body || '', /created, edited, or deleted scope request/);
+  assert.equal(f.comments.some(comment => comment.body?.startsWith('<!-- squad-request-record:21:')), false,
+    'archive failure must not be represented as successful preservation');
+  assert.ok(f.effects.some(item => item.workflow_id === 'squad-pr-lifecycle.yml'),
+    'the lifecycle is dispatched to invalidate prior readiness');
+
+  await handleDecision(f);
+  assert.ok(f.comments.some(comment => comment.body?.startsWith('<!-- squad-request-record:21:')),
+    'rerunning after recovery creates the immutable archive record');
+  const recovered = await loadState({
+    github: f.github, owner, repo: 'repo',
+    pr: { body: 'Relates to #1' }, comments: f.comments,
+  });
+  assert.equal(recovered.requests[0].status, 'pending');
+  assert.equal(recovered.blocked, true);
+  assert.ok(f.prLabels.some(label => label.name === 'needs:human'),
+    'recovery does not clear the independent human pause');
+});
+
 test('deleted request event without body still reconciles its archived record', async () => {
   const f = fixture();
   const original = f.comments[0];

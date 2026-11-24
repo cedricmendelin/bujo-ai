@@ -54,7 +54,7 @@ async function failClosedArchive({ github, agent, owner, repo, number, pr, event
     });
     if (!history.some(comment => comment.user?.login === BOT && comment.body?.startsWith(marker))) {
       await agent.rest.issues.createComment({ owner, repo, issue_number: number,
-        body: `${marker}\n@${owner} The result of preserving the deleted or edited scope request could not be confirmed, so no archive success or approval is inferred. Auto-merge was paused and this PR requires human attention. Do not remove \`needs:human\` or merge until the source request is archived and the blocked state is verified. Rerun this failed workflow after GitHub API access recovers; the archive and lifecycle reconciliation must both succeed.` });
+        body: `${marker}\n@${owner} The result of preserving the created, edited, or deleted scope request could not be confirmed, so no archive success or approval is inferred. Auto-merge was paused and this PR requires human attention. Do not remove \`needs:human\` or merge until the source request is archived and the blocked state is verified. Rerun this failed workflow after GitHub API access recovers; the archive and lifecycle reconciliation must both succeed.` });
     }
   });
   await attempt('dispatch lifecycle reconciliation', () => agent.rest.actions.createWorkflowDispatch({
@@ -128,10 +128,12 @@ async function handleDecision({ github, agent, context, core, env = process.env,
         action: context.payload.action, previousBody,
       });
     } catch (error) {
-      const destructiveRequestChange = context.payload.action === 'deleted'
-        && (requestComment(event || {}, owner) || requestRecord(event || {}, owner))
+      const requestArchiveFailure = context.payload.action === 'created'
+        && requestComment(event || {}, owner)
+        || context.payload.action === 'deleted'
+          && (requestComment(event || {}, owner) || requestRecord(event || {}, owner))
         || context.payload.action === 'edited' && previousBody?.startsWith('## Scope change request\n');
-      if (destructiveRequestChange) {
+      if (requestArchiveFailure) {
         try {
           await failClosedArchive({
             github, agent, owner, repo, number, pr, event,
