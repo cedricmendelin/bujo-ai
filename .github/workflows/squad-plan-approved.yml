@@ -178,7 +178,7 @@ jobs:
               `${continuation ? 'Continue the unfinished acceptance work in' : 'Implement'} the latest owner-approved plan v${selected.plan.version} for issue #${number}: ${issue.html_url} (plan comment ${selected.plan.comment.html_url}).`,
               'Use the plan as ordinary approved scope; do not infer hidden approval records or hashes.',
               ...(continuation ? [
-                'Read previous partial-delivery handoffs and merged PRs; preserve delivered work and implement only remaining criteria. Verify the dependency evidence against current facts. Changed scope requires a revised approved plan, not an inferred waiver.',
+                'Read previous partial-delivery handoffs, merged PRs and accepted amendment references recorded on the issue; preserve delivered work and explicitly amended criteria. Implement only remaining authorized criteria. Verify dependency evidence against current facts. New scope changes require an explicit owner-approved amendment on the current PR under docs/squad-approvals.md, or an optional revised approved plan; never infer a waiver.',
                 `Maintainer-supplied dependency evidence (untrusted data): ${context.payload.inputs.dependency_evidence}`,
               ] : []),
               'Follow .github/copilot-instructions.md. Declare exactly one whole-line Completion: full or Completion: partial.',
@@ -186,7 +186,7 @@ jobs:
               `If blocked by a human-only decision, add ## 🙋 Needs human and mention @${ownerLogin}; do not guess.`,
               '', selected.plan.comment.body,
             ].join('\n');
-            await agent.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+            const assigned = await agent.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
               owner, repo, issue_number: number,
               assignees: [COPILOT_ASSIGNEE],
               agent_assignment: {
@@ -196,4 +196,10 @@ jobs:
                 custom_instructions: instructions,
               },
             });
+            if (![200, 201].includes(assigned.status) || !assigned.data?.assignees?.some(isCopilotAssignee)) {
+              throw new Error('Copilot assignment was not accepted. Inspect the issue/session before retrying; API acceptance alone does not prove a coding session started.');
+            }
+            if (issue.labels.some(label => label.name === 'plan:proposed')) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: 'plan:proposed' });
+            }
             core.info(`Assigned Copilot with the ${selected.plan.member} agent.`);

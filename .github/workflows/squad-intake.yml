@@ -1,0 +1,40 @@
+name: Squad Intake
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: squad-intake-${{ github.repository }}-${{ github.event.issue.number }}
+  queue: max
+
+jobs:
+  intake:
+    if: >-
+      !github.event.issue.pull_request
+      && (startsWith(github.event.comment.body, '/triage')
+        || startsWith(github.event.comment.body, '## 📋 Implementation plan v')
+        || startsWith(github.event.comment.body, '## Planning questions'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Triage owner-enrolled work and notify on planning decisions
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          AGENT_TOKEN: ${{ secrets.GH_AW_AGENT_TOKEN }}
+          SQUAD_TEAMS_NOTIFICATIONS: ${{ vars.SQUAD_TEAMS_NOTIFICATIONS }}
+          SQUAD_TEAMS_WEBHOOK_URL: ${{ secrets.SQUAD_TEAMS_WEBHOOK_URL }}
+        with:
+          script: |
+            const { intake } = require('./.github/scripts/squad-intake');
+            await intake({ github, agent: getOctokit(process.env.AGENT_TOKEN), context, core });

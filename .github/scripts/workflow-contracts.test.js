@@ -54,6 +54,21 @@ function approvalText() {
   return read('.github/workflows/squad-plan-approved.yml');
 }
 
+test('decision and intake entrypoints use trusted code and serialize decisions with the PR lifecycle', () => {
+  const decisions = read('.github/workflows/squad-decisions.yml');
+  const lifecycle = read('.github/workflows/squad-pr-lifecycle.yml');
+  assert.match(decisions, /group: squad-pr-lifecycle-/);
+  assert.match(lifecycle, /group: squad-pr-lifecycle-/);
+  assert.match(decisions, /queue: max/);
+  for (const name of ['squad-decisions.yml', 'squad-intake.yml']) {
+    const workflow = read(`.github/workflows/${name}`);
+    assert.match(workflow, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
+    assert.match(workflow, /persist-credentials: false/);
+    assert.doesNotMatch(workflow, /pull_request\.head|pulls\.merge|npm install|npm ci/);
+  }
+  assert.match(decisions, /github\.ref_name == github\.event\.repository\.default_branch/);
+});
+
 test('four independent specialist workflows remain dispatchable without attestations', () => {
   function checkReviewInput(workflow) {
     assert.match(workflow, /^run-name:.*github\.event\.inputs\.review_input/m);

@@ -161,10 +161,10 @@ jobs:
       matrix:
         pr_number: ${{ fromJSON(needs.route.outputs.numbers) }}
     # Every trigger, including four default-branch reviewer completions, uses
-    # this same PR key. Pending coalescing is safe: each job reads live state.
+    # this same PR key, shared with decision admission. Retain all queued decisions.
     concurrency:
       group: squad-pr-lifecycle-${{ github.repository }}-${{ matrix.pr_number }}
-      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -213,6 +213,8 @@ jobs:
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: number, per_page: 100,
             });
+            const { loadState } = require('./.github/scripts/squad-decisions');
+            if ((await loadState({ github, ...context.repo, pr, comments })).blocked) return;
             const trusted = comment => isControllerComment(comment, owner);
             const marker = '<!-- squad-watch-and-fix-enrolled -->';
             if (comments.some(comment => trusted(comment) && (comment.body || '').includes(marker))) return;
@@ -274,6 +276,8 @@ jobs:
               repairGeneratedClosingReferences, partialHandoff, removeNonProse,
             } = require('./.github/scripts/completion-declaration');
             const { isEligiblePermission, latestPlan, parsePlan } = require('./.github/scripts/plan-approval');
+            const { loadState: loadDecisions } = require('./.github/scripts/squad-decisions');
+            const { resumeAmendments } = require('./.github/scripts/squad-decision-controller');
             const { recoveryInput } = require('./.github/scripts/acceptance-recovery');
             const { readSplit, splitReviewPasses, validateSplit } = require('./.github/scripts/scope-split');
             const {
@@ -398,7 +402,9 @@ jobs:
                 if (issue.pull_request || !issue.body) return null;
                 const plans = (await getComments(issueNumber)).filter(comment => parsePlan(comment, owner)?.version === versions[0]);
                 if (plans.length !== 1) return null;
-                return { issue: issueNumber, issueBody: issue.body, planVersion: versions[0], planComment: plans[0].id, planText: plans[0].body };
+                const decisions = await loadDecisions({ github, owner, repo, pr, comments: await getComments(pr.number) });
+                return { issue: issueNumber, issueBody: issue.body, planVersion: versions[0], planComment: plans[0].id,
+                  planText: plans[0].body, amendments: decisions.amendments };
               } catch (error) {
                 core.warning(`#${pr.number}: linked scope unavailable for the bundle (${error.status || 'API error'}); reviewers must retrieve it.`);
                 return null;
@@ -584,6 +590,13 @@ jobs:
                 return core.info(`#${number}: head changed; wait for its lifecycle event.`);
               }
               const nowLabels = pr.labels.map(label => label.name);
+              const scopeDecisions = await loadDecisions({ github, owner, repo, pr, comments: await getComments(number) });
+              if (scopeDecisions.blocked) {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure',
+                  reason: 'An explicit scope decision is pending, stale, expired or invalid. Resolve the exact request on this PR; labels and repair resume cannot approve it.' });
+                return;
+              }
               if (nowLabels.includes('needs:human')) {
                 await pauseMerge(pr);
                 const pending = await setReadiness(pr, sha, readiness({
@@ -597,6 +610,13 @@ jobs:
                 await setReadiness(pr, sha, {
                   status: 'in_progress', reason: 'Waiting for a successful cloud session before metadata repair or review dispatch.',
                 });
+                return;
+              }
+              if (await resumeAmendments({ github, agent, owner, repo, pr,
+                comments: await getComments(number), state: scopeDecisions, session })) {
+                await pauseMerge(pr);
+                await setReadiness(pr, sha, { status: 'in_progress',
+                  reason: 'Waiting for the admitted amendment continuation to complete successfully. No duplicate session is requested.' });
                 return;
               }
               const allChecks = await github.paginate(github.rest.checks.listForRef, {
@@ -679,7 +699,8 @@ jobs:
                 await setReadiness(pr, sha, { status: 'completed', conclusion: 'failure', reason });
                 return;
               }
-              const inputKey = split?.key || reviewInputKey(pr.body || '');
+              const inputKey = scopeDecisions.key ? reviewInputKey(`${split?.key || reviewInputKey(pr.body || '')}\n${scopeDecisions.key}`)
+                : split?.key || reviewInputKey(pr.body || '');
               // DevOps run metadata otherwise names the default-branch SHA, not the reviewed PR head.
               const reviewerInputKey = role => role === 'DevOps' ? reviewInputKey(`${inputKey}\n${sha}`) : inputKey;
               if (scheduledBlocker) {
@@ -929,6 +950,7 @@ jobs:
                   owner, repo, issue_number: number, per_page: 100,
                 });
                 const freshLabels = latestPr.labels.map(label => label.name);
+                const freshDecisions = await loadDecisions({ github, owner, repo, pr: latestPr, comments: await getComments(number) });
                 const freshCi = currentHeadCheck(freshChecks, 'ci', sha);
                 const freshRouting = enforceRouting && !isReviewNone(freshLabels) && latestPr.head.sha === sha
                   ? classifyReviews(latestPr, await changedFiles(latestPr), freshHuman.reviews) : null;
@@ -949,7 +971,10 @@ jobs:
                     || isReviewNone(freshLabels) !== isReviewNone(nowLabels)
                     || reviewNoneRemovedAt(freshTimeline) !== removedAt
                     || freshLabels.includes('handoff:local') !== nowLabels.includes('handoff:local')
-                    || freshSplit?.reason || (freshSplit?.key || reviewInputKey(latestPr.body || '')) !== inputKey
+                    || freshDecisions.blocked || freshDecisions.key !== scopeDecisions.key
+                    || freshSplit?.reason || (scopeDecisions.key
+                      ? reviewInputKey(`${freshSplit?.key || reviewInputKey(latestPr.body || '')}\n${scopeDecisions.key}`)
+                      : freshSplit?.key || reviewInputKey(latestPr.body || '')) !== inputKey
                     || freshCi?.status !== 'completed' || freshCi.conclusion !== 'success'
                     || freshRouting && (freshRouting.blocked
                       || latestPr.base.sha !== pr.base.sha
@@ -988,6 +1013,16 @@ jobs:
               }
               core.info(`#${number}: ${decision.status}/${decision.conclusion || 'pending'} — ${decision.reason}`);
             }
+      - name: Notify an actionable human blocker
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ matrix.pr_number }}
+          SQUAD_TEAMS_NOTIFICATIONS: ${{ vars.SQUAD_TEAMS_NOTIFICATIONS }}
+          SQUAD_TEAMS_WEBHOOK_URL: ${{ secrets.SQUAD_TEAMS_WEBHOOK_URL }}
+        with:
+          script: |
+            const { notifyBlocker } = require('./.github/scripts/squad-decision-controller');
+            await notifyBlocker({ github, ...context.repo, number: Number(process.env.PR_NUMBER) });
       - name: Escalate lifecycle automation failure
         if: failure()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

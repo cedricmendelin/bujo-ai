@@ -28,7 +28,9 @@ assumptions; unresolved questions stay questions.
 
 ## When implementing (docs, decisions, architecture records)
 
-Follow `.github/copilot-instructions.md`: implement only the approved plan.
+Follow `.github/copilot-instructions.md`: implement the approved baseline plus
+accepted PR amendments under `docs/squad-approvals.md`; a replacement numbered
+plan is optional. Resolve routine implementation choices autonomously.
 
 ## When reviewing a PR
 

@@ -14,8 +14,8 @@
 
 ## Support
 
-Scribe records agreed decisions and useful history. Ralph reviews backlog status
-only when explicitly asked. Rai advises on responsible AI and sensitive data.
+Scribe records agreed decisions and useful history. Ralph monitors authorized work
+on request and reports event-driven GitHub handoffs. Rai advises on responsible AI and sensitive data.
 Fact Checker verifies external claims and challenges unsupported assumptions.
 
 ## Governed delivery (GitHub)
@@ -39,15 +39,15 @@ Every implementation issue follows `docs/workflow.md` and README → *How we wor
    as ordinary untrusted data.
 4. The single default-branch `Squad PR Lifecycle` controller marks successful
    cloud PRs ready, dispatches initial CI/reviews, aggregates current-head
-   results, and forwards actionable review feedback. Architect, Security,
-   Verifier, and DevOps remain the four default reviewers. No scheduled
-   reconciliation or second CI/conflict repair loop is used. Native GitHub
+   results, and forwards actionable review feedback. Verifier and up to two
+   relevant specialists review; the existing hourly fallback reconciles missed
+   events. No second CI/conflict repair loop is used. Native GitHub
    Watch and fix owns cloud CI/conflicts, not review comments; desktop-app Agent
    merge owns local repairs.
 5. Owner/maintainer `review:none` skips existing and pending specialist
    findings for one PR. It never skips CI or trusted human change requests and
-   unresolved blocking threads; removing it starts fresh reviews. After the
-   staged owner-controlled migration, branch protections require `ci` and
+   unresolved blocking threads; removing it starts fresh reviews. The
+   active branch protections require `ci` and
    `Squad Merge Readiness`. GitHub auto-merge is the only merge executor;
    never bypass protections or directly merge.
 6. Three actual review-fix attempts are allowed. Cancellations, queued runs, and
@@ -71,7 +71,11 @@ Every implementation issue follows `docs/workflow.md` and README → *How we wor
   bounded work that benefits from their context; no speculative fan-out.
 - `plan:approved` selects the latest issue plan for cloud assignment. Direct
   local PRs do not need that label.
-- No local watchers, polling loops, or scheduled delivery sweeps. GitHub
+- Effective scope is the approved baseline plus explicit accepted amendment
+  requests. Routine implementation choices are autonomous. Product/contracts,
+  security/privacy, cost and dependency changes route to the human owner through
+  `docs/squad-approvals.md`; no replacement numbered plan is mandatory.
+- No local watchers or additional scheduled delivery sweeps. GitHub
   delivery automation is event-driven and governed by `docs/workflow.md`;
   native Watch and fix is owner-enabled, and `needs:human` stops custom
   lifecycle actions.

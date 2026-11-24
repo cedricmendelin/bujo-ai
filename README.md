@@ -87,6 +87,9 @@ verify, and fix review findings; GitHub merges only when the required gates
 pass. Ask for human input during planning or when safe recovery is exhausted.
 Details, commands, and one-time setup are in the
 [governed delivery workflow](docs/workflow.md).
+The [Squad approvals guide](docs/squad-approvals.md) covers minimal labels,
+owner-enrolled `/triage p1`, explicit scope amendments, and optional personal
+Teams notifications and decisions. Teams is off until separately configured.
 
 ### 1. Agree the scope
 
@@ -119,7 +122,8 @@ must be reviewed and approved again.
 present. Duplicate label delivery is harmless. Choosing `handoff:local` first
 keeps the work local. Adding it later stops further custom cloud dispatches but
 does not cancel a running cloud session or native Watch and fix. There are no
-plan hashes, approval records, binding labels, or review attestations. See
+initial-plan hashes, binding labels, or review attestations. Explicit amendments
+do have durable decision receipts. See
 [the workflow guide](docs/workflow.md) for the rollout and ruleset migration.
 
 ### 2a. Cloud path (default, hands-off)
@@ -165,7 +169,8 @@ clears `needs:human`. To continue an issue after a partial PR merges and its
 dependency is met, manually run **Squad Plan Approved** with the issue number
 and sanitized dependency evidence. It resumes existing approved scope even if
 Copilot is still assigned; an open related PR or active cloud session blocks
-competing implementation. Changed scope still requires a revised approved plan.
+competing implementation. Changed scope needs an explicit owner-approved PR
+amendment; a revised approved numbered plan is optional, not mandatory.
 
 `review:none`, applied by an owner or maintainer, skips ordinary specialist
 findings for that PR only. A closing scope split cannot use it. It never skips CI or trusted human change
@@ -173,9 +178,10 @@ requests/unresolved blocking threads. Removing it starts fresh reviews, even on
 the same head; code commits also start fresh reviews, while cosmetic PR
 description edits do not.
 
-**Rollout prerequisite:** a repository owner must stage the required-check
-migration to `ci` plus `Squad Merge Readiness`; do not remove the four existing
-review checks until the aggregate check is available and required. See the
+**Protection baseline:** this repository already requires `ci` plus
+`Squad Merge Readiness`. Do not repeat the historical four-check migration or
+weaken the active ruleset. For a fresh installation, stage required-check
+changes only after the aggregate check is available. See the
 [workflow guide](docs/workflow.md#ruleset-migration-and-active-pr-coordination).
 
 ### 2b. Local path (GitHub Copilot app)
@@ -234,9 +240,11 @@ and is closed only by the final `Completion: full` PR after code, relevant tests
 and evidence cover every acceptance criterion.
 
 To resume a reopened issue, inspect its latest approved plan, prior merged PRs,
-and remaining acceptance criteria. If scope or the completion contract changed,
-comment `/plan revise <feedback>`, review the new version, and have the owner
-apply `plan:approved` again; a revision clears approval. If the plan is unchanged,
+and remaining acceptance criteria, including accepted amendment links in prior
+handoffs. For new changes to scope or the completion contract, request an explicit
+owner-approved amendment on the current PR, or optionally use `/plan revise
+<feedback>` and approve the new numbered plan. A revision clears approval.
+If the plan is unchanged,
 the owner must still ensure `plan:approved` applies to the latest reviewed version
 before implementation starts.
 

@@ -226,6 +226,8 @@ async function execute(state, step = 'evaluate') {
     request: async (route, args) => {
       calls.push({ name: 'agentRequest', route, args });
       if (state.before) await state.before('agentRequest', args, calls);
+      if (route.endsWith('/assignees')) return state.assignmentResponse
+        || { status: 201, data: { assignees: [{ login: 'copilot-swe-agent[bot]', type: 'Bot' }] } };
       if (!route.includes('/agent-merge')) return {};
       if (state.watchError) throw Object.assign(new Error('Agent Merge API failure'), { status: state.watchError });
       if (route.startsWith('GET ')) {
@@ -257,6 +259,90 @@ async function execute(state, step = 'evaluate') {
 const commentsFrom = result => result.calls.filter(call => call.name === 'comment').map(call => call.args.body);
 const readinessFrom = state => state.checks.filter(check => check.name === 'Squad Merge Readiness')
   .sort((a, b) => b.id - a.id)[0];
+
+function scopeRequest(state) {
+  const created = new Date(Date.now() - 60000).toISOString();
+  state.pr.body = 'Relates to #11\nPlan v1';
+  state.issue.labels = [{ name: 'plan:approved' }];
+  const plan = { id: 40, body: '## 📋 Implementation plan v1 · owner: builder\n\nScope',
+    user: { login: owner, type: 'User' }, issue_number: 11 };
+  const request = { id: 50, issue_number: 81, user: { login: owner, type: 'User' },
+    created_at: created, updated_at: created,
+    body: `## Scope change request\n\n\`\`\`json\n${JSON.stringify({
+      issue: 11, plan: 40, before: 'Old', after: 'New', reason: 'Reason',
+      impact: 'No cost, security or dependency change; criterion revised',
+      verification: 'Focused test', expires: new Date(Date.now() + 86400000).toISOString(),
+    })}\n\`\`\`` };
+  state.scopedComments = true;
+  state.comments.push(plan, request);
+  return request;
+}
+
+test('pending amendments stop actual readiness and Watch and fix; a production gate mutation is detected', async () => {
+  const verify = async mutate => {
+    const state = fixture();
+    scopeRequest(state);
+    state.pr.auto_merge = { merge_method: 'squash' };
+    if (mutate) state.mutateSource = code => code.replace('if (scopeDecisions.blocked)', 'if (false)');
+    const result = await execute(state);
+    assert.equal(enables(result).length, 0);
+    assert.match(readinessFrom(state).output.summary, /explicit scope decision/);
+    const enrollment = await execute(state, 'enroll');
+    assert.equal(enrollment.calls.filter(call => call.name === 'agentRequest').length, 0);
+  };
+  await verify(false);
+  await assert.rejects(verify(true), /explicit scope decision/);
+});
+
+test('accepted amendment reaches review evidence and invalidates old current-head reviews', async () => {
+  const state = fixture();
+  const request = scopeRequest(state);
+  const { requestComment } = require('./squad-decisions');
+  const created = new Date().toISOString();
+  state.comments.push({ id: 60, issue_number: 81, created_at: created, updated_at: created,
+    user: { login: 'github-actions[bot]', type: 'Bot' },
+    body: `<!-- squad-decision:50:${requestComment(request, owner).key}:approve -->\nApproved` });
+  const result = await execute(state);
+  assert.equal(enables(result).length, 0);
+  const review = result.calls.find(call => call.name === 'dispatch' && ROLES.includes(call.args.workflow_id));
+  assert.ok(review, 'the accepted amendment must require fresh reviews');
+  assert.match(review.args.inputs.review_evidence, /"after":"New"/);
+  assert.match(review.args.inputs.review_evidence, /"receipt":60/);
+});
+
+test('a late scope request cannot reuse already passing readiness in the final merge re-read', async () => {
+  const verify = async mutate => {
+    const state = fixture();
+    const request = scopeRequest(state);
+    state.comments = state.comments.filter(comment => comment.id !== request.id);
+    state.pr.labels = [{ name: 'review:none' }];
+    let reads = 0;
+    state.before = async name => {
+      if (name === 'pr' && ++reads === 3) state.comments.push(request);
+    };
+    if (mutate) state.mutateSource = code => code.replace(
+      'freshDecisions.blocked || freshDecisions.key !== scopeDecisions.key', 'false');
+    const result = await execute(state);
+    assert.equal(enables(result).length, 0);
+    assert.equal(readinessFrom(state).status, 'in_progress');
+    assert.match(readinessFrom(state).output.summary, /Live inputs changed/);
+  };
+  await verify(false);
+  await assert.rejects(verify(true), /Expected values/);
+});
+
+test('an unsuccessful assignment response never clears proposed or claims acceptance', async () => {
+  const state = fixture();
+  state.context.eventName = 'issues';
+  state.context.payload.action = 'labeled';
+  state.context.payload.issue = { number: 11 };
+  state.context.payload.label = { name: 'plan:approved' };
+  state.issue.labels = [{ name: 'plan:approved' }, { name: 'plan:proposed' }];
+  state.comments.push({ id: 10, body: '## 📋 Implementation plan v1 · owner: builder\n\nScope', user: { login: owner } });
+  state.assignmentResponse = { status: 201, data: { assignees: [] } };
+  await assert.rejects(execute(state, 'assign'), /assignment was not accepted/);
+  assert.ok(state.issue.labels.some(label => label.name === 'plan:proposed'));
+});
 const enables = result => result.calls.filter(call => call.query?.includes('enablePullRequestAutoMerge'));
 function fixComment(time, login = owner, head = sha) {
   const token = `00000000-0000-0000-0000-${Date.parse(time).toString(16).padStart(12, '0')}`;

@@ -1,13 +1,21 @@
 # Ralph Instructions
 
-Bujo-AI is in manual bootstrap mode.
+Bujo-AI uses governed GitHub delivery, not manual bootstrap.
 
-- Run only when explicitly requested, for one bounded backlog/status review.
-- Report priorities, blocked work, and decisions needed; then stop.
-- Labels are ownership metadata, not permission to execute work.
-- Do not launch agents, start watchers, poll, dispatch workflows, create issues,
-  assign implementation, merge PRs, or enable automation.
-- Propose follow-up work for human review rather than executing it.
+- On "Ralph go", monitor the authorized queue for the current session and report
+  actionable handoffs to the coordinator. GitHub events and the existing PR
+  controller's bounded reconciliation handle unattended progress.
+- Route missing information and priorities to intake/planning. Initial implementation
+  still requires the latest plan's `plan:approved`; labels never authorize scope.
+- Routine implementation choices need no permission. Scope/contract, security/privacy,
+  cost and dependency changes use an explicit request and owner decision under
+  `docs/squad-approvals.md`. A replacement numbered plan is optional.
+- Report actionable human blockers through GitHub with personal Teams notifications
+  when separately configured. A notification is not a decision.
+- Ralph detects and reports; the coordinator and existing workflows own dispatch,
+  repair and continuation. Do not start a second assignment or repair authority.
 
-Do not start `squad triage --execute`, watch, loop, or schedule commands.
-Workflow setup is a later, separately approved phase.
+No local watcher, unbounded polling, automatic retrospective, direct merge,
+protection bypass or unapproved execution. Stop the in-session monitor when
+requested or when no authorized action remains; do not imply a background service
+continues after the session ends.
