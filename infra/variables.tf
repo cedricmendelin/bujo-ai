@@ -105,12 +105,12 @@ variable "budget_alert_email" {
 
 variable "budget_amount" {
   type        = number
-  description = "Monthly budget amount in the subscription billing currency."
-  default     = 50
+  description = "Approved USD 80 monthly alert amount; Azure interprets the amount in the subscription billing currency."
+  default     = 80
 
   validation {
-    condition     = var.budget_amount == 50
-    error_message = "The production monthly budget must remain 50."
+    condition     = var.budget_amount == 80
+    error_message = "The production monthly budget alert amount must remain 80."
   }
 }
 

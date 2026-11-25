@@ -1,7 +1,7 @@
 location       = "switzerlandnorth"
 name_suffix    = "bujo001"
 key_vault_name = "bujo-ai-prod-kv"
-budget_amount  = 50
+budget_amount  = 80
 
 foundry_enabled               = true
 foundry_runtime_roles_enabled = false

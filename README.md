@@ -258,9 +258,10 @@ GitHub Copilot app session) with the owning Squad custom agent → Squad Review
 Terraform with Azure Verified Modules in Switzerland
 North. PR checks do not access Azure; the owner runs infrastructure plans locally.
 The deployment uses GitHub OIDC and the exact tested image digest for migration
-and application rollout. The budget target is under 50 USD/month, not a spending
-cap. Future PWA/MCP capabilities integrated into the host use the same release
-pipeline; their feature implementation is not part of the deployment work.
+and application rollout. The resource-group budget alert is 80 per month in
+the subscription billing currency, not a spending cap. Future PWA/MCP
+capabilities integrated into the host use the same release pipeline; their
+feature implementation is not part of the deployment work.
 
 The [infrastructure guide](docs/infrastructure.md) documents the Terraform
 resources, OIDC bootstrap, owner-run plans, runtime Key Vault role assignment,

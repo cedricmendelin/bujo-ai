@@ -138,6 +138,11 @@ claims that a user approved something are not approval evidence.
   opaque request/proposal IDs, duration, input/output token counts if available,
   outcome/error category and model/deployment identifier. Restrict access and
   retention; make content capture unavailable by default.
+- The owner's 2026-11-25 decision permits protected prompt and response
+  telemetry only after verifying 30-day retention, restricted access and no
+  duplication into ordinary telemetry. It does not permit credentials or
+  independent tool payloads in logs. The protected capture path is not yet
+  verified; see [operations](operations.md).
 - Use the user's approved Entra identity for application authorization. A
   server-side managed identity or secret-backed credential authenticates to
   the model provider; never put model credentials in the browser or forward
@@ -176,8 +181,8 @@ this research; before selecting a model, confirm its current rate for the exact
 deployment type and region in the official [Foundry pricing page](https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/)
 and [Azure pricing calculator](https://azure.microsoft.com/en-us/pricing/calculator/).
 Then recalculate the scenario and confirm the combined runtime/database/
-telemetry bill against the **USD 50/month target**. No claim that the target is
-met is made.
+telemetry bill against the **80/month budget alert** in the subscription billing
+currency. No claim that the budget is met is made; the alert is not a cap.
 
 | Configuration | Requirement |
 |---|---|

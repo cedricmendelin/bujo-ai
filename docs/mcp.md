@@ -36,6 +36,11 @@ Only connect a client you trust to process your journal data; tool results can
 contain private entries. Start with a disposable journal when testing a write
 or a restore.
 
+MCP prompt and response content is not currently captured as application
+telemetry. The owner has approved a protected capture path only after the
+controls in [operations](operations.md) are verified; ordinary tool payloads
+and credentials remain excluded.
+
 ## Capabilities and limits
 
 | Tool | Purpose |

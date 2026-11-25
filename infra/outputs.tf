@@ -59,6 +59,11 @@ output "container_app_id" {
   value       = module.container_app.resource_id
 }
 
+output "application_insights_id" {
+  description = "Resource ID of the workspace-based Application Insights component."
+  value       = module.application_insights.resource_id
+}
+
 output "migration_sql_connection_string" {
   description = "Trusted passwordless SQL target of the migration identity; read only by the release gate."
   value       = local.migration_sql_connection_string

@@ -82,10 +82,10 @@ public static class KnowledgeEndpoints
                     pageSize ?? 20,
                     cursor)));
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 loggerFactory.CreateLogger("KnowledgeEndpoints")
-                    .LogError(exception, "Knowledge search failed.");
+                    .LogError("Knowledge search failed.");
                 return Error(new DomainError(
                     DomainErrorCode.KnowledgeSearchUnavailable,
                     "Knowledge search is temporarily unavailable."));

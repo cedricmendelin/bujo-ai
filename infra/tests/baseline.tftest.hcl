@@ -56,8 +56,31 @@ variables {
 override_resource {
   target = module.log_analytics.azurerm_log_analytics_workspace.this
   values = {
-    id           = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.OperationalInsights/workspaces/test-law"
-    workspace_id = "00000000-0000-0000-0000-000000000013"
+    id                = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.OperationalInsights/workspaces/test-law"
+    workspace_id      = "00000000-0000-0000-0000-000000000013"
+    retention_in_days = 30
+    daily_quota_gb    = 0.1
+  }
+}
+
+override_resource {
+  target = module.application_insights.azapi_resource.this
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.Insights/components/test-appi"
+    output = {
+      properties = {
+        AppId              = "mock-app-id"
+        ConnectionString   = "mock-connection-string"
+        InstrumentationKey = "mock-instrumentation-key"
+      }
+    }
+  }
+}
+
+override_resource {
+  target = azurerm_container_app_job.migration
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.App/jobs/test-migration"
   }
 }
 
@@ -362,5 +385,116 @@ run "same_principal_owner_plan" {
   assert {
     condition     = toset(azuread_application.pwa_client.owners) == toset([data.azuread_client_config.current.object_id]) && toset(azuread_service_principal.pwa_client.owners) == toset([data.azuread_client_config.current.object_id])
     error_message = "When deployment uses the current principal, it must own the PWA application and service principal."
+  }
+}
+
+run "observability_budget_and_diagnostics" {
+  command = plan
+
+  assert {
+    condition = (
+      module.application_insights.resource.workspace_id == module.log_analytics.resource_id
+      && module.application_insights.resource.retention_in_days == 30
+      && module.application_insights.resource.daily_data_cap_in_gb == 0.1
+      && module.application_insights.resource.daily_data_cap_notifications_disabled == false
+      && module.application_insights.resource.sampling_percentage == 100
+      && module.log_analytics.resource.retention_in_days == 30
+      && module.log_analytics.resource.daily_quota_gb == 0.1
+    )
+    error_message = "Application Insights must use the existing workspace, 30-day retention, full sampling, and the retained 0.1 GB/day cap."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_monitor_diagnostic_setting.key_vault.enabled_log) == 1
+      && alltrue([
+        for log in azurerm_monitor_diagnostic_setting.key_vault.enabled_log :
+        log.category == "AuditEvent"
+      ])
+      && length(azurerm_monitor_diagnostic_setting.key_vault.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.key_vault.enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+    )
+    error_message = "Key Vault diagnostics must select only documented AuditEvent logs and supported metrics, without category groups."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_monitor_diagnostic_setting.container_app.enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.container_app.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.container_app.enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+      && length(azurerm_monitor_diagnostic_setting.container_app_environment.enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.container_app_environment.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.container_app_environment.enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+      && length(azurerm_monitor_diagnostic_setting.migration_job.enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.migration_job.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.migration_job.enabled_metric :
+        metric.category == "Basic"
+      ])
+    )
+    error_message = "Container Apps must retain existing platform logs without duplication and use only discovered metric categories, including Basic for the migration job."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_monitor_diagnostic_setting.sql_server.enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.sql_server.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.sql_server.enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+      && azurerm_monitor_diagnostic_setting.sql_database.target_resource_id == azapi_resource.sql_database.id
+      && azurerm_monitor_diagnostic_setting.sql_database.log_analytics_workspace_id == module.log_analytics.resource_id
+      && length(azurerm_monitor_diagnostic_setting.sql_database.enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.sql_database.enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.sql_database.enabled_metric :
+        metric.category == "Basic"
+      ])
+    )
+    error_message = "SQL diagnostics must export server AllMetrics and database Basic metrics to the workspace, with all SQL log categories disabled."
+  }
+
+  assert {
+    condition = (
+      azurerm_consumption_budget_resource_group.prod.amount == 80
+      && length(azurerm_consumption_budget_resource_group.prod.notification) == 2
+      && anytrue([
+        for notification in azurerm_consumption_budget_resource_group.prod.notification :
+        notification.enabled
+        && notification.threshold == 80
+        && notification.threshold_type == "Forecasted"
+        && notification.operator == "GreaterThan"
+      ])
+      && anytrue([
+        for notification in azurerm_consumption_budget_resource_group.prod.notification :
+        notification.enabled
+        && notification.threshold == 100
+        && notification.threshold_type == "Actual"
+        && notification.operator == "GreaterThan"
+      ])
+      && length(regexall("(?m)^budget_amount\\s*=\\s*80\\s*$", file("${path.root}/prod.tfvars"))) == 1
+    )
+    error_message = "The monthly budget alert must be 80 with the existing forecast and actual notifications."
+  }
+
+  assert {
+    condition = (
+      length(regexall("APPLICATIONINSIGHTS_CONNECTION_STRING", file("${path.root}/containerapp.tf"))) == 1
+      && length(regexall("local\\.runtime_application_insights_connection_string", file("${path.root}/containerapp.tf"))) == 1
+      && length(regexall("module\\.application_insights\\.connection_string", file("${path.root}/locals.tf"))) == 1
+      && length(regexall("module\\.application_insights\\.connection_string", file("${path.root}/outputs.tf"))) == 0
+      && length(regexall("(?m)value\\s*=\\s*local\\.runtime_application_insights_connection_string", file("${path.root}/outputs.tf"))) == 0
+    )
+    error_message = "The host must receive the component connection string through runtime configuration without a Terraform output."
   }
 }

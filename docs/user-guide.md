@@ -106,6 +106,10 @@ deployment and client support the connection. Client compatibility and
 scheduled execution remain unverified. If chat or MCP isn't available, use
 **Today**, **Capture**, **Lists**, and **Knowledge** directly.
 
+The owner has approved protected prompt/response monitoring only after privacy
+controls are verified; it is not currently enabled. For the conditions and
+limitations, see [operations](operations.md).
+
 The app is online-first: even if your browser lets you install it, it doesn't
 queue offline edits. If the connection drops during a save, reconnect and check
 whether the change appears before repeating it.

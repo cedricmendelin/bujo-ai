@@ -55,6 +55,10 @@ or credentials belong in the repository.
   [proposed ADR](adr/0002-foundry-agui-chat.md).
 - MCP access for assistants such as Copilot and Claude, sharing application
   capabilities rather than maintaining a second copy of the user's journal.
+- Monitoring is intended to help operate these services without exposing
+  journal data in ordinary logs. The owner-approved protected prompt/response
+  telemetry exception remains gated on verified privacy controls; see
+  [operations](operations.md).
 - Versioned assistant skills cover daily review, one-item capture, and weekly
   draft review; the weekly skill reviews an existing list and does not generate
   an AI-authored draft.

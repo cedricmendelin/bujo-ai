@@ -9,6 +9,8 @@ using Azure.Identity;
 using Bujo.Application;
 using Bujo.Application.Chat;
 using Bujo.Domain;
+using Bujo.Host.Telemetry;
+using System.Diagnostics;
 using Microsoft.Extensions.Options;
 
 namespace Bujo.Host.Chat;
@@ -55,7 +57,27 @@ public sealed class ChatRuntime : IChatRuntime
     {
     }
 
-    public Task<ChatRunResult> RunAsync(
+    public async Task<ChatRunResult> RunAsync(
+        ChatRunRequest request,
+        ClaimsPrincipal principal,
+        CancellationToken cancellationToken = default)
+    {
+        using var activity = SafeTelemetry.Source.StartActivity("chat.run");
+        try
+        {
+            var result = await RunCoreAsync(request, principal, cancellationToken);
+            activity?.SetTag("bujo.chat.tool_call_count", result.ToolCalls.Count);
+            activity?.SetTag("bujo.chat.proposal_count", result.Proposals.Count);
+            return result;
+        }
+        catch
+        {
+            activity?.SetStatus(ActivityStatusCode.Error);
+            throw;
+        }
+    }
+
+    private Task<ChatRunResult> RunCoreAsync(
         ChatRunRequest request,
         ClaimsPrincipal principal,
         CancellationToken cancellationToken = default)
@@ -778,7 +800,7 @@ public sealed class ChatRuntime : IChatRuntime
 
         if (TryEdit(text, out var oldName, out var newName))
         {
-            var snapshot = _tools.Execute(new ChatToolRequest("get_journal",
+            var snapshot = ExecuteTool(new ChatToolRequest("get_journal",
                 JsonSerializer.SerializeToElement(new { }), principal)).Value as JournalSnapshot;
             var matches = snapshot?.Items
                 .Where(item => item.Name.Contains(oldName, StringComparison.OrdinalIgnoreCase))
@@ -804,7 +826,7 @@ public sealed class ChatRuntime : IChatRuntime
 
         if (TryMove(text, out var itemName, out var listName))
         {
-            var snapshot = _tools.Execute(new ChatToolRequest("get_journal",
+            var snapshot = ExecuteTool(new ChatToolRequest("get_journal",
                 JsonSerializer.SerializeToElement(new { }), principal)).Value as JournalSnapshot;
             var items = snapshot?.Items
                 .Where(item => item.Name.Contains(itemName, StringComparison.OrdinalIgnoreCase))
@@ -846,7 +868,7 @@ public sealed class ChatRuntime : IChatRuntime
             var name = lower.StartsWith("complete ", StringComparison.Ordinal)
                 ? text["complete ".Length..].Trim()
                 : text["done ".Length..].Trim();
-            var snapshot = _tools.Execute(new ChatToolRequest("get_journal",
+            var snapshot = ExecuteTool(new ChatToolRequest("get_journal",
                 JsonSerializer.SerializeToElement(new { }), principal)).Value as JournalSnapshot;
             var matches = snapshot?.Items
                 .Where(item => item.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
@@ -876,7 +898,7 @@ public sealed class ChatRuntime : IChatRuntime
             var name = close
                 ? text["close list ".Length..].Trim()
                 : text["review list ".Length..].Trim();
-            var snapshot = _tools.Execute(new ChatToolRequest("get_journal",
+            var snapshot = ExecuteTool(new ChatToolRequest("get_journal",
                 JsonSerializer.SerializeToElement(new { }), principal)).Value as JournalSnapshot;
             var lists = snapshot?.Lists
                 .Where(list => list.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
@@ -891,7 +913,7 @@ public sealed class ChatRuntime : IChatRuntime
             }
 
             var list = lists[0];
-            var review = _tools.Execute(new ChatToolRequest(
+            var review = ExecuteTool(new ChatToolRequest(
                 "get_list_review",
                 JsonSerializer.SerializeToElement(new { listId = list.Id }),
                 principal));
@@ -962,9 +984,12 @@ public sealed class ChatRuntime : IChatRuntime
         ClaimsPrincipal principal,
         CancellationToken cancellationToken)
     {
+        using var activity = SafeTelemetry.Source.StartActivity("chat.foundry");
+        activity?.SetTag("gen_ai.operation.name", "chat");
         if (string.IsNullOrWhiteSpace(_provider.Endpoint) ||
             string.IsNullOrWhiteSpace(_provider.Deployment))
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             return await Task.FromResult(Done(
                 "The chat provider is unavailable. Journal views and tools remain available.",
                 [],
@@ -1009,6 +1034,8 @@ public sealed class ChatRuntime : IChatRuntime
 
             for (var turn = 0; turn < _options.MaxToolCallsPerRun; turn++)
             {
+                using var modelActivity = SafeTelemetry.Source.StartActivity("chat.foundry.request");
+                modelActivity?.SetTag("gen_ai.operation.name", "chat");
                 using var response = await http.PostAsJsonAsync(url, new
                 {
                     messages,
@@ -1018,10 +1045,22 @@ public sealed class ChatRuntime : IChatRuntime
                 }, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
+                    modelActivity?.SetStatus(ActivityStatusCode.Error);
+                    activity?.SetStatus(ActivityStatusCode.Error);
                     return Done("The model provider is temporarily unavailable. Check your journal before repeating any requested changes.", toolCalls, proposals);
                 }
 
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (json.RootElement.TryGetProperty("usage", out var usage) &&
+                    usage.ValueKind == JsonValueKind.Object)
+                {
+                    if (usage.TryGetProperty("prompt_tokens", out var input) && input.ValueKind == JsonValueKind.Number &&
+                        input.TryGetInt64(out var inputCount) && inputCount >= 0)
+                        modelActivity?.SetTag("gen_ai.usage.input_tokens", inputCount);
+                    if (usage.TryGetProperty("completion_tokens", out var output) && output.ValueKind == JsonValueKind.Number &&
+                        output.TryGetInt64(out var outputCount) && outputCount >= 0)
+                        modelActivity?.SetTag("gen_ai.usage.output_tokens", outputCount);
+                }
                 var choice = json.RootElement.GetProperty("choices")[0].GetProperty("message");
                 if (choice.TryGetProperty("tool_calls", out var callElements) &&
                     callElements.ValueKind == JsonValueKind.Array &&
@@ -1046,7 +1085,7 @@ public sealed class ChatRuntime : IChatRuntime
                                      name != ChatToolNames.CreateReviewProposal
                             ? new ChatToolResult(false,
                                 "Model-initiated changes are unavailable. Use the journal UI or a review proposal.", null)
-                            : _tools.Execute(new ChatToolRequest(name, arguments.RootElement.Clone(), principal));
+                            : ExecuteTool(new ChatToolRequest(name, arguments.RootElement.Clone(), principal));
                         toolCalls.Add(new ChatToolCall(name, result.Succeeded, result.Summary));
                         executedCalls.Add((call.Clone(), result));
 
@@ -1104,10 +1143,12 @@ public sealed class ChatRuntime : IChatRuntime
         }
         catch (OperationCanceledException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             throw;
         }
         catch (Exception)
         {
+            activity?.SetStatus(ActivityStatusCode.Error);
             return Done("The model provider is temporarily unavailable. Check your journal before repeating any requested changes.", [], []);
         }
     }
@@ -1119,9 +1160,30 @@ public sealed class ChatRuntime : IChatRuntime
         List<ChatToolCall> toolCalls)
     {
         var element = JsonSerializer.SerializeToElement(arguments);
-        var result = _tools.Execute(new ChatToolRequest(name, element, principal));
+        var result = ExecuteTool(new ChatToolRequest(name, element, principal));
         toolCalls.Add(new ChatToolCall(name, result.Succeeded, result.Summary));
         return result;
+    }
+
+    private ChatToolResult ExecuteTool(ChatToolRequest request)
+    {
+        using var activity = SafeTelemetry.Source.StartActivity("chat.tool");
+        var descriptor = ChatToolRegistry.All.FirstOrDefault(tool =>
+            string.Equals(tool.Name, request.Name, StringComparison.Ordinal));
+        if (descriptor is not null)
+            activity?.SetTag("bujo.chat.tool.name", descriptor.Name);
+        try
+        {
+            var result = _tools.Execute(request);
+            if (!result.Succeeded)
+                activity?.SetStatus(ActivityStatusCode.Error);
+            return result;
+        }
+        catch
+        {
+            activity?.SetStatus(ActivityStatusCode.Error);
+            throw;
+        }
     }
 
     private static ChatRunResult Done(

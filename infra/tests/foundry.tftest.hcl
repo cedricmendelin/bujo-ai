@@ -75,8 +75,10 @@ run "foundry_disabled" {
       && length(azurerm_cognitive_account_project.foundry) == 0
       && length(azurerm_cognitive_deployment.model) == 0
       && length(azurerm_role_assignment.foundry_group) == 0
+      && length(azurerm_monitor_diagnostic_setting.foundry_account) == 0
+      && length(azurerm_monitor_diagnostic_setting.foundry_project) == 0
     )
-    error_message = "The default-disabled Foundry configuration must plan no Foundry resources."
+    error_message = "The default-disabled Foundry configuration must plan no Foundry resources or diagnostic settings."
   }
 }
 
@@ -87,6 +89,22 @@ run "foundry_enabled" {
     foundry_enabled = true
   }
 
+  override_resource {
+    target          = azurerm_cognitive_account.foundry[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-foundry"
+    }
+  }
+
+  override_resource {
+    target          = azurerm_cognitive_account_project.foundry[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-foundry/projects/test-project"
+    }
+  }
+
   assert {
     condition     = length(azurerm_role_assignment.foundry_group) == 0
     error_message = "An unset group must not create role assignments, even when Foundry is enabled."
@@ -95,6 +113,36 @@ run "foundry_enabled" {
   assert {
     condition     = length(azurerm_cognitive_account.foundry) == 1
     error_message = "Enabling Foundry must create exactly one Azure AI Services account."
+  }
+
+  assert {
+    condition = (
+      length(azurerm_monitor_diagnostic_setting.foundry_account) == 1
+      && azurerm_monitor_diagnostic_setting.foundry_account[0].target_resource_id == azurerm_cognitive_account.foundry[0].id
+      && length(azurerm_monitor_diagnostic_setting.foundry_account[0].enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.foundry_account[0].enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.foundry_account[0].enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+      && length(azurerm_monitor_diagnostic_setting.foundry_project) == 1
+      && azurerm_monitor_diagnostic_setting.foundry_project[0].target_resource_id == azurerm_cognitive_account_project.foundry[0].id
+      && length(azurerm_monitor_diagnostic_setting.foundry_project[0].enabled_log) == 0
+      && length(azurerm_monitor_diagnostic_setting.foundry_project[0].enabled_metric) == 1
+      && alltrue([
+        for metric in azurerm_monitor_diagnostic_setting.foundry_project[0].enabled_metric :
+        metric.category == "AllMetrics"
+      ])
+    )
+    error_message = "Foundry account and project diagnostics must be conditional and export metrics only, with no request, trace, or other resource logs."
+  }
+
+  assert {
+    condition = alltrue([
+      for filename in fileset(path.root, "*.tf") :
+      length(regexall("Microsoft\\.CognitiveServices/accounts/projects/connections", file("${path.root}/${filename}"))) == 0
+    ])
+    error_message = "Do not connect the Foundry project to Application Insights until content-bearing server-side traces pass the approved privacy controls."
   }
 
   assert {
