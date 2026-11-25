@@ -19,6 +19,7 @@ using ModelContextProtocol.AspNetCore;
 using Bujo.Host.Mcp;
 using Bujo.Host.Chat;
 using Bujo.Application.Chat;
+using Bujo.Host.Telemetry;
 using System.Threading.RateLimiting;
 
 var shouldMigrate = args.Contains("--migrate", StringComparer.Ordinal);
@@ -38,6 +39,7 @@ if (shouldMigrateOnly)
 
 var builder = WebApplication.CreateBuilder(hostArgs);
 builder.WebHost.UseStaticWebAssets();
+builder.AddSafeTelemetry();
 
 var tenantSetting = builder.Configuration["Auth:TenantId"];
 var tenantId = Guid.TryParse(tenantSetting, out var parsedTenantId)
@@ -131,8 +133,8 @@ builder.Services.AddJournalPersistence(connectionString);
 builder.Services.AddJournalApplication();
 builder.Services.Configure<ChatOptions>(builder.Configuration.GetSection(ChatOptions.SectionName));
 builder.Services.AddSingleton<ChatConversationStateStore>();
-builder.Services.AddHttpClient("ChatProvider");
-builder.Services.AddHttpClient("ChatSpeech");
+builder.Services.AddTransient<SafeHttpTelemetryHandler>();
+builder.Services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler<SafeHttpTelemetryHandler>());
 builder.Services.AddScoped<IChatRuntime, ChatRuntime>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -184,6 +186,7 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/auth/error");
     app.UseHsts();
 }
+app.UseSafeRequestTelemetry();
 app.UseMcpRequestSecurity();
 app.UseAuthentication();
 app.Use(async (context, next) =>

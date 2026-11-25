@@ -62,6 +62,10 @@ No chat transcript or audio is persisted. Review proposals use the existing
 journal proposal store. The provider and
 speech services receive only the context and text needed for the active run.
 Prompts, transcripts, tool arguments and results are excluded from telemetry.
+On 2026-11-25 the owner superseded the prompt/response exclusion for protected
+monitoring, subject to verified access, retention and no-duplication controls.
+See [the current decision](../../.squad/decisions.md) and
+[operations](../operations.md); this does not authorize ordinary log capture.
 Interrupted runs show cancellation or interruption and are never replayed.
 Mutations are not retried automatically after reconnection.
 

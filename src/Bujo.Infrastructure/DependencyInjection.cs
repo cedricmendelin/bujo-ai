@@ -11,7 +11,8 @@ public static class DependencyInjection
     public static IServiceCollection AddJournalPersistence(this IServiceCollection services, string connectionString)
     {
         services.AddDbContextFactory<JournalDbContext>(options =>
-            options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure()));
+            options.UseSqlServer(connectionString, sqlServer => sqlServer.EnableRetryOnFailure())
+                .AddInterceptors(SafeSqlCommandTelemetry.Instance));
         services.AddScoped<IJournalRepository, EfJournalRepository>();
         services.AddScoped<IKnowledgeRepository, EfKnowledgeRepository>();
         services.AddScoped<IJournalBackupRepository, EfJournalBackupRepository>();

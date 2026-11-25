@@ -635,3 +635,19 @@ authorized.
 **Evidence:** `docs/squad-approvals.md`, `docs/workflow.md`,
 `.github/scripts/squad-decisions.js`, `.github/workflows/squad-decisions.yml`,
 `.squad/team.md`, `.squad/ralph-instructions.md`.
+
+### 2026-11-25: Monitoring budget and protected prompt telemetry
+
+- The owner supersedes the earlier USD 50 monthly resource-group budget alert
+  with USD 80. The budget remains an alert, not a spending cap; the existing
+  Log Analytics daily cap remains unchanged until a separate cap is approved.
+- The owner supersedes the prompt/response telemetry exclusion in the
+  2026-11-19 general-chat decision and `docs/adr/0003-general-chat-and-speech.md`
+  for chat, Foundry and MCP prompts and responses in all environments.
+  Content capture requires 30-day retention, verified restricted access and
+  proof that content is not duplicated into ordinary telemetry. Until those
+  controls are verified for each path, capture remains disabled.
+- Credentials and other secrets must not be collected. This decision does not
+  authorize logging unrelated journal data or independent tool arguments and
+  results, nor does it authorize live deployments, role grants, tenant-level
+  Entra log collection or changes to Foundry inference permissions.

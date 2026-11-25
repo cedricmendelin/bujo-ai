@@ -94,7 +94,9 @@ subject to the security, privacy, operational and cost verification below.
   features can store content. This design does not select a model or deployment
   type, so it makes no Swiss processing, data-residency or retention promise.
 - Exact model availability and price in Switzerland North are unverified.
-  Therefore this ADR does not assert compliance with the USD 50/month target.
+  Therefore this ADR does not assert compliance with the original USD 50/month
+  target. The owner changed the budget alert to USD 80 on 2026-11-25; it is
+  not a cap.
 
 ## Verification still required
 

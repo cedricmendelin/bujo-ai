@@ -19,7 +19,8 @@ The agreed boundary is one modular ASP.NET Core deployment for an installable,
 online-first Blazor PWA, API and remote MCP, with durable journal and knowledge
 data in external Azure SQL. The first release is personal and authenticated;
 offline editing and synchronization are deferred. The agreed infrastructure
-direction targets Switzerland North and less than USD 50/month, not a spending
+direction targets Switzerland North. The original USD 50/month budget alert
+was superseded by the owner's USD 80 alert on 2026-11-25; neither is a spending
 guarantee. See [concept](../concept.md) and
 [recorded decisions](../../.squad/decisions.md).
 

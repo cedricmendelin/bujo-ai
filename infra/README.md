@@ -44,6 +44,14 @@ The Foundry mock contracts run through `terraform test`; no Python test suite
 is used for infrastructure or deployment behavior. Mock tests do not establish
 live Azure provisioning.
 
+The workspace-based Application Insights component, platform diagnostic
+coverage and current exclusions are described in
+[monitoring coverage](../docs/infrastructure.md#monitoring-coverage).
+Its connection string is passed to the app and stored in protected Terraform
+state, not exposed as a root output. The Foundry project connection and
+prompt-content capture remain blocked pending the
+[protection gate](../docs/operations.md#protected-prompt-telemetry-release-gate).
+
 ## PWA BFF client
 
 The PWA registration has two HTTPS callbacks: the Container App's

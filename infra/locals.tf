@@ -8,6 +8,7 @@ locals {
   identity_name               = "id-${var.name_suffix}"
   migration_identity_name     = "id-${var.name_suffix}-migrate"
   log_analytics_name          = "law-${var.name_suffix}"
+  application_insights_name   = "appi-${var.name_suffix}"
   environment_name            = "cae-${var.name_suffix}"
   container_app_name          = "ca-${var.name_suffix}"
   migration_job_name          = "job-${var.name_suffix}-migrate"
@@ -20,8 +21,9 @@ locals {
   foundry_account_name        = "foundry-${var.name_suffix}"
   foundry_project_name        = "bujo-${var.name_suffix}"
 
-  runtime_sql_connection_string   = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.identity.client_id}"
-  migration_sql_connection_string = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.migration_identity.client_id}"
+  runtime_sql_connection_string                  = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.identity.client_id}"
+  migration_sql_connection_string                = "Server=tcp:${local.sql_server_fqdn},1433;Initial Catalog=bujo;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Managed Identity;User Id=${module.migration_identity.client_id}"
+  runtime_application_insights_connection_string = module.application_insights.connection_string
   deployment_uses_current_identity = (
     var.deployment_client_id == ""
     || lower(var.deployment_client_id) == lower(data.azuread_client_config.current.client_id)

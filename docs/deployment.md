@@ -89,6 +89,17 @@ needs deeper diagnosis, inspect a plan privately using the documented state
 backend and production inputs. Never attach plans, state, or unredacted logs to
 issues or PRs.
 
+### Monitoring changes
+
+Infrastructure changes merged to `main` can be applied automatically by the
+existing workflow, independently of the application activation flags. Review
+monitoring resources, diagnostic categories, privacy, permissions, and current
+cost before authorizing a merge. The owner-approved prompt/response capture
+exception remains disabled until its separate live protection checks pass; see
+the [protected prompt telemetry release gate](operations.md#protected-prompt-telemetry-release-gate).
+Do not treat an Application Insights resource or a successful apply as evidence
+that protected content routing is safe or that Foundry inference is enabled.
+
 ## First-release baseline
 
 The infrastructure baseline provisions API registration/configuration

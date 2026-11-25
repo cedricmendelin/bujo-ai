@@ -92,6 +92,27 @@ override_resource {
   }
 }
 
+override_resource {
+  target = module.application_insights.azapi_resource.this
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.Insights/components/test-appi"
+    output = {
+      properties = {
+        AppId              = "mock-app-id"
+        ConnectionString   = "mock-connection-string"
+        InstrumentationKey = "mock-instrumentation-key"
+      }
+    }
+  }
+}
+
+override_resource {
+  target = azurerm_container_app_job.migration
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000004/resourceGroups/test-rg/providers/Microsoft.App/jobs/test-migration"
+  }
+}
+
 override_data {
   target = module.container_app_environment.data.azapi_resource.customer_id
   values = {

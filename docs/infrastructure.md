@@ -19,7 +19,8 @@ user-assigned runtime identity, a separate migration identity and manually
 triggered Container Apps Job, an Entra API registration and service principal,
 a capped Log Analytics workspace, a standard RBAC-enabled Key Vault, an
 Entra-only Azure SQL server and free-offer database, and a monthly
-resource-group budget. The SQL logical server has a system-assigned identity
+resource-group budget. A workspace-based Application Insights component is
+configured for the app. The SQL logical server has a system-assigned identity
 for directory lookups. There are no VNets, private endpoints, NAT, ACR, SQL
 passwords, or Terraform-managed Key Vault values.
 
@@ -46,6 +47,7 @@ Application health may be incomplete while the owner configures manual setup.
 | User-assigned managed identity | `Azure/avm-res-managedidentity-userassignedidentity` |
 | Migration identity | `Azure/avm-res-managedidentity-userassignedidentity`, separate from runtime identity |
 | Log Analytics workspace | `Azure/avm-res-operationalinsights-workspace`, PerGB2018, 0.1 GB/day cap, 30-day retention, public network access for ingestion and queries |
+| Application Insights | Workspace-based `Azure/avm-res-insights-component`, 0.1 GB/day cap, 30-day retention, 100% component sampling setting |
 | Container Apps environment | `Azure/avm-res-app-managedenvironment`, default Consumption profile |
 | Container app | `Azure/avm-res-app-containerapp`, public ingress, scale to zero, UAMI attached |
 | API registration | AzureAD provider, single-tenant delegated `journal.access` scope, assignment-required service principal |
@@ -53,7 +55,7 @@ Application health may be incomplete while the owner configures manual setup.
 | Key Vault | `Azure/avm-res-keyvault-vault`, Standard, RBAC, 7-day soft delete, purge protection, public endpoint |
 | SQL server | `Azure/avm-res-sql-server`, TLS 1.2, Entra-only group admin, server identity, Azure-services firewall rule |
 | SQL database | AzureRM plus AzAPI free-offer property update |
-| Monthly budget | AzureRM resource-group budget, $50 with forecast/actual alerts |
+| Monthly budget | AzureRM resource-group budget, 80 in the subscription billing currency with forecast/actual alerts |
 | Terraform state | Owner-bootstrapped Azure Storage container, remote backend with Entra RBAC |
 
 All Terraform modules use exact versions in their `source` blocks. Provider
@@ -64,6 +66,34 @@ Terraform enables both Log Analytics public network endpoints without a network
 perimeter restriction. This does not grant anonymous access or change workspace
 authentication and permissions. Change these settings in Terraform, not in the
 portal, to keep them across applies.
+
+## Monitoring coverage
+
+The Container Apps environment already routes console and system logs to the
+workspace. The Terraform diagnostic settings additionally route metrics for
+the app, environment and migration job; Key Vault audit events and metrics;
+SQL server and database metrics; and, when enabled, Foundry account and project
+metrics. These platform records are Log Analytics diagnostics, not automatically
+Application Insights application spans. Foundry account request, response,
+trace and audit logs are not enabled, nor are SQL query/error logs. Read-only
+category discovery for user-assigned managed identities failed, so support
+remains unverified. Key Vault audit events
+may include caller and secret URI metadata, though not secret values; workspace
+access must be restricted accordingly. Tenant-level Entra logs, external state
+storage and GHCR are out of scope.
+
+The host sends selected application-owned request, HTTP dependency, EF SQL
+command and chat spans to Application Insights when configured; it does not
+export application logs or SQL statements. SQL connection failures before a
+command starts do not produce a command span. The component sampling setting does not guarantee delivery:
+upstream sampling, the daily caps, outages and privacy filtering can drop spans.
+Sensitive prompt/response capture is unavailable until the
+[protection gate](operations.md#protected-prompt-telemetry-release-gate) is
+satisfied and a safe implementation is verified. Connecting the Foundry project
+to Application Insights for server-side agent tracing is also blocked by that
+gate; the existing app calls Foundry models directly, not via a hosted agent.
+The component, settings and telemetry have not been verified by a live apply or
+an end-to-end production query.
 
 ## Journal readiness notes
 
@@ -107,8 +137,8 @@ use assumes activity remains within documented free grants.
 | State storage, Standard_LRS | <$1 | <$1 |
 | **Estimated total** | **<$1/month** | **<$10/month** |
 
-The estimates leave at least $40/month of headroom under the $50 budget only
-while usage stays within the applicable free grants. The SQL estimate assumes
+These historical estimates exclude Foundry and the expanded telemetry described
+below; they do not establish headroom under the budget. The SQL estimate assumes
 that monthly free compute is not exhausted; paid compute overage is not included.
 When the monthly SQL free compute allowance is exhausted,
 `freeLimitExhaustionBehavior = BillOverUsage` keeps the database accessible and bills
@@ -123,6 +153,24 @@ production resource group (not the separate state resource group), alerts at
 free offer is unavailable. The SQL offer is limited by Azure eligibility and
 quota; monitor usage and billing after deployment. The budget is an alert, not
 a spending cap.
+
+The owner requested an $80 monthly alert. Azure interprets the configured
+amount in the subscription billing currency, which has not been verified.
+Confirm that currency before treating the configured `80` as USD.
+
+For a conservative telemetry illustration, the Azure Retail Prices API on
+2026-11-25 returned USD 3.289/GB for Switzerland North pay-as-you-go Analytics
+Logs ingestion above the first 5 GB tier. At 0.1 GB/day for 31 days, 3.1 GB
+would cost about USD 10.20 if charged at that full rate; an eligible unused
+free allowance can reduce this. This is not a forecast or maximum: caps can
+overshoot, other billing-account usage can consume the allowance, and alert
+rules, other table plans, retention, SQL, Container Apps and Foundry have
+separate costs. Analytics retention includes 31 days under the published
+[cost guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cost-logs).
+The older Foundry illustration below is not a verified current quote. Recheck
+current regional and model rates with the
+[Azure pricing calculator](https://azure.microsoft.com/en-us/pricing/calculator/)
+and measure synthetic ingestion before approving any cap change.
 
 Changing only `freeLimitExhaustionBehavior` changes the AzAPI request body, not
 the database identity; the [AzAPI 2.12 resource documentation](https://registry.terraform.io/providers/Azure/azapi/2.12.0/docs/resources/resource)
@@ -171,7 +219,7 @@ the figures above are not an approved quote. The owner approved a monthly
 planning illustration of 1M uncached input and 1M output tokens for each text
 deployment plus 1M embedding input tokens, estimated at about $9.10. This is
 not a monthly worst-case or cap: standard deployments bill by token, capacity
-is a throughput/quota setting rather than a spend limit, and the existing $50
+is a throughput/quota setting rather than a spend limit, and the 80-unit
 resource-group budget only alerts. No finite monthly maximum is enforced.
 
 Data Zone Standard processes prompts and responses within the Microsoft-defined

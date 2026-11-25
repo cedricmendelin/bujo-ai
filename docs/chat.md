@@ -19,6 +19,9 @@ follow the configured provider terms and are not promised to be zero-retention.
 Prompts, transcripts, tool arguments and tool results are not logged or stored
 in application telemetry. Monitor only run counts, latency, status categories
 and redacted error categories.
+The owner has approved a future protected prompt/response capture path, but it
+must remain off until the controls in [operations](operations.md) are verified.
+That decision does not authorize logging tool payloads or credentials.
 
 ## Text runtime
 
