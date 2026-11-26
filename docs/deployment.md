@@ -67,7 +67,9 @@ remediation and never reports success by fallback.
 - **Automatic:** after successful main-push CI, **Deploy production** runs a
   full Terraform plan and applies that saved plan if the `infra/` tree differs
   from the last successful infrastructure apply. The first run with no marker
-  also applies. The marker lives beside the private state, advances only on
+  also applies. After apply, the workflow refreshes Terraform state and
+  verifies that no diagnostic-setting drift remains before advancing the
+  marker. The marker lives beside the private state, advances only on
   success, and lets a newer app-only release pick up a pending infra change.
 - **On demand:** the owner can run **Provision infrastructure** on `main` at
   any time (for example, to reconcile drift with no source change). The workflow
