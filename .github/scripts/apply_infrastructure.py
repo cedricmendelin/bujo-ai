@@ -89,6 +89,22 @@ def retained_images():
     return app_image, None if container.get("command") == ["/bootstrap-disabled"] else container["image"]
 
 
+def diagnostic_setting_drift(plan_path, *, env):
+    document = json.loads(command(
+        "Read Terraform refresh plan",
+        ["terraform", "-chdir=infra", "show", "-json", str(plan_path)],
+        env=env,
+    ))
+    for resource in document.get("resource_changes", []):
+        if (
+            resource.get("type") == "azurerm_monitor_diagnostic_setting"
+            and resource.get("change", {}).get("actions") != ["no-op"]
+        ):
+            raise InfrastructureError(
+                "Diagnostic settings did not converge after infrastructure apply."
+            )
+
+
 def apply_infrastructure(*, always):
     # A tree ID covers changes to infra/ even when newer main CI supersedes a failed run.
     revision = command("Read infra tree", ["git", "rev-parse", "HEAD:infra"]).strip()
@@ -120,6 +136,23 @@ def apply_infrastructure(*, always):
         command("Terraform infrastructure apply", [
             *tf, "apply", "-input=false", "-no-color", "-lock-timeout=5m", str(plan),
         ], env=env, visible=True)
+
+        print("Refreshing Terraform state after infrastructure apply.", flush=True)
+        command("Terraform state refresh", [
+            *tf, "apply", "-refresh-only", "-input=false", "-no-color",
+            "-lock-timeout=5m", "-var-file=prod.tfvars",
+            f"-var=bootstrap_only={'true' if job_image is None else 'false'}",
+            "-auto-approve",
+        ], env=env, visible=True)
+
+        refresh_plan = Path(temp) / "refresh.tfplan"
+        command("Terraform post-apply diagnostic plan", [
+            *tf, "plan", "-input=false", "-no-color", "-lock-timeout=5m",
+            "-var-file=prod.tfvars",
+            f"-var=bootstrap_only={'true' if job_image is None else 'false'}",
+            f"-out={refresh_plan}",
+        ], env=env, visible=True)
+        diagnostic_setting_drift(refresh_plan, env=env)
         marker.write_text(revision + "\n", encoding="ascii")
         az("storage", "blob", "upload", *blob, "--file", str(marker), "--overwrite", "true")
         print("Infrastructure applied.", flush=True)
